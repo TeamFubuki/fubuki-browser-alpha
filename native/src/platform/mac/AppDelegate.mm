@@ -1,0 +1,49 @@
+#import <Cocoa/Cocoa.h>
+
+#import "include/cef_application_mac.h"
+#include "include/wrapper/cef_helpers.h"
+
+@interface FubukiApplication : NSApplication <CefAppProtocol> {
+ @private
+  BOOL handlingSendEvent_;
+}
+@end
+
+@implementation FubukiApplication
+- (BOOL)isHandlingSendEvent {
+  return handlingSendEvent_;
+}
+
+- (void)setHandlingSendEvent:(BOOL)handlingSendEvent {
+  handlingSendEvent_ = handlingSendEvent;
+}
+
+- (void)sendEvent:(NSEvent*)event {
+  CefScopedSendingEvent sendingEventScoper;
+  [super sendEvent:event];
+}
+@end
+
+@interface FubukiAppDelegate : NSObject <NSApplicationDelegate>
+@end
+
+void FubukiInstallBasicMenu();
+
+namespace fubuki {
+
+void InitializeMacApplication() {
+  [FubukiApplication sharedApplication];
+  static FubukiAppDelegate* delegate = [[FubukiAppDelegate alloc] init];
+  [NSApp setDelegate:delegate];
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  FubukiInstallBasicMenu();
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+}  // namespace fubuki
+
+@implementation FubukiAppDelegate
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
+  return YES;
+}
+@end

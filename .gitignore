@@ -1,0 +1,7 @@
+native/build*/
+ui/dist/
+ui/node_modules/
+third_party/cef/
+.cache/
+.DS_Store
+third_party/cef/
