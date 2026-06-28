@@ -15,14 +15,15 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 .app-shell {
-  height: 220px;
+  height: 84px;
   display: grid;
-  grid-template-rows: 40px 44px 116px 20px;
+  grid-template-rows: 40px 44px;
   background: #eef0f2;
   border-bottom: 1px solid #c9ced6;
 }
@@ -187,11 +188,20 @@ input {
   border-radius: 6px;
   background: #ffffff;
   display: grid;
-  grid-template-columns: minmax(0, 0.42fr) minmax(0, 0.58fr);
+  grid-template-columns: 16px minmax(0, 0.42fr) minmax(0, 0.58fr);
   gap: 8px;
   align-items: center;
   text-align: left;
   padding: 0 8px;
+}
+
+.record-row button:first-child .record-favicon {
+  width: 14px;
+  height: 14px;
+}
+
+.record-row button:first-child > span:first-child {
+  display: none;
 }
 
 .record-row span,
@@ -213,7 +223,7 @@ input {
 .settings-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 80px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 160px) minmax(0, 160px) minmax(0, 1fr) 80px;
   gap: 8px;
   align-items: end;
 }
@@ -226,7 +236,8 @@ input {
   color: #5d6673;
 }
 
-.settings-grid input {
+.settings-grid input,
+.settings-grid select {
   height: 30px;
   min-width: 0;
   border: 1px solid #b9c0ca;

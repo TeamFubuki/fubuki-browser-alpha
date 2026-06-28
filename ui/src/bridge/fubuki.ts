@@ -13,6 +13,7 @@ export type Tab = {
 export type BrowserRecord = {
   title?: string;
   url?: string;
+  faviconUrl?: string;
   path?: string;
   state?: string;
   percent?: number;
@@ -32,6 +33,8 @@ export type BrowserState = {
   settings: {
     homepage: string;
     downloadDirectory: string;
+    searchEngine: string;
+    startupBehavior: string;
   };
   profilePath: string;
 };

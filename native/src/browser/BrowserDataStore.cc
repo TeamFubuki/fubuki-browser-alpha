@@ -69,6 +69,12 @@ void BrowserDataStore::Load() {
   if (!settings_->HasKey("homepage")) {
     settings_->SetString("homepage", "https://example.com");
   }
+  if (!settings_->HasKey("searchEngine")) {
+    settings_->SetString("searchEngine", "duckduckgo");
+  }
+  if (!settings_->HasKey("startupBehavior")) {
+    settings_->SetString("startupBehavior", "homepage");
+  }
   if (!settings_->HasKey("downloadDirectory")) {
     const char* home = std::getenv("HOME");
     settings_->SetString("downloadDirectory", home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp");
@@ -87,7 +93,7 @@ void BrowserDataStore::AddHistory(const std::string& title, const std::string& u
   SaveList(historyPath_, history_);
 }
 
-bool BrowserDataStore::AddBookmark(const std::string& title, const std::string& url) {
+bool BrowserDataStore::AddBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
   if (url.empty()) {
     return false;
   }
@@ -100,6 +106,7 @@ bool BrowserDataStore::AddBookmark(const std::string& title, const std::string& 
   auto item = NewRecord();
   item->SetString("title", title.empty() ? url : title);
   item->SetString("url", url);
+  item->SetString("faviconUrl", faviconUrl);
   Prepend(bookmarks_, item, 500);
   SaveList(bookmarksPath_, bookmarks_);
   return true;

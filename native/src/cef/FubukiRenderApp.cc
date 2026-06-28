@@ -32,13 +32,10 @@ void FubukiRenderApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
     rendererRouter_->OnContextCreated(browser, frame, context);
   }
 
+  CefRefPtr<CefV8Value> global = context->GetGlobal();
   auto attrs = static_cast<cef_v8_propertyattribute_t>(V8_PROPERTY_ATTRIBUTE_READONLY |
                                                        V8_PROPERTY_ATTRIBUTE_DONTDELETE);
-  CefRefPtr<CefV8Value> global = context->GetGlobal();
-  CefRefPtr<CefV8Value> fubuki = CefV8Value::CreateObject(nullptr, nullptr);
-  fubuki->SetValue("bridgeVersion", CefV8Value::CreateString("1"), attrs);
   global->SetValue("fubukiNativeMarker", CefV8Value::CreateBool(true), attrs);
-  global->SetValue("fubuki", fubuki, attrs);
 }
 
 void FubukiRenderApp::OnContextReleased(CefRefPtr<CefBrowser> browser,

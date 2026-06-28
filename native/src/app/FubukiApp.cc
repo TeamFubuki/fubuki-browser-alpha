@@ -33,8 +33,10 @@ int RunFubukiApplication(int argc, char* argv[]) {
                              : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
   std::filesystem::create_directories(basePath);
   const auto cachePath = basePath / "CEFProfile";
+  const auto logPath = basePath / "cef.log";
   CefString(&settings.root_cache_path).FromString(basePath.string());
   CefString(&settings.cache_path).FromString(cachePath.string());
+  CefString(&settings.log_file).FromString(logPath.string());
 
   InitializeMacApplication();
 

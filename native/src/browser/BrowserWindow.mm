@@ -13,7 +13,7 @@ namespace fubuki {
 
 namespace {
 
-constexpr CGFloat kUiHeight = 220.0;
+constexpr CGFloat kUiHeight = 84.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
 
@@ -57,12 +57,14 @@ void BrowserWindow::Show() {
   CEF_REQUIRE_UI_THREAD();
   CreateNativeWindow();
   CreateUiBrowser();
-  CreateTab("https://example.com", true);
+  const std::string startupBehavior = dataStore_->Settings()->GetString("startupBehavior");
+  const std::string homepage = dataStore_->Settings()->GetString("homepage");
+  CreateTab(startupBehavior == "newTab" ? "fubuki://newtab/" : homepage, true);
   [window_ makeKeyAndOrderFront:nil];
 }
 
 bool BrowserWindow::CreateTab(const std::string& input, bool active) {
-  const std::string url = NormalizeNavigationInput(input);
+  const std::string url = NormalizeNavigationInput(input, dataStore_->Settings()->GetString("searchEngine"));
   Tab& tab = tabManager_.CreateTab(url, active);
   CreateTabBrowser(tab);
   ResizeViews();
@@ -91,7 +93,7 @@ bool BrowserWindow::Navigate(const std::string& tabId, const std::string& input)
   if (!tab || !tab->browser) {
     return false;
   }
-  tab->browser->GetMainFrame()->LoadURL(NormalizeNavigationInput(input));
+  tab->browser->GetMainFrame()->LoadURL(NormalizeNavigationInput(input, dataStore_->Settings()->GetString("searchEngine")));
   return true;
 }
 
@@ -127,6 +129,48 @@ bool BrowserWindow::GoForward(const std::string& tabId) {
   return false;
 }
 
+bool BrowserWindow::FocusOmnibox() {
+  if (!uiBrowser_) {
+    return false;
+  }
+  uiBrowser_->GetHost()->SetFocus(true);
+  uiBrowser_->GetMainFrame()->ExecuteJavaScript(
+      "document.querySelector('.omnibox input')?.select();",
+      "fubuki://app/",
+      0);
+  return true;
+}
+
+bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, char character) {
+  Tab* tab = tabManager_.GetActiveTab();
+  const std::string tabId = tab ? tab->id : "";
+  if ((commandDown && character == 'l') || (commandDown && character == 'L')) {
+    return FocusOmnibox();
+  }
+  if (!tab) {
+    return false;
+  }
+  if (commandDown && (character == 'r' || character == 'R')) {
+    return Reload(tabId);
+  }
+  if (commandDown && (character == 't' || character == 'T')) {
+    return CreateTab("fubuki://newtab/", true);
+  }
+  if (commandDown && (character == 'w' || character == 'W')) {
+    return CloseTab(tabId);
+  }
+  if (commandDown && (character == 'd' || character == 'D')) {
+    return AddActiveBookmark();
+  }
+  if ((commandDown && character == '[') || (altDown && keyCode == 0x25)) {
+    return GoBack(tabId);
+  }
+  if ((commandDown && character == ']') || (altDown && keyCode == 0x27)) {
+    return GoForward(tabId);
+  }
+  return false;
+}
+
 bool BrowserWindow::OpenDevTools() {
   Tab* tab = tabManager_.GetActiveTab();
   CefRefPtr<CefBrowser> browser = tab && tab->browser ? tab->browser : uiBrowser_;
@@ -156,7 +200,7 @@ bool BrowserWindow::AddActiveBookmark() {
   if (!tab) {
     return false;
   }
-  const bool ok = dataStore_->AddBookmark(tab->title, tab->url);
+  const bool ok = dataStore_->AddBookmark(tab->title, tab->url, tab->faviconUrl);
   dataStore_->Log("info", "Bookmark added: " + tab->url);
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
@@ -169,7 +213,7 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
 }
 
 bool BrowserWindow::SetSetting(const std::string& key, const std::string& value) {
-  if (key != "homepage" && key != "downloadDirectory") {
+  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior") {
     return false;
   }
   dataStore_->SetSetting(key, value);

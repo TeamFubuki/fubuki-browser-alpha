@@ -11,7 +11,9 @@ const initialState: BrowserState & { status: string } = {
   logs: [],
   settings: {
     homepage: "https://example.com",
-    downloadDirectory: ""
+    downloadDirectory: "",
+    searchEngine: "duckduckgo",
+    startupBehavior: "homepage"
   },
   profilePath: "",
   status: "Starting"

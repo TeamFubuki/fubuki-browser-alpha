@@ -23,6 +23,17 @@ bool LooksLikeHost(const std::string& value) {
   return value.find(' ') == std::string::npos && value.find('.') != std::string::npos;
 }
 
+std::string SearchUrlFor(const std::string& engine, const std::string& query) {
+  const std::string escaped = EscapeQuery(query);
+  if (engine == "google") {
+    return "https://www.google.com/search?q=" + escaped;
+  }
+  if (engine == "bing") {
+    return "https://www.bing.com/search?q=" + escaped;
+  }
+  return "https://duckduckgo.com/?q=" + escaped;
+}
+
 }  // namespace
 
 std::string EscapeQuery(const std::string& input) {
@@ -41,6 +52,10 @@ std::string EscapeQuery(const std::string& input) {
 }
 
 std::string NormalizeNavigationInput(const std::string& input) {
+  return NormalizeNavigationInput(input, "duckduckgo");
+}
+
+std::string NormalizeNavigationInput(const std::string& input, const std::string& searchEngine) {
   const std::string value = Trim(input);
   if (value.empty()) {
     return "fubuki://newtab/";
@@ -51,7 +66,7 @@ std::string NormalizeNavigationInput(const std::string& input) {
   if (LooksLikeHost(value)) {
     return "https://" + value;
   }
-  return "https://duckduckgo.com/?q=" + EscapeQuery(value);
+  return SearchUrlFor(searchEngine, value);
 }
 
 }  // namespace fubuki

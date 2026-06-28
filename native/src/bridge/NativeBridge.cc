@@ -18,6 +18,14 @@ CefRefPtr<CefValue> BoolValue(bool value) {
   return result;
 }
 
+CefRefPtr<CefListValue> CopyListOrEmpty(CefRefPtr<CefListValue> value) {
+  return value ? value->Copy() : CefListValue::Create();
+}
+
+CefRefPtr<CefDictionaryValue> CopyDictionaryOrEmpty(CefRefPtr<CefDictionaryValue> value) {
+  return value ? value->Copy(false) : CefDictionaryValue::Create();
+}
+
 }  // namespace
 
 NativeBridge::NativeBridge(BrowserWindow& window) : window_(window) {}
@@ -161,11 +169,11 @@ CefRefPtr<CefValue> NativeBridge::StateValue() const {
   state->SetString("activeTabId", window_.Tabs().GetActiveTabId());
   state->SetString("profilePath", window_.Store().ProfilePath());
   state->SetList("tabs", tabs);
-  state->SetList("history", window_.Store().History());
-  state->SetList("bookmarks", window_.Store().Bookmarks());
-  state->SetList("downloads", window_.Store().Downloads());
-  state->SetList("logs", window_.Store().Logs());
-  state->SetDictionary("settings", window_.Store().Settings());
+  state->SetList("history", CopyListOrEmpty(window_.Store().History()));
+  state->SetList("bookmarks", CopyListOrEmpty(window_.Store().Bookmarks()));
+  state->SetList("downloads", CopyListOrEmpty(window_.Store().Downloads()));
+  state->SetList("logs", CopyListOrEmpty(window_.Store().Logs()));
+  state->SetDictionary("settings", CopyDictionaryOrEmpty(window_.Store().Settings()));
   auto value = CefValue::Create();
   value->SetDictionary(state);
   return value;

@@ -34,6 +34,8 @@ class BrowserWindow {
   bool Stop(const std::string& tabId);
   bool GoBack(const std::string& tabId);
   bool GoForward(const std::string& tabId);
+  bool FocusOmnibox();
+  bool HandleShortcut(bool commandDown, bool altDown, int keyCode, char character);
   bool OpenDevTools();
   bool AddActiveBookmark();
   bool RemoveBookmark(const std::string& url);

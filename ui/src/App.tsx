@@ -2,36 +2,34 @@ import { onCleanup, onMount } from "solid-js";
 import { bindNativeEvents, browserState } from "./stores/browserStore";
 import TabStrip from "./components/TabStrip";
 import Toolbar from "./components/Toolbar";
-import StatusBar from "./components/StatusBar";
-import BrowserPanels from "./components/BrowserPanels";
 import { fubuki } from "./bridge/fubuki";
 
 export default function App() {
   onMount(() => {
     const dispose = bindNativeEvents();
     const onKeyDown = (event: KeyboardEvent) => {
-      const mac = event.metaKey;
+      const command = event.metaKey || event.ctrlKey;
       const activeTabId = browserState.activeTabId;
-      if (!mac || !activeTabId) return;
-      if (event.key === "l") {
+      if (!activeTabId) return;
+      if (command && event.key.toLowerCase() === "l") {
         document.querySelector<HTMLInputElement>(".omnibox input")?.select();
         event.preventDefault();
-      } else if (event.key === "r") {
+      } else if (command && event.key.toLowerCase() === "r") {
         void fubuki.invoke("tabs.reload", { tabId: activeTabId });
         event.preventDefault();
-      } else if (event.key === "[") {
+      } else if ((command && event.key === "[") || (event.altKey && event.key === "ArrowLeft")) {
         void fubuki.invoke("tabs.goBack", { tabId: activeTabId });
         event.preventDefault();
-      } else if (event.key === "]") {
+      } else if ((command && event.key === "]") || (event.altKey && event.key === "ArrowRight")) {
         void fubuki.invoke("tabs.goForward", { tabId: activeTabId });
         event.preventDefault();
-      } else if (event.key === "t") {
+      } else if (command && event.key.toLowerCase() === "t") {
         void fubuki.invoke("tabs.create", { active: true });
         event.preventDefault();
-      } else if (event.key === "w") {
+      } else if (command && event.key.toLowerCase() === "w") {
         void fubuki.invoke("tabs.close", { tabId: activeTabId });
         event.preventDefault();
-      } else if (event.key === "d") {
+      } else if (command && event.key.toLowerCase() === "d") {
         void fubuki.invoke("bookmarks.addActive");
         event.preventDefault();
       }
@@ -45,8 +43,6 @@ export default function App() {
     <main class="app-shell">
       <TabStrip />
       <Toolbar />
-      <BrowserPanels />
-      <StatusBar status={browserState.status} />
     </main>
   );
 }
