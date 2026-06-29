@@ -16,12 +16,14 @@ export default function BrowserPanels() {
   const [downloadDirectory, setDownloadDirectory] = createSignal(browserState.settings.downloadDirectory);
   const [searchEngine, setSearchEngine] = createSignal(browserState.settings.searchEngine);
   const [startupBehavior, setStartupBehavior] = createSignal(browserState.settings.startupBehavior);
+  const [theme, setTheme] = createSignal(browserState.settings.theme);
 
   createEffect(() => {
     setHomepage(browserState.settings.homepage);
     setDownloadDirectory(browserState.settings.downloadDirectory);
     setSearchEngine(browserState.settings.searchEngine);
     setStartupBehavior(browserState.settings.startupBehavior);
+    setTheme(browserState.settings.theme);
   });
 
   const records = () => {
@@ -69,12 +71,22 @@ export default function BrowserPanels() {
               <span>Download folder</span>
               <input value={browserState.settings.downloadDirectory} onInput={(event) => setDownloadDirectory(event.currentTarget.value)} />
             </label>
+            <label>
+              <span>Theme</span>
+              <select value={browserState.settings.theme} onInput={(event) => setTheme(event.currentTarget.value)}>
+                <option value="light">Light</option>
+                <option value="soft">Soft</option>
+                <option value="muted">Muted</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
             <button
               onClick={async () => {
                 await fubuki.invoke("settings.set", { key: "homepage", value: homepage() });
                 await fubuki.invoke("settings.set", { key: "searchEngine", value: searchEngine() });
                 await fubuki.invoke("settings.set", { key: "startupBehavior", value: startupBehavior() });
                 await fubuki.invoke("settings.set", { key: "downloadDirectory", value: downloadDirectory() });
+                await fubuki.invoke("settings.set", { key: "theme", value: theme() });
                 await refreshState("settings.saved");
               }}
             >

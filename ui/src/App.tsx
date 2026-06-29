@@ -1,10 +1,14 @@
-import { onCleanup, onMount } from "solid-js";
+import { createEffect, onCleanup, onMount } from "solid-js";
 import { bindNativeEvents, browserState } from "./stores/browserStore";
 import TabStrip from "./components/TabStrip";
 import Toolbar from "./components/Toolbar";
-import { fubuki } from "./bridge/fubuki";
+import { fubuki, fubukiLogoDataUri } from "./bridge/fubuki";
 
 export default function App() {
+  createEffect(() => {
+    document.documentElement.dataset.theme = browserState.settings.theme || "light";
+  });
+
   onMount(() => {
     const dispose = bindNativeEvents();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -41,6 +45,7 @@ export default function App() {
 
   return (
     <main class="app-shell">
+      <img class="app-logo" src={fubukiLogoDataUri} alt="Fubuki Browser" />
       <TabStrip />
       <Toolbar />
     </main>

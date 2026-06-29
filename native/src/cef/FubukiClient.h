@@ -17,6 +17,7 @@ class FubukiClient : public CefClient,
                      public CefDisplayHandler,
                      public CefDownloadHandler,
                      public CefKeyboardHandler,
+                     public CefRequestHandler,
                      public CefDragHandler,
                      public CefPermissionHandler {
  public:
@@ -27,6 +28,7 @@ class FubukiClient : public CefClient,
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefDragHandler> GetDragHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
 
@@ -62,6 +64,11 @@ class FubukiClient : public CefClient,
                      const CefKeyEvent& event,
                      CefEventHandle os_event,
                      bool* is_keyboard_shortcut) override;
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                      CefRefPtr<CefFrame> frame,
+                      CefRefPtr<CefRequest> request,
+                      bool user_gesture,
+                      bool is_redirect) override;
   void OnDraggableRegionsChanged(CefRefPtr<CefBrowser> browser,
                                  CefRefPtr<CefFrame> frame,
                                  const std::vector<CefDraggableRegion>& regions) override;

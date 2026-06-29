@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include "cef/FubukiClient.h"
+#include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
 #include "utils/UrlUtils.h"
 
@@ -13,9 +14,13 @@
 - (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height;
 @end
 
+@interface FubukiWindowDelegate : NSObject <NSWindowDelegate>
+@end
+
 @implementation FubukiDragRegionView {
   NSMutableArray<NSValue*>* draggableRects_;
   NSMutableArray<NSValue*>* blockedRects_;
+  CGFloat contentHeight_;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -23,6 +28,7 @@
   if (self) {
     draggableRects_ = [NSMutableArray array];
     blockedRects_ = [NSMutableArray array];
+    contentHeight_ = frame.size.height;
     [self setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   }
   return self;
@@ -35,6 +41,7 @@
 - (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height {
   [draggableRects_ removeAllObjects];
   [blockedRects_ removeAllObjects];
+  contentHeight_ = height;
   for (const auto& region : regions) {
     const NSRect rect = NSMakeRect(region.bounds.x,
                                   height - region.bounds.y - region.bounds.height,
@@ -51,6 +58,9 @@
   }
 
   const NSPoint localPoint = point;
+  if (localPoint.x >= 220.0 && localPoint.y <= contentHeight_ - 56.0) {
+    return nil;
+  }
   for (NSValue* value in blockedRects_) {
     if (NSPointInRect(localPoint, [value rectValue])) {
       return nil;
@@ -78,11 +88,38 @@
 }
 @end
 
+@implementation FubukiWindowDelegate
+- (void)windowDidBecomeKey:(NSNotification*)notification {
+  NSWindow* window = (NSWindow*)[notification object];
+  for (NSButton* button in @[
+         [window standardWindowButton:NSWindowCloseButton],
+         [window standardWindowButton:NSWindowMiniaturizeButton],
+         [window standardWindowButton:NSWindowZoomButton],
+       ]) {
+    [button setHidden:NO];
+    [button setAlphaValue:1.0];
+  }
+}
+
+- (void)windowDidResignKey:(NSNotification*)notification {
+  NSWindow* window = (NSWindow*)[notification object];
+  for (NSButton* button in @[
+         [window standardWindowButton:NSWindowCloseButton],
+         [window standardWindowButton:NSWindowMiniaturizeButton],
+         [window standardWindowButton:NSWindowZoomButton],
+       ]) {
+    [button setHidden:NO];
+    [button setAlphaValue:1.0];
+  }
+}
+@end
+
 namespace fubuki {
 
 namespace {
 
-constexpr CGFloat kUiHeight = 96.0;
+constexpr CGFloat kSidebarWidth = 220.0;
+constexpr CGFloat kNavHeight = 56.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
 
@@ -107,6 +144,37 @@ std::filesystem::path ProfilePath() {
               : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
 }
 
+BrowserWindow* gActiveBrowserWindow = nullptr;
+NSMutableArray<NSWindow*>* gDevToolsWindows = nil;
+FubukiWindowDelegate* gWindowDelegate = nil;
+
+std::string QueryParam(const std::string& url, const std::string& key) {
+  const size_t queryStart = url.find('?');
+  if (queryStart == std::string::npos) {
+    return "";
+  }
+  const std::string query = url.substr(queryStart + 1);
+  size_t start = 0;
+  while (start <= query.size()) {
+    const size_t end = query.find('&', start);
+    const std::string pair = query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    const size_t equals = pair.find('=');
+    const std::string name = equals == std::string::npos ? pair : pair.substr(0, equals);
+    if (name == key) {
+      const std::string value = equals == std::string::npos ? "" : pair.substr(equals + 1);
+      return CefURIDecode(value,
+                          true,
+                          static_cast<cef_uri_unescape_rule_t>(UU_SPACES | UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS))
+          .ToString();
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return "";
+}
+
 }  // namespace
 
 BrowserWindow::BrowserWindow(EventBus& eventBus, TabManager& tabManager)
@@ -114,13 +182,55 @@ BrowserWindow::BrowserWindow(EventBus& eventBus, TabManager& tabManager)
       tabManager_(tabManager),
       bridge_(std::make_unique<NativeBridge>(*this)),
       dataStore_(std::make_unique<BrowserDataStore>(ProfilePath())) {
+  gActiveBrowserWindow = this;
   dataStore_->Load();
   dataStore_->Log("info", "BrowserWindow initialized");
   RegisterCommands();
   WireEvents();
 }
 
-BrowserWindow::~BrowserWindow() = default;
+BrowserWindow::~BrowserWindow() {
+  if (gActiveBrowserWindow == this) {
+    gActiveBrowserWindow = nullptr;
+  }
+}
+
+bool DispatchBrowserMenuCommand(const std::string& commandId) {
+  BrowserWindow* window = gActiveBrowserWindow;
+  if (!window) {
+    return false;
+  }
+  Tab* tab = window->Tabs().GetActiveTab();
+  const std::string tabId = tab ? tab->id : "";
+  if (commandId == "tabs.create") {
+    return window->CreateTab("fubuki://newtab/", true);
+  }
+  if (commandId == "app.focusOmnibox") {
+    return window->FocusOmnibox();
+  }
+  if (commandId == "app.openSettings") {
+    return tab ? window->Navigate(tabId, "fubuki://settings/") : window->CreateTab("fubuki://settings/", true);
+  }
+  if (!tab) {
+    return false;
+  }
+  if (commandId == "tabs.close") {
+    return window->CloseTab(tabId);
+  }
+  if (commandId == "tabs.reload") {
+    return window->Reload(tabId);
+  }
+  if (commandId == "tabs.stop") {
+    return window->Stop(tabId);
+  }
+  if (commandId == "tabs.goBack") {
+    return window->GoBack(tabId);
+  }
+  if (commandId == "tabs.goForward") {
+    return window->GoForward(tabId);
+  }
+  return false;
+}
 
 void BrowserWindow::Show() {
   CEF_REQUIRE_UI_THREAD();
@@ -255,6 +365,11 @@ bool BrowserWindow::OpenDevTools() {
                                                           backing:NSBackingStoreBuffered
                                                             defer:NO];
   [devToolsWindow setTitle:@"Fubuki DevTools"];
+  if (!gDevToolsWindows) {
+    gDevToolsWindows = [NSMutableArray array];
+  }
+  [gDevToolsWindows addObject:devToolsWindow];
+  [devToolsWindow setReleasedWhenClosed:NO];
   NSView* devToolsView = [[NSView alloc] initWithFrame:[[devToolsWindow contentView] bounds]];
   [devToolsView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [devToolsWindow setContentView:devToolsView];
@@ -262,7 +377,7 @@ bool BrowserWindow::OpenDevTools() {
   CefWindowInfo info;
   info.SetAsChild(devToolsView, CefRect(0, 0, 1000, 720));
   CefBrowserSettings settings;
-  browser->GetHost()->ShowDevTools(info, new FubukiClient(this, "", false), settings, CefPoint());
+  browser->GetHost()->ShowDevTools(info, new FubukiClient(nullptr, "", false), settings, CefPoint());
   [devToolsWindow makeKeyAndOrderFront:nil];
   return true;
 }
@@ -285,13 +400,28 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
 }
 
 bool BrowserWindow::SetSetting(const std::string& key, const std::string& value) {
-  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior") {
+  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior" && key != "theme") {
     return false;
   }
   dataStore_->SetSetting(key, value);
   dataStore_->Log("info", "Setting updated: " + key);
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return true;
+}
+
+bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::string& url) {
+  const std::string key = QueryParam(url, "key");
+  const std::string value = QueryParam(url, "value");
+  bool ok = false;
+  if (key == "removeBookmark") {
+    ok = RemoveBookmark(value);
+  } else {
+    ok = SetSetting(key, value);
+  }
+  if (ok && tabManager_.GetTab(tabId)) {
+    Navigate(tabId, "fubuki://settings/");
+  }
+  return ok;
 }
 
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
@@ -404,6 +534,18 @@ void BrowserWindow::CreateNativeWindow() {
   [window_ setBackgroundColor:[NSColor clearColor]];
   [window_ setOpaque:NO];
   [window_ setMinSize:NSMakeSize(kMinWidth, kMinHeight)];
+  if (!gWindowDelegate) {
+    gWindowDelegate = [[FubukiWindowDelegate alloc] init];
+  }
+  [window_ setDelegate:gWindowDelegate];
+  for (NSButton* button in @[
+         [window_ standardWindowButton:NSWindowCloseButton],
+         [window_ standardWindowButton:NSWindowMiniaturizeButton],
+         [window_ standardWindowButton:NSWindowZoomButton],
+       ]) {
+    [button setHidden:NO];
+    [button setAlphaValue:1.0];
+  }
 
   NSView* root = [[NSView alloc] initWithFrame:frame];
   [root setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -411,18 +553,19 @@ void BrowserWindow::CreateNativeWindow() {
   [root.layer setBackgroundColor:[[NSColor clearColor] CGColor]];
   [window_ setContentView:root];
 
-  uiHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, frame.size.height - kUiHeight, frame.size.width, kUiHeight)];
-  contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height - kUiHeight)];
+  uiHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
+  contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(kSidebarWidth, 0, frame.size.width - kSidebarWidth, frame.size.height - kNavHeight)];
   dragRegionView_ = [[FubukiDragRegionView alloc] initWithFrame:[uiHostView_ frame]];
-  [uiHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+  [uiHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [dragRegionView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [uiHostView_ setWantsLayer:YES];
   [contentHostView_ setWantsLayer:YES];
   [uiHostView_.layer setBackgroundColor:[[NSColor clearColor] CGColor]];
   [contentHostView_.layer setBackgroundColor:[[NSColor whiteColor] CGColor]];
-  [root addSubview:contentHostView_];
   [root addSubview:uiHostView_];
-  [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:uiHostView_];
+  [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
+  [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:contentHostView_];
 }
 
 void BrowserWindow::CreateUiBrowser() {
@@ -430,7 +573,7 @@ void BrowserWindow::CreateUiBrowser() {
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_),
                                 new FubukiClient(this, "", true),
-                                "fubuki://app/index.html?v=3",
+                                "fubuki://app/index.html?v=4",
                                 settings,
                                 nullptr,
                                 nullptr);
@@ -506,7 +649,6 @@ void BrowserWindow::WireEvents() {
     value->SetDictionary(bridge_->TabToDictionary(event.tab));
     payload->SetValue("tab", value);
     bridge_->EmitToUi(event.name, payload);
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   };
   eventBus_.Subscribe(EventType::TabCreated, emit);
   eventBus_.Subscribe(EventType::TabUpdated, emit);

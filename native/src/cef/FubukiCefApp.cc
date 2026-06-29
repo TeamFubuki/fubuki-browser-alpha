@@ -54,6 +54,7 @@ void FubukiCefApp::OnContextInitialized() {
   CEF_REQUIRE_UI_THREAD();
   CefRegisterSchemeHandlerFactory("fubuki", "app", new FubukiSchemeHandlerFactory(uiDistPath_));
   CefRegisterSchemeHandlerFactory("fubuki", "newtab", new FubukiSchemeHandlerFactory(uiDistPath_));
+  CefRegisterSchemeHandlerFactory("fubuki", "settings", new FubukiSchemeHandlerFactory(uiDistPath_));
 
   tabManager_ = std::make_unique<TabManager>(eventBus_);
   browserWindow_ = std::make_unique<BrowserWindow>(eventBus_, *tabManager_);

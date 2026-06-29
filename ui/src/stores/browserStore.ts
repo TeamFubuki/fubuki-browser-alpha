@@ -13,7 +13,8 @@ const initialState: BrowserState & { status: string } = {
     homepage: "https://example.com",
     downloadDirectory: "",
     searchEngine: "duckduckgo",
-    startupBehavior: "homepage"
+    startupBehavior: "homepage",
+    theme: "light"
   },
   profilePath: "",
   status: "Starting"
@@ -21,9 +22,22 @@ const initialState: BrowserState & { status: string } = {
 
 export const [browserState, setBrowserState] = createStore(initialState);
 
+let pendingRefresh: Promise<void> | undefined;
+let pendingStatus = "Ready";
+
 export async function refreshState(status = "Ready") {
-  const state = await fubuki.invoke<BrowserState>("app.getState");
-  setBrowserState({ ...state, status });
+  pendingStatus = status;
+  if (pendingRefresh) {
+    return pendingRefresh;
+  }
+  pendingRefresh = Promise.resolve().then(async () => {
+    const statusToApply = pendingStatus;
+    const state = await fubuki.invoke<BrowserState>("app.getState");
+    setBrowserState({ ...state, status: statusToApply });
+  }).finally(() => {
+    pendingRefresh = undefined;
+  });
+  return pendingRefresh;
 }
 
 export function bindNativeEvents() {

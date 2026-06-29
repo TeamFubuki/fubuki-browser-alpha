@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { fubuki } from "../bridge/fubuki";
-import { browserState } from "../stores/browserStore";
+import { browserState, refreshState } from "../stores/browserStore";
 import Omnibox from "./Omnibox";
 
 function activeTab() {
@@ -15,6 +15,22 @@ export default function Toolbar() {
     if (tab) {
       void fubuki.invoke("tabs.navigate", { tabId: tab.id, input: draft() || tab.url });
     }
+  };
+
+  const isBookmarked = () => {
+    const tab = activeTab();
+    return !!tab?.url && browserState.bookmarks.some((bookmark) => bookmark.url === tab.url);
+  };
+
+  const toggleBookmark = async () => {
+    const tab = activeTab();
+    if (!tab?.url) return;
+    if (isBookmarked()) {
+      await fubuki.invoke("bookmarks.remove", { url: tab.url });
+    } else {
+      await fubuki.invoke("bookmarks.addActive");
+    }
+    await refreshState("bookmarks.changed");
   };
 
   return (
@@ -33,11 +49,11 @@ export default function Toolbar() {
         <span aria-hidden="true">{activeTab()?.isLoading ? "×" : "↻"}</span>
       </button>
       <Omnibox value={activeTab()?.url ?? ""} onDraft={setDraft} onSubmit={submit} />
-      <button class="tool-button" title="Bookmark" onClick={() => void fubuki.invoke("bookmarks.addActive")}>
-        <span aria-hidden="true">☆</span>
+      <button classList={{ "tool-button": true, selected: isBookmarked() }} title={isBookmarked() ? "Remove bookmark" : "Add bookmark"} onClick={() => void toggleBookmark()}>
+        <span aria-hidden="true">{isBookmarked() ? "★" : "☆"}</span>
       </button>
-      <button class="tool-button" title="DevTools" onClick={() => void fubuki.invoke("commands.execute", { id: "app.openDevTools" })}>
-        Dev
+      <button class="tool-button" title="Settings" onClick={() => browserState.activeTabId && void fubuki.invoke("tabs.navigate", { tabId: browserState.activeTabId, input: "fubuki://settings/" })}>
+        <span aria-hidden="true">⚙</span>
       </button>
     </section>
   );

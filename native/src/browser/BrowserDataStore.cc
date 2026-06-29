@@ -79,6 +79,9 @@ void BrowserDataStore::Load() {
     const char* home = std::getenv("HOME");
     settings_->SetString("downloadDirectory", home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp");
   }
+  if (!settings_->HasKey("theme")) {
+    settings_->SetString("theme", "light");
+  }
   SaveDictionary(settingsPath_, settings_);
 }
 

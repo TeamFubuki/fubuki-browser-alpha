@@ -4,6 +4,9 @@
   color-scheme: light;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sidebar-width: 220px;
+  --nav-height: 56px;
+  --traffic-light-safe-width: 78px;
   --md-primary: #005bc1;
   --md-on-primary: #ffffff;
   --md-secondary: #426277;
@@ -17,10 +20,76 @@
   --md-on-surface: #111827;
   --md-on-surface-variant: #334155;
   --md-scrim: rgb(18 28 40 / 0.18);
+  --chrome-bg: rgb(248 250 255 / 0.88);
+  --chrome-panel: rgb(255 255 255 / 0.84);
+  --chrome-panel-strong: rgb(255 255 255 / 0.96);
+  --chrome-border: rgb(194 202 214 / 0.78);
+  --chrome-hover: rgb(255 255 255 / 0.98);
+  --content-placeholder: transparent;
   background: transparent;
   color: var(--md-on-surface);
   font-synthesis: none;
   text-rendering: geometricPrecision;
+}
+
+:root[data-theme="soft"] {
+  color-scheme: light;
+  --md-primary: #2f6f73;
+  --md-on-primary: #ffffff;
+  --md-surface: #fbfbf7;
+  --md-surface-container: #eff4ee;
+  --md-surface-container-high: #e5eee7;
+  --md-surface-container-highest: #dae6df;
+  --md-outline: #8c9a92;
+  --md-outline-variant: #c8d2cb;
+  --md-on-surface: #17201b;
+  --md-on-surface-variant: #3c4942;
+  --md-scrim: rgb(31 44 36 / 0.16);
+  --chrome-bg: rgb(249 250 244 / 0.9);
+  --chrome-panel: rgb(255 255 251 / 0.84);
+  --chrome-panel-strong: rgb(255 255 253 / 0.96);
+  --chrome-border: rgb(198 210 203 / 0.86);
+  --chrome-hover: #ffffff;
+}
+
+:root[data-theme="muted"] {
+  color-scheme: light;
+  --md-primary: #546179;
+  --md-on-primary: #ffffff;
+  --md-surface: #f7f8fa;
+  --md-surface-container: #eceff3;
+  --md-surface-container-high: #e1e5eb;
+  --md-surface-container-highest: #d6dce4;
+  --md-outline: #858d99;
+  --md-outline-variant: #c7ccd4;
+  --md-on-surface: #171b22;
+  --md-on-surface-variant: #404753;
+  --md-scrim: rgb(28 32 39 / 0.16);
+  --chrome-bg: rgb(245 247 250 / 0.9);
+  --chrome-panel: rgb(252 253 255 / 0.82);
+  --chrome-panel-strong: rgb(255 255 255 / 0.95);
+  --chrome-border: rgb(194 199 208 / 0.86);
+  --chrome-hover: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --md-primary: #8fb8ff;
+  --md-on-primary: #102849;
+  --md-surface: #14171b;
+  --md-surface-container: #1d2228;
+  --md-surface-container-high: #252b32;
+  --md-surface-container-highest: #303741;
+  --md-outline: #747e8b;
+  --md-outline-variant: #3d4652;
+  --md-on-surface: #eef2f7;
+  --md-on-surface-variant: #c2cad6;
+  --md-scrim: rgb(0 0 0 / 0.34);
+  --chrome-bg: rgb(19 22 27 / 0.92);
+  --chrome-panel: rgb(32 37 44 / 0.84);
+  --chrome-panel-strong: rgb(40 46 55 / 0.96);
+  --chrome-border: rgb(67 76 88 / 0.86);
+  --chrome-hover: rgb(48 55 66 / 0.98);
 }
 
 * {
@@ -47,57 +116,89 @@ button {
 }
 
 .app-shell {
-  -webkit-app-region: drag;
-  height: 96px;
+  -webkit-app-region: no-drag;
+  width: 100vw;
+  height: 100vh;
   display: grid;
-  grid-template-rows: 44px 52px;
-  background:
-    linear-gradient(135deg, rgb(255 255 255 / 0.82), rgb(232 242 255 / 0.72) 46%, rgb(255 239 250 / 0.62)),
-    rgb(248 251 255 / 0.72);
-  border-bottom: 1px solid rgb(115 130 150 / 0.46);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.9) inset, 0 14px 30px var(--md-scrim);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-rows: var(--nav-height) minmax(0, 1fr);
+  grid-template-areas:
+    "tabs toolbar"
+    "tabs page";
+  background: var(--content-placeholder);
+  color: var(--md-on-surface);
+}
+
+.app-logo {
+  -webkit-app-region: drag;
+  position: fixed;
+  top: 8px;
+  left: calc(var(--traffic-light-safe-width) + 8px);
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  user-select: none;
+}
+
+.app-shell::before {
+  content: "";
+  grid-area: tabs;
+  background: var(--chrome-bg);
+  border-right: 1px solid var(--chrome-border);
+  box-shadow: 1px 0 0 rgb(255 255 255 / 0.36) inset;
+  backdrop-filter: blur(22px) saturate(1.25);
+}
+
+.app-shell::after {
+  content: "";
+  grid-area: toolbar;
+  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--chrome-border);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.36) inset;
   backdrop-filter: blur(22px) saturate(1.35);
 }
 
 .tab-strip {
   -webkit-app-region: drag;
+  grid-area: tabs;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: end;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: stretch;
   gap: 8px;
-  padding: 9px 12px 0 82px;
+  min-width: 0;
+  min-height: 0;
+  padding: 40px 8px 10px;
+  z-index: 1;
 }
 
 .tabs {
   min-width: 0;
-  display: flex;
-  gap: 5px;
-  overflow: hidden;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  overflow: auto;
 }
 
 .tab {
   -webkit-app-region: no-drag;
-  width: clamp(128px, 18vw, 230px);
-  height: 35px;
+  width: 100%;
+  height: 42px;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 24px;
   align-items: center;
-  border: 1px solid rgb(125 141 160 / 0.48);
-  border-bottom-color: rgb(110 126 145 / 0.56);
-  border-radius: 16px 16px 6px 6px;
-  background: rgb(245 249 255 / 0.58);
+  border: 1px solid transparent;
+  border-radius: 21px;
+  background: transparent;
   color: var(--md-on-surface-variant);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.78) inset;
-  backdrop-filter: blur(14px);
 }
 
 .tab.active {
-  background: rgb(255 255 255 / 0.94);
-  border-color: rgb(99 116 136 / 0.54);
-  border-bottom-color: rgb(255 255 255 / 0.94);
+  background: color-mix(in srgb, var(--md-primary) 14%, var(--chrome-panel-strong));
+  border-color: var(--chrome-border);
   color: var(--md-on-surface);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.95) inset, 0 8px 20px rgb(28 45 67 / 0.12);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.42) inset;
 }
 
 .tab-main {
@@ -108,7 +209,7 @@ button {
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  padding: 0 7px 0 9px;
+  padding: 0 8px 0 12px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -119,7 +220,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -131,25 +232,25 @@ button {
   place-items: center;
   border-radius: 50%;
   background: transparent;
-  color: #4b5563;
+  color: var(--md-on-surface-variant);
   font-size: 13px;
   line-height: 1;
 }
 
 .tab-close:hover {
-  background: rgb(209 219 232 / 0.92);
+  background: var(--md-surface-container-high);
   color: var(--md-on-surface);
 }
 
 .tab.active .tab-close:hover {
-  background: #e9eef6;
+  background: var(--md-surface-container-highest);
 }
 
 .spinner {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid #96a4b7;
+  border: 2px solid var(--md-outline);
   border-top-color: var(--md-primary);
   animation: spin 0.85s linear infinite;
 }
@@ -166,7 +267,7 @@ button {
   width: 11px;
   height: 11px;
   border-radius: 3px;
-  background: linear-gradient(135deg, #4f7cff, #17a589);
+  background: linear-gradient(135deg, var(--md-primary), #17a589);
 }
 
 .favicon:has(img)::before {
@@ -182,22 +283,22 @@ button {
 .icon-button,
 .tool-button {
   -webkit-app-region: no-drag;
-  height: 34px;
-  min-width: 32px;
+  height: 36px;
+  min-width: 36px;
   display: grid;
   place-items: center;
   border: 1px solid rgb(117 132 151 / 0.48);
-  border-radius: 17px;
-  background: rgb(255 255 255 / 0.82);
-  color: #1f2937;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.9) inset, 0 2px 7px rgb(31 41 55 / 0.08);
+  border-radius: 18px;
+  background: var(--chrome-panel);
+  color: var(--md-on-surface);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.36) inset, 0 2px 7px rgb(31 41 55 / 0.08);
   backdrop-filter: blur(12px);
 }
 
 .icon-button:hover,
 .tool-button:hover {
-  border-color: #728197;
-  background: #ffffff;
+  border-color: var(--md-outline);
+  background: var(--chrome-hover);
 }
 
 .icon-button:active,
@@ -206,25 +307,33 @@ button {
   box-shadow: 0 1px 2px rgb(31 41 55 / 0.08) inset;
 }
 
+.tool-button.selected {
+  background: color-mix(in srgb, var(--md-primary) 18%, var(--chrome-panel-strong));
+  border-color: color-mix(in srgb, var(--md-primary) 42%, var(--chrome-border));
+  color: var(--md-primary);
+}
+
 .icon-button:disabled,
 .tool-button:disabled {
   opacity: 0.42;
 }
 
 .new-tab {
-  margin-bottom: 5px;
+  order: -1;
+  width: 100%;
   font-size: 18px;
 }
 
 .toolbar {
   -webkit-app-region: drag;
+  grid-area: toolbar;
   display: grid;
-  grid-template-columns: 36px 36px 36px minmax(180px, 1fr) 36px 58px;
+  grid-template-columns: 36px 36px 36px minmax(180px, 1fr) 36px 36px;
   gap: 8px;
   align-items: center;
-  padding: 8px 12px 9px;
-  background: rgb(255 255 255 / 0.42);
-  border-top: 1px solid rgb(255 255 255 / 0.62);
+  min-width: 0;
+  padding: 10px 12px;
+  z-index: 1;
 }
 
 .omnibox {
@@ -234,11 +343,11 @@ button {
 
 .omnibox input {
   width: 100%;
-  height: 36px;
+  height: 38px;
   border: 1px solid rgb(92 109 130 / 0.58);
-  border-radius: 18px;
+  border-radius: 19px;
   padding: 0 15px;
-  background: rgb(255 255 255 / 0.92);
+  background: var(--chrome-panel-strong);
   color: var(--md-on-surface);
   outline: none;
   box-shadow: 0 1px 2px rgb(31 41 55 / 0.06) inset, 0 2px 10px rgb(31 41 55 / 0.07);
@@ -246,12 +355,12 @@ button {
 }
 
 .omnibox input:hover {
-  background: #ffffff;
+  background: var(--chrome-hover);
 }
 
 .omnibox input:focus {
   border-color: var(--md-primary);
-  background: #ffffff;
+  background: var(--chrome-hover);
   box-shadow: 0 0 0 3px rgb(0 91 193 / 0.18), 0 2px 10px rgb(31 41 55 / 0.07);
 }
 
@@ -345,7 +454,7 @@ button {
 .settings-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 160px) minmax(0, 160px) minmax(0, 1fr) 84px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 160px) minmax(0, 160px) minmax(0, 1fr) minmax(0, 120px) 84px;
   gap: 8px;
   align-items: end;
 }

@@ -180,7 +180,7 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>,
   if (!window_ || event.type != KEYEVENT_RAWKEYDOWN) {
     return false;
   }
-  const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0 || (event.modifiers & EVENTFLAG_CONTROL_DOWN) != 0;
+  const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0;
   const bool altDown = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
   const char character = static_cast<char>(event.unmodified_character);
   const bool handled = window_->HandleShortcut(commandDown, altDown, event.windows_key_code, character);
@@ -188,6 +188,22 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>,
     *is_keyboard_shortcut = true;
   }
   return handled;
+}
+
+bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefRefPtr<CefRequest> request,
+                                  bool,
+                                  bool) {
+  if (!window_ || isUi_ || !frame || !frame->IsMain() || !request) {
+    return false;
+  }
+  const std::string url = request->GetURL().ToString();
+  if (url.rfind("fubuki://settings/set", 0) == 0) {
+    window_->HandleSettingsUrl(tabId_, url);
+    return true;
+  }
+  return false;
 }
 
 void FubukiClient::OnDraggableRegionsChanged(CefRefPtr<CefBrowser>,
