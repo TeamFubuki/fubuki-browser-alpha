@@ -243,7 +243,9 @@ void BrowserWindow::Show() {
 }
 
 bool BrowserWindow::CreateTab(const std::string& input, bool active) {
-  const std::string url = NormalizeNavigationInput(input, dataStore_->Settings()->GetString("searchEngine"));
+  const std::string url = NormalizeNavigationInput(input,
+                                                   dataStore_->Settings()->GetString("searchEngine"),
+                                                   dataStore_->Settings()->GetString("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active);
   CreateTabBrowser(tab);
   ResizeViews();
@@ -275,7 +277,9 @@ bool BrowserWindow::Navigate(const std::string& tabId, const std::string& input)
   if (!tab || !tab->browser) {
     return false;
   }
-  tab->browser->GetMainFrame()->LoadURL(NormalizeNavigationInput(input, dataStore_->Settings()->GetString("searchEngine")));
+  tab->browser->GetMainFrame()->LoadURL(NormalizeNavigationInput(input,
+                                                                  dataStore_->Settings()->GetString("searchEngine"),
+                                                                  dataStore_->Settings()->GetString("customSearchUrl")));
   return true;
 }
 
@@ -400,7 +404,9 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
 }
 
 bool BrowserWindow::SetSetting(const std::string& key, const std::string& value) {
-  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior" && key != "theme") {
+  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior" &&
+      key != "theme" && key != "language" && key != "newTabBackgroundMode" && key != "newTabBackgroundColor" &&
+      key != "newTabBackgroundUrl" && key != "customSearchUrl") {
     return false;
   }
   dataStore_->SetSetting(key, value);
@@ -409,9 +415,34 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   return true;
 }
 
+bool BrowserWindow::SetUiOverlayActive(bool active) {
+  if (!uiHostView_ || !contentHostView_) {
+    return false;
+  }
+  NSView* root = [uiHostView_ superview];
+  if (!root) {
+    return false;
+  }
+  [uiHostView_ removeFromSuperview];
+  [contentHostView_ removeFromSuperview];
+  if (active) {
+    [root addSubview:contentHostView_];
+    [root addSubview:uiHostView_ positioned:NSWindowAbove relativeTo:contentHostView_];
+  } else {
+    [root addSubview:uiHostView_];
+    [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
+  }
+  if (dragRegionView_) {
+    [dragRegionView_ removeFromSuperview];
+    [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:active ? uiHostView_ : contentHostView_];
+  }
+  return true;
+}
+
 bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::string& url) {
   const std::string key = QueryParam(url, "key");
   const std::string value = QueryParam(url, "value");
+  const std::string returnPage = QueryParam(url, "return");
   bool ok = false;
   if (key == "removeBookmark") {
     ok = RemoveBookmark(value);
@@ -419,9 +450,17 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = SetSetting(key, value);
   }
   if (ok && tabManager_.GetTab(tabId)) {
-    Navigate(tabId, "fubuki://settings/");
+    Navigate(tabId, returnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + returnPage);
   }
   return ok;
+}
+
+bool BrowserWindow::HandleNewTabSearchUrl(const std::string& tabId, const std::string& url) {
+  const std::string query = QueryParam(url, "q");
+  if (query.empty()) {
+    return false;
+  }
+  return Navigate(tabId, query);
 }
 
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
@@ -626,6 +665,11 @@ void BrowserWindow::RegisterCommands() {
     auto value = CefValue::Create();
     value->SetBool(tabManager_.ActivatePrevious());
     SetActiveContentView();
+    return value;
+  });
+  commands_.Register("ui.setOverlayActive", [this](CefRefPtr<CefDictionaryValue> args) {
+    auto value = CefValue::Create();
+    value->SetBool(SetUiOverlayActive(args->HasKey("active") && args->GetBool("active")));
     return value;
   });
   commands_.Register("app.openDevTools", [this](CefRefPtr<CefDictionaryValue>) {

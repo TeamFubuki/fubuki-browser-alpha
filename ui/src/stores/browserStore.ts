@@ -12,9 +12,14 @@ const initialState: BrowserState & { status: string } = {
   settings: {
     homepage: "https://example.com",
     downloadDirectory: "",
-    searchEngine: "duckduckgo",
+    searchEngine: "google",
+    customSearchUrl: "https://www.google.com/search?q={query}",
     startupBehavior: "homepage",
-    theme: "light"
+    theme: "light",
+    language: "en",
+    newTabBackgroundMode: "unsplash",
+    newTabBackgroundColor: "#f8fafd",
+    newTabBackgroundUrl: ""
   },
   profilePath: "",
   status: "Starting"

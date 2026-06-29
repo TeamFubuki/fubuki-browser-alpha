@@ -203,6 +203,10 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>,
     window_->HandleSettingsUrl(tabId_, url);
     return true;
   }
+  if (url.rfind("fubuki://newtab/search", 0) == 0) {
+    window_->HandleNewTabSearchUrl(tabId_, url);
+    return true;
+  }
   return false;
 }
 

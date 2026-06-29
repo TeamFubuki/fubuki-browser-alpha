@@ -5,11 +5,14 @@
 
 #include "include/cef_values.h"
 
+struct sqlite3;
+
 namespace fubuki {
 
 class BrowserDataStore {
  public:
   explicit BrowserDataStore(std::filesystem::path profilePath);
+  ~BrowserDataStore();
 
   void Load();
   void AddHistory(const std::string& title, const std::string& url);
@@ -28,19 +31,23 @@ class BrowserDataStore {
   std::string ProfilePath() const { return profilePath_.string(); }
 
  private:
-  CefRefPtr<CefListValue> LoadList(const std::filesystem::path& path);
-  CefRefPtr<CefDictionaryValue> LoadDictionary(const std::filesystem::path& path);
-  void SaveList(const std::filesystem::path& path, CefRefPtr<CefListValue> list) const;
-  void SaveDictionary(const std::filesystem::path& path, CefRefPtr<CefDictionaryValue> dict) const;
   CefRefPtr<CefDictionaryValue> NewRecord() const;
+  void OpenDatabase();
+  void Execute(const std::string& sql) const;
+  void EnsureSchema();
+  void EnsureDefaultSetting(const std::string& key, const std::string& value);
+  int CountRows(const std::string& table) const;
+  void MigrateJsonFiles();
+  void MigrateSettingsJson(const std::filesystem::path& path);
+  void MigrateRecordsJson(const std::filesystem::path& path, const std::string& table);
+  void RefreshCaches();
+  void RefreshSettings();
+  void RefreshList(const std::string& table, CefRefPtr<CefListValue> target, size_t limit);
   std::string NowIsoString() const;
 
   std::filesystem::path profilePath_;
-  std::filesystem::path historyPath_;
-  std::filesystem::path bookmarksPath_;
-  std::filesystem::path downloadsPath_;
-  std::filesystem::path settingsPath_;
-  std::filesystem::path logsPath_;
+  std::filesystem::path databasePath_;
+  sqlite3* db_ = nullptr;
   CefRefPtr<CefListValue> history_;
   CefRefPtr<CefListValue> bookmarks_;
   CefRefPtr<CefListValue> downloads_;

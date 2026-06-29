@@ -106,6 +106,9 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "settings.set") {
     return BoolValue(window_.SetSetting(params->GetString("key"), params->GetString("value")));
   }
+  if (method == "ui.setOverlayActive") {
+    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") && params->GetBool("active")));
+  }
   if (method == "commands.execute") {
     const std::string id = params->GetString("id");
     CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();

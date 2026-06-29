@@ -11,6 +11,7 @@ export type FubukiBridgeMethod =
   | "bookmarks.addActive"
   | "bookmarks.remove"
   | "settings.set"
+  | "ui.setOverlayActive"
   | "commands.execute";
 
 export type FubukiBridgeEvent =

@@ -41,7 +41,9 @@ class BrowserWindow {
   bool AddActiveBookmark();
   bool RemoveBookmark(const std::string& url);
   bool SetSetting(const std::string& key, const std::string& value);
+  bool SetUiOverlayActive(bool active);
   bool HandleSettingsUrl(const std::string& tabId, const std::string& url);
+  bool HandleNewTabSearchUrl(const std::string& tabId, const std::string& url);
   std::string DownloadPathFor(const std::string& suggestedName) const;
 
   void SetUiBrowser(CefRefPtr<CefBrowser> browser);

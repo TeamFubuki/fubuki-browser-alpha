@@ -72,7 +72,7 @@ target_compile_options(FubukiBrowserAlpha PRIVATE
   -Wno-gnu-zero-variadic-macro-arguments
 )
 target_link_options(FubukiBrowserAlpha PRIVATE ${CEF_LINKER_FLAGS})
-target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3)
 
 set(FUBUKI_APP_BUNDLE "$<TARGET_BUNDLE_DIR:FubukiBrowserAlpha>")
 COPY_MAC_FRAMEWORK(FubukiBrowserAlpha "${CEF_BINARY_DIR}" "${FUBUKI_APP_BUNDLE}")

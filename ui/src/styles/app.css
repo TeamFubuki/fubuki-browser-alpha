@@ -100,12 +100,14 @@ body {
   margin: 0;
   overflow: hidden;
   background: transparent;
+  user-select: none;
 }
 
 button,
 input,
 select {
   font: inherit;
+  user-select: text;
 }
 
 button {
@@ -144,8 +146,7 @@ button {
   content: "";
   grid-area: tabs;
   background: var(--chrome-bg);
-  border-right: 1px solid var(--chrome-border);
-  box-shadow: 1px 0 0 rgb(255 255 255 / 0.36) inset;
+  box-shadow: 14px 0 32px rgb(25 34 48 / 0.08);
   backdrop-filter: blur(22px) saturate(1.25);
 }
 
@@ -153,8 +154,7 @@ button {
   content: "";
   grid-area: toolbar;
   background: var(--chrome-bg);
-  border-bottom: 1px solid var(--chrome-border);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.36) inset;
+  box-shadow: 0 14px 32px rgb(25 34 48 / 0.08);
   backdrop-filter: blur(22px) saturate(1.35);
 }
 
@@ -287,17 +287,16 @@ button {
   min-width: 36px;
   display: grid;
   place-items: center;
-  border: 1px solid rgb(117 132 151 / 0.48);
+  border: 0;
   border-radius: 18px;
   background: var(--chrome-panel);
   color: var(--md-on-surface);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.36) inset, 0 2px 7px rgb(31 41 55 / 0.08);
+  box-shadow: 0 8px 20px rgb(31 41 55 / 0.08);
   backdrop-filter: blur(12px);
 }
 
 .icon-button:hover,
 .tool-button:hover {
-  border-color: var(--md-outline);
   background: var(--chrome-hover);
 }
 
@@ -309,7 +308,6 @@ button {
 
 .tool-button.selected {
   background: color-mix(in srgb, var(--md-primary) 18%, var(--chrome-panel-strong));
-  border-color: color-mix(in srgb, var(--md-primary) 42%, var(--chrome-border));
   color: var(--md-primary);
 }
 
@@ -328,7 +326,7 @@ button {
   -webkit-app-region: drag;
   grid-area: toolbar;
   display: grid;
-  grid-template-columns: 36px 36px 36px minmax(180px, 1fr) 36px 36px;
+  grid-template-columns: 36px 36px 36px minmax(180px, 1fr) 36px 36px 36px 36px;
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -344,13 +342,13 @@ button {
 .omnibox input {
   width: 100%;
   height: 38px;
-  border: 1px solid rgb(92 109 130 / 0.58);
+  border: 0;
   border-radius: 19px;
   padding: 0 15px;
   background: var(--chrome-panel-strong);
   color: var(--md-on-surface);
   outline: none;
-  box-shadow: 0 1px 2px rgb(31 41 55 / 0.06) inset, 0 2px 10px rgb(31 41 55 / 0.07);
+  box-shadow: 0 10px 24px rgb(31 41 55 / 0.08);
   backdrop-filter: blur(10px);
 }
 
@@ -362,6 +360,129 @@ button {
   border-color: var(--md-primary);
   background: var(--chrome-hover);
   box-shadow: 0 0 0 3px rgb(0 91 193 / 0.18), 0 2px 10px rgb(31 41 55 / 0.07);
+}
+
+.modal-backdrop {
+  -webkit-app-region: no-drag;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(17 24 39 / 0.28);
+  backdrop-filter: blur(12px);
+  animation: fade-in 0.16s ease-out;
+}
+
+.bookmark-modal {
+  width: min(620px, calc(100vw - 48px));
+  max-height: min(620px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--chrome-panel-strong);
+  box-shadow: 0 28px 80px rgb(17 24 39 / 0.24);
+  animation: modal-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.bookmark-modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bookmark-modal h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 720;
+}
+
+.bookmark-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.bookmark-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 8px;
+  align-items: center;
+}
+
+.bookmark-row > button:first-child {
+  min-width: 0;
+  height: 48px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 0.46fr) minmax(0, 0.54fr);
+  gap: 10px;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--md-surface-container);
+  color: var(--md-on-surface);
+  text-align: left;
+}
+
+.bookmark-row > button:first-child:hover {
+  background: var(--md-surface-container-high);
+}
+
+.bookmark-row span,
+.bookmark-row small,
+.empty-state {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark-row small,
+.empty-state {
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+}
+
+.download-row {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--md-surface-container);
+}
+
+.download-icon {
+  grid-row: 1 / 3;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--md-primary) 16%, var(--chrome-panel-strong));
+  color: var(--md-primary);
+  font-weight: 800;
+}
+
+.download-row > span:not(.download-icon),
+.download-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-row > span:not(.download-icon) {
+  font-weight: 700;
 }
 
 .browser-panel {
@@ -501,5 +622,18 @@ button {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
   }
 }

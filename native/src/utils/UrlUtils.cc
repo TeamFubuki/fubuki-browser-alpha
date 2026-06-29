@@ -23,8 +23,26 @@ bool LooksLikeHost(const std::string& value) {
   return value.find(' ') == std::string::npos && value.find('.') != std::string::npos;
 }
 
-std::string SearchUrlFor(const std::string& engine, const std::string& query) {
+std::string ReplaceAll(std::string value, const std::string& needle, const std::string& replacement) {
+  size_t position = 0;
+  while ((position = value.find(needle, position)) != std::string::npos) {
+    value.replace(position, needle.size(), replacement);
+    position += replacement.size();
+  }
+  return value;
+}
+
+std::string SearchUrlFor(const std::string& engine, const std::string& customSearchUrl, const std::string& query) {
   const std::string escaped = EscapeQuery(query);
+  if (engine == "custom" && !customSearchUrl.empty()) {
+    if (customSearchUrl.find("{query}") != std::string::npos) {
+      return ReplaceAll(customSearchUrl, "{query}", escaped);
+    }
+    if (customSearchUrl.find("%s") != std::string::npos) {
+      return ReplaceAll(customSearchUrl, "%s", escaped);
+    }
+    return customSearchUrl + (customSearchUrl.find('?') == std::string::npos ? "?q=" : "&q=") + escaped;
+  }
   if (engine == "google") {
     return "https://www.google.com/search?q=" + escaped;
   }
@@ -52,10 +70,16 @@ std::string EscapeQuery(const std::string& input) {
 }
 
 std::string NormalizeNavigationInput(const std::string& input) {
-  return NormalizeNavigationInput(input, "duckduckgo");
+  return NormalizeNavigationInput(input, "google", "");
 }
 
 std::string NormalizeNavigationInput(const std::string& input, const std::string& searchEngine) {
+  return NormalizeNavigationInput(input, searchEngine, "");
+}
+
+std::string NormalizeNavigationInput(const std::string& input,
+                                     const std::string& searchEngine,
+                                     const std::string& customSearchUrl) {
   const std::string value = Trim(input);
   if (value.empty()) {
     return "fubuki://newtab/";
@@ -66,7 +90,7 @@ std::string NormalizeNavigationInput(const std::string& input, const std::string
   if (LooksLikeHost(value)) {
     return "https://" + value;
   }
-  return SearchUrlFor(searchEngine, value);
+  return SearchUrlFor(searchEngine, customSearchUrl, value);
 }
 
 }  // namespace fubuki

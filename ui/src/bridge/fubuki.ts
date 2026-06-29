@@ -34,8 +34,13 @@ export type BrowserState = {
     homepage: string;
     downloadDirectory: string;
     searchEngine: string;
+    customSearchUrl: string;
     startupBehavior: string;
     theme: string;
+    language: string;
+    newTabBackgroundMode: string;
+    newTabBackgroundColor: string;
+    newTabBackgroundUrl: string;
   };
   profilePath: string;
 };

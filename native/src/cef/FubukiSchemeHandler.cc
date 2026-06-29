@@ -1,16 +1,50 @@
 #include "cef/FubukiSchemeHandler.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <cstring>
+
+#include <sqlite3.h>
 
 #include "include/cef_parser.h"
+#include "utils/UrlUtils.h"
 
 namespace fubuki {
 
 namespace {
+
+constexpr const char* kUnsplashSnow =
+    "https://images.unsplash.com/photo-1483664852095-d6cc6870702d?auto=format&fit=crop&w=2400&q=85";
+
+struct UiText {
+  std::string general;
+  std::string appearance;
+  std::string search;
+  std::string privacy;
+  std::string about;
+  std::string settings;
+  std::string homepage;
+  std::string startup;
+  std::string downloadFolder;
+  std::string theme;
+  std::string language;
+  std::string newTabBackground;
+  std::string backgroundColor;
+  std::string backgroundUrl;
+  std::string save;
+  std::string saved;
+  std::string engine;
+  std::string customSearchUrl;
+  std::string permissions;
+  std::string privacyBody;
+  std::string version;
+  std::string engineName;
+  std::string profile;
+  std::string bundle;
+  std::string searchPlaceholder;
+};
 
 std::string MimeForPath(const std::string& path) {
   if (path.ends_with(".html")) return "text/html";
@@ -29,45 +63,80 @@ std::filesystem::path ProfilePath() {
               : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
 }
 
-std::string ReadFile(const std::filesystem::path& path) {
-  std::ifstream file(path, std::ios::binary);
-  if (!file) {
-    return "";
-  }
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  return buffer.str();
+std::filesystem::path DatabasePath() {
+  return ProfilePath() / "fubuki.sqlite3";
 }
 
 std::string HtmlEscape(const std::string& value) {
   std::ostringstream out;
   for (const char c : value) {
     switch (c) {
-      case '&':
-        out << "&amp;";
-        break;
-      case '<':
-        out << "&lt;";
-        break;
-      case '>':
-        out << "&gt;";
-        break;
-      case '"':
-        out << "&quot;";
-        break;
-      case '\'':
-        out << "&#39;";
-        break;
-      default:
-        out << c;
-        break;
+      case '&': out << "&amp;"; break;
+      case '<': out << "&lt;"; break;
+      case '>': out << "&gt;"; break;
+      case '"': out << "&quot;"; break;
+      case '\'': out << "&#39;"; break;
+      default: out << c; break;
     }
   }
   return out.str();
 }
 
-std::string DictString(CefRefPtr<CefDictionaryValue> dict, const std::string& key, const std::string& fallback = "") {
-  return dict && dict->HasKey(key) && dict->GetType(key) == VTYPE_STRING ? dict->GetString(key).ToString() : fallback;
+std::string PathName(const std::string& url) {
+  const std::string prefix = "fubuki://settings";
+  if (url.rfind(prefix, 0) != 0) {
+    return "general";
+  }
+  std::string path = url.substr(prefix.size());
+  const size_t query = path.find_first_of("?#");
+  if (query != std::string::npos) {
+    path = path.substr(0, query);
+  }
+  if (path.empty() || path == "/") {
+    return "general";
+  }
+  if (path[0] == '/') {
+    path.erase(path.begin());
+  }
+  return path;
+}
+
+void Execute(sqlite3* db, const std::string& sql) {
+  sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+}
+
+std::string Setting(const std::string& key, const std::string& fallback = "") {
+  std::filesystem::create_directories(ProfilePath());
+  sqlite3* db = nullptr;
+  if (sqlite3_open(DatabasePath().string().c_str(), &db) != SQLITE_OK) {
+    return fallback;
+  }
+  Execute(db, "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &statement, nullptr);
+  sqlite3_bind_text(statement, 1, key.c_str(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
+  std::string value = fallback;
+  if (sqlite3_step(statement) == SQLITE_ROW) {
+    const unsigned char* text = sqlite3_column_text(statement, 0);
+    value = text ? reinterpret_cast<const char*>(text) : fallback;
+  }
+  sqlite3_finalize(statement);
+  sqlite3_close(db);
+  return value;
+}
+
+UiText TextFor(const std::string& lang) {
+  if (lang == "ja") {
+    return {"一般", "外観", "検索", "プライバシー", "About", "設定", "ホームページ", "起動時", "ダウンロード先",
+            "テーマ", "言語", "新規タブ背景", "背景色", "背景画像URL", "保存", "保存しました", "検索エンジン", "カスタム検索URL",
+            "権限", "このアルファ版では権限プロンプトは標準で拒否されます。履歴、ブックマーク、ダウンロード、設定はローカルの SQLite に保存されます。",
+            "バージョン", "エンジン", "プロファイル", "バンドル", "検索またはURLを入力"};
+  }
+  return {"General", "Appearance", "Search", "Privacy", "About", "Settings", "Homepage", "Startup", "Download folder",
+          "Theme", "Language", "New tab background", "Background color", "Background image URL", "Save", "Saved",
+          "Search engine", "Custom search URL", "Permissions",
+          "Permission prompts are denied by default in this alpha build. History, bookmarks, downloads, and settings are stored locally in SQLite.",
+          "Version", "Engine", "Profile", "Bundle", "Search or enter URL"};
 }
 
 std::string FubukiLogoSvg(const std::string& className = "logo") {
@@ -79,96 +148,137 @@ std::string FubukiLogoSvg(const std::string& className = "logo") {
          "</svg>";
 }
 
-std::string NewTabHtml() {
-  return std::string(R"(<!doctype html>
-<html><head><meta charset="utf-8"><title>New Tab</title>
-<style>
-body{margin:0;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafd;color:#1b1b1f;display:grid;place-items:center;height:100vh}
-main{width:min(640px,calc(100vw - 48px));text-align:center}
-.logo{width:86px;height:86px;margin:0 auto 18px;filter:drop-shadow(0 14px 28px rgb(24 52 90/.16))}
-h1{font-size:30px;font-weight:720;margin:0 0 10px;letter-spacing:0}
-p{color:#5d6470;margin:0;line-height:1.5}
-</style></head><body><main>)") +
-         FubukiLogoSvg() +
-         R"(<h1>Fubuki Browser Alpha</h1><p>Enter a URL or search query in the address bar.</p></main></body></html>)";
+std::string FubukiFaviconLink() {
+  return "<link rel=\"icon\" type=\"image/svg+xml\" href=\"data:image/svg+xml," +
+         CefURIEncode(FubukiLogoSvg(), false).ToString() + "\">";
 }
 
-std::string SettingsHtml() {
-  const auto profile = ProfilePath();
-  auto settingsValue = CefParseJSON(ReadFile(profile / "settings.json"), JSON_PARSER_RFC);
-  CefRefPtr<CefDictionaryValue> settings = settingsValue && settingsValue->GetType() == VTYPE_DICTIONARY
-                                               ? settingsValue->GetDictionary()
-                                               : CefDictionaryValue::Create();
-  auto bookmarkValue = CefParseJSON(ReadFile(profile / "bookmarks.json"), JSON_PARSER_RFC);
-  CefRefPtr<CefListValue> bookmarks = bookmarkValue && bookmarkValue->GetType() == VTYPE_LIST
-                                          ? bookmarkValue->GetList()
-                                          : CefListValue::Create();
+std::string Selected(bool value) {
+  return value ? " selected" : "";
+}
 
-  const std::string homepage = DictString(settings, "homepage", "https://example.com");
-  const std::string searchEngine = DictString(settings, "searchEngine", "duckduckgo");
-  const std::string startupBehavior = DictString(settings, "startupBehavior", "homepage");
-  const std::string downloadDirectory = DictString(settings, "downloadDirectory", "");
-  const std::string theme = DictString(settings, "theme", "light");
+std::string NavItem(const std::string& page, const std::string& active, const std::string& icon, const std::string& label) {
+  return "<a class=\"" + std::string(page == active ? "active" : "") + "\" href=\"fubuki://settings/" + page +
+         "\"><span>" + icon + "</span><strong>" + HtmlEscape(label) + "</strong></a>";
+}
 
-  std::ostringstream bookmarksHtml;
-  if (bookmarks->GetSize() == 0) {
-    bookmarksHtml << "<p class=\"muted\">No bookmarks yet.</p>";
-  }
-  for (size_t i = 0; i < bookmarks->GetSize(); ++i) {
-    auto item = bookmarks->GetDictionary(i);
-    if (!item) continue;
-    const std::string title = DictString(item, "title", DictString(item, "url", "Untitled"));
-    const std::string url = DictString(item, "url");
-    bookmarksHtml << "<div class=\"bookmark\"><a href=\"" << HtmlEscape(url) << "\"><strong>" << HtmlEscape(title)
-                  << "</strong><span>" << HtmlEscape(url) << "</span></a><a class=\"text-button\" href=\"fubuki://settings/set?key=removeBookmark&value="
-                  << CefURIEncode(url, false).ToString() << "\">Remove</a></div>";
+std::string NewTabHtml() {
+  const std::string lang = Setting("language", "en");
+  const UiText t = TextFor(lang);
+  const std::string mode = Setting("newTabBackgroundMode", "unsplash");
+  const std::string color = Setting("newTabBackgroundColor", "#f8fafd");
+  const std::string customUrl = Setting("newTabBackgroundUrl", "");
+  const std::string image = mode == "custom" && !customUrl.empty() ? customUrl : kUnsplashSnow;
+  const bool useImage = mode != "solid";
+
+  std::ostringstream html;
+  html << R"(<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title>)" << FubukiFaviconLink() << R"(<style>
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff;background:)"
+       << HtmlEscape(color) << R"(;display:grid;place-items:center;overflow:hidden}
+body::before{content:"";position:fixed;inset:0;background:)"
+       << (useImage ? "linear-gradient(180deg,rgb(11 18 32/.18),rgb(11 18 32/.42)),url('" + HtmlEscape(image) + "') center/cover" : "transparent")
+       << R"(;transform:scale(1.02)}
+main{position:relative;width:min(780px,calc(100vw - 48px));display:grid;gap:28px;justify-items:center;text-align:center}
+.brand{display:flex;align-items:center;justify-content:center;gap:18px;text-shadow:0 8px 28px rgb(0 0 0/.26)}.logo{width:76px;height:76px;filter:drop-shadow(0 18px 34px rgb(0 0 0/.24))}
+h1{font-size:clamp(36px,6vw,66px);line-height:1;margin:0;font-weight:760;letter-spacing:0}
+form{width:min(640px,100%)}input{width:100%;height:54px;border:0;border-radius:27px;padding:0 22px;background:rgb(255 255 255/.9);color:#111827;font:inherit;font-size:17px;outline:0;box-shadow:0 18px 42px rgb(0 0 0/.22)}
+input:focus{background:#fff;box-shadow:0 22px 54px rgb(0 0 0/.28)}
+</style></head><body><main><div class="brand">)"
+       << FubukiLogoSvg() << R"(<h1>Fubuki Browser Alpha</h1></div>
+<form action="fubuki://newtab/search" method="get"><input name="q" autocomplete="off" autofocus placeholder=")"
+       << HtmlEscape(t.searchPlaceholder) << R"("></form></main></body></html>)";
+  return html.str();
+}
+
+std::string SettingsPageHtml(const std::string& url) {
+  const std::string page = PathName(url);
+  const std::string lang = Setting("language", "en");
+  const UiText t = TextFor(lang);
+  const std::string homepage = Setting("homepage", "https://example.com");
+  const std::string searchEngine = Setting("searchEngine", "google");
+  const std::string customSearchUrl = Setting("customSearchUrl", "https://www.google.com/search?q={query}");
+  const std::string startupBehavior = Setting("startupBehavior", "homepage");
+  const std::string downloadDirectory = Setting("downloadDirectory", "");
+  const std::string theme = Setting("theme", "light");
+  const std::string bgMode = Setting("newTabBackgroundMode", "unsplash");
+  const std::string bgColor = Setting("newTabBackgroundColor", "#f8fafd");
+  const std::string bgUrl = Setting("newTabBackgroundUrl", "");
+  const std::string homeLabel = lang == "ja" ? "ホーム" : "Home";
+  const std::string newTabLabel = lang == "ja" ? "新規タブ" : "New tab";
+  const std::string unsplashLabel = lang == "ja" ? "吹雪写真" : "Unsplash";
+  const std::string customLabel = lang == "ja" ? "カスタムURL" : "Custom URL";
+  const std::string solidLabel = lang == "ja" ? "単色" : "Solid";
+
+  auto settingLink = [&](const std::string& key, const std::string& value, const std::string& returnPage) {
+    return "fubuki://settings/set?key=" + key + "&value=" + CefURIEncode(value, false).ToString() + "&return=" + returnPage;
+  };
+
+  std::ostringstream content;
+  if (page == "appearance") {
+    content << "<section><h1>" << HtmlEscape(t.appearance) << "</h1><div class=\"field\"><span>" << HtmlEscape(t.theme)
+            << "</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(theme == "light") << "\" href=\"" << settingLink("theme", "light", "appearance") << "\">Light</a>"
+            << "<a class=\"chip" << Selected(theme == "soft") << "\" href=\"" << settingLink("theme", "soft", "appearance") << "\">Soft</a>"
+            << "<a class=\"chip" << Selected(theme == "muted") << "\" href=\"" << settingLink("theme", "muted", "appearance") << "\">Muted</a>"
+            << "<a class=\"chip" << Selected(theme == "dark") << "\" href=\"" << settingLink("theme", "dark", "appearance") << "\">Dark</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(t.language) << "</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(lang == "en") << "\" href=\"" << settingLink("language", "en", "appearance") << "\">English</a>"
+            << "<a class=\"chip" << Selected(lang == "ja") << "\" href=\"" << settingLink("language", "ja", "appearance") << "\">日本語</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(t.newTabBackground) << "</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(bgMode == "unsplash") << "\" href=\"" << settingLink("newTabBackgroundMode", "unsplash", "appearance") << "\">" << HtmlEscape(unsplashLabel) << "</a>"
+            << "<a class=\"chip" << Selected(bgMode == "custom") << "\" href=\"" << settingLink("newTabBackgroundMode", "custom", "appearance") << "\">" << HtmlEscape(customLabel) << "</a>"
+            << "<a class=\"chip" << Selected(bgMode == "solid") << "\" href=\"" << settingLink("newTabBackgroundMode", "solid", "appearance") << "\">" << HtmlEscape(solidLabel) << "</a></div></div>"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"newTabBackgroundColor\"><input type=\"hidden\" name=\"return\" value=\"appearance\"><label>" << HtmlEscape(t.backgroundColor)
+            << "<input name=\"value\" value=\"" << HtmlEscape(bgColor) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"newTabBackgroundUrl\"><input type=\"hidden\" name=\"return\" value=\"appearance\"><label>" << HtmlEscape(t.backgroundUrl)
+            << "<input name=\"value\" value=\"" << HtmlEscape(bgUrl) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
+  } else if (page == "search") {
+    content << "<section><h1>" << HtmlEscape(t.search) << "</h1><div class=\"field\"><span>" << HtmlEscape(t.engine)
+            << "</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(searchEngine == "duckduckgo") << "\" href=\"" << settingLink("searchEngine", "duckduckgo", "search") << "\">DuckDuckGo</a>"
+            << "<a class=\"chip" << Selected(searchEngine == "google") << "\" href=\"" << settingLink("searchEngine", "google", "search") << "\">Google</a>"
+            << "<a class=\"chip" << Selected(searchEngine == "bing") << "\" href=\"" << settingLink("searchEngine", "bing", "search") << "\">Bing</a>"
+            << "<a class=\"chip" << Selected(searchEngine == "custom") << "\" href=\"" << settingLink("searchEngine", "custom", "search") << "\">Custom</a></div></div>"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"customSearchUrl\"><input type=\"hidden\" name=\"return\" value=\"search\"><label>" << HtmlEscape(t.customSearchUrl)
+            << "<input name=\"value\" value=\"" << HtmlEscape(customSearchUrl) << "\" placeholder=\"https://example.com/search?q={query}\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
+  } else if (page == "privacy") {
+    content << "<section><h1>" << HtmlEscape(t.privacy) << "</h1><div class=\"hero-line\"></div><h2>" << HtmlEscape(t.permissions)
+            << "</h2><p>" << HtmlEscape(t.privacyBody) << "</p></section>";
+  } else if (page == "about") {
+    content << "<section class=\"about-page\">" << FubukiLogoSvg("about-logo")
+            << "<h1>Fubuki Browser Alpha</h1><p>Quiet speed. Clear chrome. Local-first data.</p>"
+            << "<div class=\"about-grid\"><div><span>" << HtmlEscape(t.version) << "</span><strong>0.1.0 alpha</strong></div>"
+            << "<div><span>" << HtmlEscape(t.engineName) << "</span><strong>Chromium Embedded Framework</strong></div>"
+            << "<div><span>" << HtmlEscape(t.profile) << "</span><strong>" << HtmlEscape(ProfilePath().string()) << "</strong></div>"
+            << "<div><span>" << HtmlEscape(t.bundle) << "</span><strong>dev.fubuki.browser.alpha</strong></div></div></section>";
+  } else {
+    content << "<section><h1>" << HtmlEscape(t.general) << "</h1>"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"homepage\"><input type=\"hidden\" name=\"return\" value=\"general\"><label>" << HtmlEscape(t.homepage)
+            << "<input name=\"value\" value=\"" << HtmlEscape(homepage) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
+            << "<div class=\"field\"><span>" << HtmlEscape(t.startup) << "</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(startupBehavior == "homepage") << "\" href=\"" << settingLink("startupBehavior", "homepage", "general") << "\">" << HtmlEscape(homeLabel) << "</a>"
+            << "<a class=\"chip" << Selected(startupBehavior == "newTab") << "\" href=\"" << settingLink("startupBehavior", "newTab", "general") << "\">" << HtmlEscape(newTabLabel) << "</a></div></div>"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" value=\"general\"><label>" << HtmlEscape(t.downloadFolder)
+            << "<input name=\"value\" value=\"" << HtmlEscape(downloadDirectory) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
   }
 
   std::ostringstream html;
-  html << R"(<!doctype html><html><head><meta charset="utf-8"><title>Settings</title><style>
-:root{color-scheme:light;--primary:#0b57d0;--on-primary:#fff;--surface:#f8fafd;--surface-container:#eef3fb;--surface-high:#e5ecf7;--outline:#c2cad6;--text:#191c20;--muted:#5d6470}
-*{box-sizing:border-box}body{margin:0;background:var(--surface);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
-.settings{min-height:100vh;display:grid;grid-template-columns:260px minmax(0,1fr)}
-aside{position:sticky;top:0;height:100vh;padding:28px 14px;background:var(--surface-container);border-right:1px solid var(--outline)}
-.brand{display:flex;align-items:center;gap:12px;padding:0 12px 20px}.logo{width:38px;height:38px;flex:0 0 auto;filter:drop-shadow(0 7px 14px rgb(24 52 90/.14))}h1{font-size:22px;line-height:1.1;margin:0;font-weight:760}
-nav{display:grid;gap:6px}nav a{height:44px;display:flex;align-items:center;padding:0 14px;border-radius:22px;color:var(--text);text-decoration:none;font-weight:650}nav a:hover,nav a.active{background:#d9e6ff;color:#073b8e}
-main{padding:30px clamp(24px,4vw,54px) 56px;display:grid;gap:18px;align-content:start}.section{scroll-margin-top:20px}.card{background:#fff;border:1px solid var(--outline);border-radius:28px;padding:22px;box-shadow:0 1px 2px rgb(23 29 38/.05)}
-h2{font-size:24px;margin:0 0 14px;font-weight:760}h3{font-size:16px;margin:0 0 10px;font-weight:720}.muted{color:var(--muted);line-height:1.5}.grid{display:grid;gap:14px}.row{display:grid;grid-template-columns:minmax(160px,.36fr) minmax(0,1fr);gap:16px;align-items:center;margin-top:12px}
-input[type=text],select{width:100%;height:44px;border:1px solid var(--outline);border-radius:14px;padding:0 14px;background:#fff;color:var(--text);font:inherit}
-.button{height:44px;border:0;border-radius:22px;padding:0 20px;background:var(--primary);color:var(--on-primary);font-weight:720;text-decoration:none;display:inline-grid;place-items:center}.text-button{color:var(--primary);font-weight:700;text-decoration:none}
-.segmented{display:flex;flex-wrap:wrap;gap:8px}.chip{height:40px;border:1px solid var(--outline);border-radius:20px;padding:0 16px;display:inline-flex;align-items:center;color:var(--text);text-decoration:none;font-weight:650}.chip.selected{background:#d9e6ff;border-color:#9fc2ff;color:#073b8e}
-.bookmark{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 0;border-top:1px solid #e3e8ef}.bookmark:first-child{border-top:0}.bookmark a:first-child{min-width:0;color:var(--text);text-decoration:none;display:grid;gap:3px}.bookmark span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.about{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.fact{background:var(--surface-container);border-radius:18px;padding:14px}.fact span{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}.fact strong{font-weight:720;word-break:break-word}
-@media(max-width:760px){.settings{grid-template-columns:1fr}aside{position:static;height:auto}.row,.about{grid-template-columns:1fr}}
+  html << R"(<!doctype html><html><head><meta charset="utf-8"><title>)" << HtmlEscape(t.settings) << R"(</title>)" << FubukiFaviconLink() << R"(<style>
+*{box-sizing:border-box}body{margin:0;background:#f7f8fb;color:#161a20;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0;user-select:none}
+.settings{min-height:100vh;display:grid;grid-template-columns:220px minmax(0,1fr)}aside{position:sticky;top:0;height:100vh;padding:22px 12px;background:#eef2f7}
+.brand{height:48px;display:flex;align-items:center;gap:10px;padding:0 10px;margin-bottom:18px}.logo{width:34px;height:34px}.brand strong{font-size:16px}
+nav{display:grid;gap:4px}nav a{height:42px;display:flex;align-items:center;gap:12px;padding:0 12px;border-radius:12px;color:#56616f;text-decoration:none}nav a span{width:22px;text-align:center;font-size:17px}nav a strong{font-weight:650}nav a.active{background:#fff;color:#10151d;box-shadow:0 10px 28px rgb(25 34 48/.08)}
+main{padding:42px clamp(26px,5vw,70px);display:grid;align-content:start}section{max-width:760px;display:grid;gap:22px}h1{font-size:34px;line-height:1;margin:0;font-weight:760}h2{font-size:18px;margin:0}.field,form{display:grid;gap:10px;background:#fff;border-radius:18px;padding:18px;box-shadow:0 12px 36px rgb(25 34 48/.07)}label{display:grid;gap:10px;color:#596473;font-weight:650}input{height:44px;border:0;border-radius:12px;background:#f1f4f8;padding:0 14px;color:#111827;font:inherit;user-select:text}button,.chip{height:38px;border:0;border-radius:12px;background:#eef2f7;color:#172033;padding:0 14px;text-decoration:none;font:inherit;font-weight:700;display:inline-grid;place-items:center}.segmented{display:flex;flex-wrap:wrap;gap:8px}.chip.selected,button{background:#172033;color:#fff}.hero-line{width:86px;height:6px;border-radius:999px;background:linear-gradient(90deg,#ff9686,#a7abe0,#1aadeb)}
+.about-page{max-width:940px;min-height:calc(100vh - 84px);place-content:center}.about-logo{width:112px;height:112px}.about-page h1{font-size:clamp(46px,7vw,86px);letter-spacing:0}.about-page p{font-size:18px;color:#596473;margin:0}.about-grid{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.about-grid div{background:#fff;border-radius:18px;padding:18px;box-shadow:0 12px 36px rgb(25 34 48/.07)}.about-grid span{display:block;color:#6b7280;font-size:12px;margin-bottom:6px}.about-grid strong{word-break:break-word}
+@media(max-width:760px){.settings{grid-template-columns:1fr}aside{position:static;height:auto}.about-grid{grid-template-columns:1fr}}
 </style></head><body><div class="settings"><aside><div class="brand">)"
-       << FubukiLogoSvg() << R"(<h1>Settings</h1></div><nav>
-<a class="active" href="#general">General</a><a href="#appearance">Appearance</a><a href="#search">Search</a><a href="#bookmarks">Bookmarks</a><a href="#privacy">Privacy</a><a href="#about">About</a>
-</nav></aside><main>
-<section id="general" class="section card"><h2>General</h2><p class="muted">Choose what opens when the browser starts and where downloads are saved.</p>
-<form action="fubuki://settings/set" method="get" class="grid"><input type="hidden" name="key" value="homepage"><div class="row"><label>Homepage</label><input type="text" name="value" value=")"
-       << HtmlEscape(homepage) << R"("></div><button class="button" type="submit">Save homepage</button></form>
-<div class="row"><label>Startup</label><div class="segmented"><a class="chip)"
-       << (startupBehavior == "homepage" ? " selected" : "") << R"(" href="fubuki://settings/set?key=startupBehavior&value=homepage">Homepage</a><a class="chip)"
-       << (startupBehavior == "newTab" ? " selected" : "") << R"(" href="fubuki://settings/set?key=startupBehavior&value=newTab">New tab</a></div></div>
-<div class="row"><label>Download folder</label><strong>)"
-       << HtmlEscape(downloadDirectory) << R"(</strong></div></section>
-<section id="appearance" class="section card"><h2>Appearance</h2><div class="row"><label>Theme</label><div class="segmented">
-<a class="chip)"
-       << (theme == "light" ? " selected" : "") << R"(" href="fubuki://settings/set?key=theme&value=light">Light</a><a class="chip)"
-       << (theme == "soft" ? " selected" : "") << R"(" href="fubuki://settings/set?key=theme&value=soft">Soft</a><a class="chip)"
-       << (theme == "muted" ? " selected" : "") << R"(" href="fubuki://settings/set?key=theme&value=muted">Muted</a><a class="chip)"
-       << (theme == "dark" ? " selected" : "") << R"(" href="fubuki://settings/set?key=theme&value=dark">Dark</a></div></div></section>
-<section id="search" class="section card"><h2>Search</h2><div class="row"><label>Default search engine</label><div class="segmented">
-<a class="chip)"
-       << (searchEngine == "duckduckgo" ? " selected" : "") << R"(" href="fubuki://settings/set?key=searchEngine&value=duckduckgo">DuckDuckGo</a><a class="chip)"
-       << (searchEngine == "google" ? " selected" : "") << R"(" href="fubuki://settings/set?key=searchEngine&value=google">Google</a><a class="chip)"
-       << (searchEngine == "bing" ? " selected" : "") << R"(" href="fubuki://settings/set?key=searchEngine&value=bing">Bing</a></div></div></section>
-<section id="bookmarks" class="section card"><h2>Bookmarks</h2>)"
-       << bookmarksHtml.str() << R"(</section>
-<section id="privacy" class="section card"><h2>Privacy and security</h2><p class="muted">Permission prompts are denied by default in this alpha build. Downloads, history, bookmarks, and settings are stored locally in the browser profile.</p></section>
-<section id="about" class="section card"><h2>About Fubuki</h2><div class="about"><div class="fact"><span>Browser version</span><strong>0.1.0 alpha</strong></div><div class="fact"><span>Engine</span><strong>Chromium Embedded Framework</strong></div><div class="fact"><span>Profile</span><strong>)"
-       << HtmlEscape(profile.string()) << R"(</strong></div><div class="fact"><span>Bundle</span><strong>dev.fubuki.browser.alpha</strong></div></div></section>
-</main></div></body></html>)";
+       << FubukiLogoSvg() << "<strong>" << HtmlEscape(t.settings) << "</strong></div><nav>"
+       << NavItem("general", page, "⌂", t.general)
+       << NavItem("appearance", page, "◐", t.appearance)
+       << NavItem("search", page, "⌕", t.search)
+       << NavItem("privacy", page, "◇", t.privacy)
+       << NavItem("about", page, "✦", t.about)
+       << "</nav></aside><main>" << content.str() << "</main></div></body></html>";
   return html.str();
 }
 
@@ -219,7 +329,7 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     return true;
   }
   if (url.rfind("fubuki://settings", 0) == 0) {
-    LoadText(SettingsHtml(), "text/html", 200);
+    LoadText(SettingsPageHtml(url), "text/html", 200);
     return true;
   }
   if (url.rfind("fubuki://app/", 0) == 0) {
