@@ -20,21 +20,21 @@ export default function Toolbar() {
   return (
     <section class="toolbar" aria-label="Navigation">
       <button class="tool-button" title="Back" disabled={!activeTab()?.canGoBack} onClick={() => void fubuki.invoke("tabs.goBack", { tabId: browserState.activeTabId })}>
-        ←
+        <span aria-hidden="true">←</span>
       </button>
       <button class="tool-button" title="Forward" disabled={!activeTab()?.canGoForward} onClick={() => void fubuki.invoke("tabs.goForward", { tabId: browserState.activeTabId })}>
-        →
+        <span aria-hidden="true">→</span>
       </button>
       <button
         class="tool-button"
         title={activeTab()?.isLoading ? "Stop" : "Reload"}
         onClick={() => void fubuki.invoke(activeTab()?.isLoading ? "tabs.stop" : "tabs.reload", { tabId: browserState.activeTabId })}
       >
-        {activeTab()?.isLoading ? "×" : "↻"}
+        <span aria-hidden="true">{activeTab()?.isLoading ? "×" : "↻"}</span>
       </button>
       <Omnibox value={activeTab()?.url ?? ""} onDraft={setDraft} onSubmit={submit} />
       <button class="tool-button" title="Bookmark" onClick={() => void fubuki.invoke("bookmarks.addActive")}>
-        ☆
+        <span aria-hidden="true">☆</span>
       </button>
       <button class="tool-button" title="DevTools" onClick={() => void fubuki.invoke("commands.execute", { id: "app.openDevTools" })}>
         Dev

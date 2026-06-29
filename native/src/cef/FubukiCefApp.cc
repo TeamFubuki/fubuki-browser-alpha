@@ -6,6 +6,43 @@
 
 namespace fubuki {
 
+namespace {
+
+bool IsFubukiAppFrame(CefRefPtr<CefFrame> frame) {
+  return frame && frame->GetURL().ToString().rfind("fubuki://app/", 0) == 0;
+}
+
+void InstallWebAuthnGuard(CefRefPtr<CefFrame> frame) {
+  if (!frame || IsFubukiAppFrame(frame)) {
+    return;
+  }
+
+  frame->ExecuteJavaScript(
+      R"JS(
+(() => {
+  try {
+    const credentials = navigator.credentials;
+    if (!credentials || credentials.__fubukiWebAuthnGuard) return;
+    const rejectPasskey = () => Promise.reject(new DOMException("Passkeys are not available in this build.", "NotAllowedError"));
+    const nativeCreate = credentials.create ? credentials.create.bind(credentials) : undefined;
+    const nativeGet = credentials.get ? credentials.get.bind(credentials) : undefined;
+    Object.defineProperty(credentials, "__fubukiWebAuthnGuard", { value: true });
+    if (nativeCreate) {
+      Object.defineProperty(credentials, "create", { configurable: true, value: (options) => options && options.publicKey ? rejectPasskey() : nativeCreate(options) });
+    }
+    if (nativeGet) {
+      Object.defineProperty(credentials, "get", { configurable: true, value: (options) => options && options.publicKey ? rejectPasskey() : nativeGet(options) });
+    }
+  } catch {
+  }
+})();
+)JS",
+      frame->GetURL(),
+      0);
+}
+
+}  // namespace
+
 FubukiCefApp::FubukiCefApp(std::string uiDistPath) : uiDistPath_(std::move(uiDistPath)) {}
 
 void FubukiCefApp::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
@@ -33,7 +70,8 @@ void FubukiCefApp::OnWebKitInitialized() {
 void FubukiCefApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
                                     CefRefPtr<CefFrame> frame,
                                     CefRefPtr<CefV8Context> context) {
-  if (!frame || frame->GetURL().ToString().rfind("fubuki://app/", 0) != 0) {
+  if (!IsFubukiAppFrame(frame)) {
+    InstallWebAuthnGuard(frame);
     return;
   }
   if (rendererRouter_) {

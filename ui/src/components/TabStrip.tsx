@@ -10,7 +10,7 @@ export default function TabStrip() {
         <For each={browserState.tabs}>{(tab) => <TabItem tab={tab} />}</For>
       </div>
       <button class="icon-button new-tab" title="New tab" onClick={() => void fubuki.invoke("tabs.create", { active: true })}>
-        +
+        <span aria-hidden="true">+</span>
       </button>
     </section>
   );

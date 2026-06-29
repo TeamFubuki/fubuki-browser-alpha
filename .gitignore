@@ -1,7 +1,25 @@
+# macOS
+.DS_Store
+
+# Native build artifacts
 native/build*/
+native/CMakeCache.txt
+native/CMakeFiles/
+native/Makefile
+native/cmake_install.cmake
+native/*.app/
+
+# UI build artifacts
 ui/dist/
 ui/node_modules/
+
+# Dependencies and caches
 third_party/cef/
 .cache/
-.DS_Store
-third_party/cef/
+
+# Logs
+*.log
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR/ui"
 
 if [[ ! -d node_modules ]]; then
-  npm install
+  pnpm install
 fi
 
-npm run build
+pnpm run build

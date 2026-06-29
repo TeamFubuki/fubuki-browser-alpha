@@ -9,11 +9,80 @@
 #include "include/wrapper/cef_helpers.h"
 #include "utils/UrlUtils.h"
 
+@interface FubukiDragRegionView : NSView
+- (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height;
+@end
+
+@implementation FubukiDragRegionView {
+  NSMutableArray<NSValue*>* draggableRects_;
+  NSMutableArray<NSValue*>* blockedRects_;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+  self = [super initWithFrame:frame];
+  if (self) {
+    draggableRects_ = [NSMutableArray array];
+    blockedRects_ = [NSMutableArray array];
+    [self setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+  }
+  return self;
+}
+
+- (BOOL)isOpaque {
+  return NO;
+}
+
+- (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height {
+  [draggableRects_ removeAllObjects];
+  [blockedRects_ removeAllObjects];
+  for (const auto& region : regions) {
+    const NSRect rect = NSMakeRect(region.bounds.x,
+                                  height - region.bounds.y - region.bounds.height,
+                                  region.bounds.width,
+                                  region.bounds.height);
+    [(region.draggable ? draggableRects_ : blockedRects_) addObject:[NSValue valueWithRect:rect]];
+  }
+}
+
+- (NSView*)hitTest:(NSPoint)point {
+  const NSView* hit = [super hitTest:point];
+  if (hit != self) {
+    return nil;
+  }
+
+  const NSPoint localPoint = point;
+  for (NSValue* value in blockedRects_) {
+    if (NSPointInRect(localPoint, [value rectValue])) {
+      return nil;
+    }
+  }
+  for (NSValue* value in draggableRects_) {
+    if (NSPointInRect(localPoint, [value rectValue])) {
+      return self;
+    }
+  }
+  return nil;
+}
+
+- (void)mouseDown:(NSEvent*)event {
+  if ([event clickCount] == 2) {
+    const NSString* action = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+    if ([action isEqualToString:@"Minimize"]) {
+      [[self window] miniaturize:nil];
+    } else if (![action isEqualToString:@"None"]) {
+      [[self window] performZoom:nil];
+    }
+    return;
+  }
+  [[self window] performWindowDragWithEvent:event];
+}
+@end
+
 namespace fubuki {
 
 namespace {
 
-constexpr CGFloat kUiHeight = 84.0;
+constexpr CGFloat kUiHeight = 96.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
 
@@ -81,7 +150,10 @@ bool BrowserWindow::ActivateTab(const std::string& tabId) {
 bool BrowserWindow::CloseTab(const std::string& tabId) {
   Tab* tab = tabManager_.GetTab(tabId);
   if (tab && tab->browser) {
+    NSView* view = reinterpret_cast<NSView*>(tab->browser->GetHost()->GetWindowHandle());
+    [view removeFromSuperview];
     tab->browser->GetHost()->CloseBrowser(true);
+    tab->browser = nullptr;
   }
   const bool ok = tabManager_.CloseTab(tabId);
   SetActiveContentView();
@@ -307,6 +379,13 @@ void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string&
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
 }
 
+void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions) {
+  if (!dragRegionView_ || !uiHostView_) {
+    return;
+  }
+  [(FubukiDragRegionView*)dragRegionView_ setDraggableRegions:regions contentHeight:[uiHostView_ bounds].size.height];
+}
+
 void BrowserWindow::CreateNativeWindow() {
   if (window_) {
     return;
@@ -314,26 +393,41 @@ void BrowserWindow::CreateNativeWindow() {
   NSRect frame = NSMakeRect(120, 120, kMinWidth, kMinHeight);
   window_ = [[NSWindow alloc] initWithContentRect:frame
                                         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
+                                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                                                  NSWindowStyleMaskFullSizeContentView
                                           backing:NSBackingStoreBuffered
                                             defer:NO];
   [window_ setTitle:@"Fubuki Browser Alpha"];
+  [window_ setTitleVisibility:NSWindowTitleHidden];
+  [window_ setTitlebarAppearsTransparent:YES];
+  [window_ setMovableByWindowBackground:YES];
+  [window_ setBackgroundColor:[NSColor clearColor]];
+  [window_ setOpaque:NO];
   [window_ setMinSize:NSMakeSize(kMinWidth, kMinHeight)];
 
   NSView* root = [[NSView alloc] initWithFrame:frame];
   [root setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [root setWantsLayer:YES];
+  [root.layer setBackgroundColor:[[NSColor clearColor] CGColor]];
   [window_ setContentView:root];
 
   uiHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, frame.size.height - kUiHeight, frame.size.width, kUiHeight)];
   contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height - kUiHeight)];
+  dragRegionView_ = [[FubukiDragRegionView alloc] initWithFrame:[uiHostView_ frame]];
   [uiHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [uiHostView_ setWantsLayer:YES];
+  [contentHostView_ setWantsLayer:YES];
+  [uiHostView_.layer setBackgroundColor:[[NSColor clearColor] CGColor]];
+  [contentHostView_.layer setBackgroundColor:[[NSColor whiteColor] CGColor]];
   [root addSubview:contentHostView_];
   [root addSubview:uiHostView_];
+  [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:uiHostView_];
 }
 
 void BrowserWindow::CreateUiBrowser() {
   CefBrowserSettings settings;
+  settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_),
                                 new FubukiClient(this, "", true),
                                 "fubuki://app/index.html?v=3",
@@ -344,6 +438,7 @@ void BrowserWindow::CreateUiBrowser() {
 
 void BrowserWindow::CreateTabBrowser(const Tab& tab) {
   CefBrowserSettings settings;
+  settings.background_color = CefColorSetARGB(255, 255, 255, 255);
   CefBrowserHost::CreateBrowser(ChildWindowInfo(contentHostView_), new FubukiClient(this, tab.id, false), tab.url, settings, nullptr, nullptr);
 }
 

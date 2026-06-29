@@ -3,6 +3,8 @@
 #include <string>
 
 #include "include/cef_client.h"
+#include "include/cef_drag_handler.h"
+#include "include/cef_permission_handler.h"
 #include "include/wrapper/cef_message_router.h"
 
 namespace fubuki {
@@ -14,7 +16,9 @@ class FubukiClient : public CefClient,
                      public CefLoadHandler,
                      public CefDisplayHandler,
                      public CefDownloadHandler,
-                     public CefKeyboardHandler {
+                     public CefKeyboardHandler,
+                     public CefDragHandler,
+                     public CefPermissionHandler {
  public:
   FubukiClient(BrowserWindow* window, std::string tabId, bool isUi);
 
@@ -23,6 +27,8 @@ class FubukiClient : public CefClient,
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+  CefRefPtr<CefDragHandler> GetDragHandler() override { return this; }
+  CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
 
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                 CefRefPtr<CefFrame> frame,
@@ -56,6 +62,14 @@ class FubukiClient : public CefClient,
                      const CefKeyEvent& event,
                      CefEventHandle os_event,
                      bool* is_keyboard_shortcut) override;
+  void OnDraggableRegionsChanged(CefRefPtr<CefBrowser> browser,
+                                 CefRefPtr<CefFrame> frame,
+                                 const std::vector<CefDraggableRegion>& regions) override;
+  bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                              uint64_t prompt_id,
+                              const CefString& requesting_origin,
+                              uint32_t requested_permissions,
+                              CefRefPtr<CefPermissionPromptCallback> callback) override;
 
  private:
   BrowserWindow* window_;

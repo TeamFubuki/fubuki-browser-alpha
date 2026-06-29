@@ -9,6 +9,7 @@
 #include "commands/CommandRegistry.h"
 #include "events/EventBus.h"
 #include "include/cef_browser.h"
+#include "include/cef_drag_handler.h"
 
 #ifdef __OBJC__
 @class NSWindow;
@@ -53,6 +54,7 @@ class BrowserWindow {
   void OnNavigationFailed(const std::string& tabId, const std::string& message);
   void OnDownloadStarted(const std::string& url, const std::string& path);
   void OnDownloadUpdated(const std::string& url, const std::string& path, const std::string& state, int percent);
+  void OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions);
 
   NativeBridge* Bridge() { return bridge_.get(); }
   CommandRegistry& Commands() { return commands_; }
@@ -88,6 +90,7 @@ class BrowserWindow {
   NSWindow* window_ = nullptr;
   NSView* uiHostView_ = nullptr;
   NSView* contentHostView_ = nullptr;
+  NSView* dragRegionView_ = nullptr;
 };
 
 }  // namespace fubuki

@@ -9,6 +9,7 @@ Fubuki Browser Alpha is a macOS-first browser shell built on C++20, CEF, and a S
 - CMake 3.21+
 - Xcode command line tools
 - Node.js 20+
+- pnpm 11+
 
 Electron, Tauri, WKWebView, and WebView2 are not used.
 
@@ -32,6 +33,9 @@ The repository intentionally does not vendor CEF binaries.
 ## Build UI
 
 ```bash
+cd ui
+pnpm install
+cd ..
 make ui
 ```
 

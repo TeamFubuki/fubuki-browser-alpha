@@ -190,4 +190,30 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>,
   return handled;
 }
 
+void FubukiClient::OnDraggableRegionsChanged(CefRefPtr<CefBrowser>,
+                                             CefRefPtr<CefFrame>,
+                                             const std::vector<CefDraggableRegion>& regions) {
+  if (isUi_ && window_) {
+    window_->OnUiDraggableRegionsChanged(regions);
+  }
+}
+
+bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>,
+                                          uint64_t,
+                                          const CefString& requesting_origin,
+                                          uint32_t requested_permissions,
+                                          CefRefPtr<CefPermissionPromptCallback> callback) {
+  if (!callback) {
+    return false;
+  }
+
+  if (window_) {
+    window_->Store().Log("info",
+                         "Permission denied for " + requesting_origin.ToString() + " (" +
+                             std::to_string(requested_permissions) + ")");
+  }
+  callback->Continue(CEF_PERMISSION_RESULT_DENY);
+  return true;
+}
+
 }  // namespace fubuki

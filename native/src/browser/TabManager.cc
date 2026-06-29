@@ -41,6 +41,7 @@ bool TabManager::CloseTab(const std::string& tabId) {
   }
 
   const bool wasActive = it->isActive;
+  const size_t closedIndex = static_cast<size_t>(std::distance(tabs_.begin(), it));
   Tab closed = *it;
   tabs_.erase(it);
   eventBus_.Publish({EventType::TabClosed, "tabs.closed", closed, tabId, ""});
@@ -51,7 +52,7 @@ bool TabManager::CloseTab(const std::string& tabId) {
   }
 
   if (wasActive) {
-    const size_t index = std::min<size_t>(tabs_.size() - 1, 0);
+    const size_t index = std::min(closedIndex, tabs_.size() - 1);
     ActivateTab(tabs_[index].id);
   }
   return true;
