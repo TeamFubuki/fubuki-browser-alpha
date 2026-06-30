@@ -25,6 +25,10 @@ function anchorStyle(anchor?: PanelAnchor) {
   return anchor ? `--popover-top: ${anchor.top}px; --popover-right: ${anchor.right}px;` : undefined;
 }
 
+function label(en: string, ja: string) {
+  return browserState.settings.language === "ja" ? ja : en;
+}
+
 export default function BookmarkPopover(props: Props) {
   let panel: HTMLElement | undefined;
   const [title, setTitle] = createSignal("");
@@ -46,7 +50,12 @@ export default function BookmarkPopover(props: Props) {
 
   createEffect(() => {
     if (!props.open) return;
+    let ready = false;
+    window.setTimeout(() => {
+      ready = true;
+    }, 0);
     const onPointerDown = (event: PointerEvent) => {
+      if (!ready) return;
       if (panel && !panel.contains(event.target as Node)) props.onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -111,16 +120,16 @@ export default function BookmarkPopover(props: Props) {
           fallback={
             <>
               <header>
-                <h2>Bookmarks</h2>
+                <h2>{label("Bookmarks", "ブックマーク")}</h2>
                 <button
                   class="mini-action"
                   onClick={() => void fubuki.invoke("data.clear", { target: "bookmarks" }).then(() => refreshState("bookmarks.cleared"))}
                 >
-                  Clear
+                  {label("Clear", "消去")}
                 </button>
               </header>
-              <input class="panel-search" value={query()} placeholder="Search bookmarks" aria-label="Search bookmarks" onInput={(event) => setQuery(event.currentTarget.value)} />
-              <Show when={filteredBookmarks().length > 0} fallback={<p class="empty-state">No bookmarks</p>}>
+              <input class="panel-search" value={query()} placeholder={label("Search bookmarks", "ブックマークを検索")} aria-label={label("Search bookmarks", "ブックマークを検索")} onInput={(event) => setQuery(event.currentTarget.value)} />
+              <Show when={filteredBookmarks().length > 0} fallback={<p class="empty-state">{label("No bookmarks", "ブックマークはありません")}</p>}>
                 <div class="popover-list">
                   <For each={filteredBookmarks()}>
                     {(item) => (
@@ -134,11 +143,11 @@ export default function BookmarkPopover(props: Props) {
                           <span>{item.title || item.url || "Untitled"}</span>
                           <small>{item.url}</small>
                         </button>
-                        <button class="row-action" title="Edit" aria-label="Edit" onClick={(event) => {
+                        <button class="row-action" title={label("Edit", "編集")} aria-label={label("Edit", "編集")} onClick={(event) => {
                           event.stopPropagation();
                           editFromList(item);
                         }}>✎</button>
-                        <button class="row-action" title="Delete" aria-label="Delete" onClick={(event) => void removeBookmark(event, item)}>×</button>
+                        <button class="row-action" title={label("Delete", "削除")} aria-label={label("Delete", "削除")} onClick={(event) => void removeBookmark(event, item)}>×</button>
                       </div>
                     )}
                   </For>
@@ -154,9 +163,9 @@ export default function BookmarkPopover(props: Props) {
               void save();
             }}
           >
-            <header><h2>Bookmark</h2></header>
+            <header><h2>{label("Bookmark", "ブックマーク")}</h2></header>
             <label>
-              <span>Title</span>
+              <span>{label("Title", "タイトル")}</span>
               <input value={title()} onInput={(event) => setTitle(event.currentTarget.value)} />
             </label>
             <label>
@@ -165,10 +174,10 @@ export default function BookmarkPopover(props: Props) {
             </label>
             <div class="form-actions">
               <Show when={originalUrl()}>
-                <button type="button" onClick={() => void fubuki.invoke("bookmarks.remove", { url: originalUrl() }).then(() => refreshState("bookmarks.changed")).then(props.onClose)}>Delete</button>
+                <button type="button" onClick={() => void fubuki.invoke("bookmarks.remove", { url: originalUrl() }).then(() => refreshState("bookmarks.changed")).then(props.onClose)}>{label("Delete", "削除")}</button>
               </Show>
-              <button type="button" onClick={props.onClose}>Cancel</button>
-              <button type="submit">Save</button>
+              <button type="button" onClick={props.onClose}>{label("Cancel", "キャンセル")}</button>
+              <button type="submit">{label("Save", "保存")}</button>
             </div>
           </form>
         </Show>

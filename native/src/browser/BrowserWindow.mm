@@ -62,6 +62,9 @@
   if (localPoint.x >= 196.0 && localPoint.y <= contentHeight_ - 48.0) {
     return nil;
   }
+  if (localPoint.y >= contentHeight_ - 58.0 && localPoint.x >= [self bounds].size.width - 240.0) {
+    return nil;
+  }
   for (NSValue* value in blockedRects_) {
     if (NSPointInRect(localPoint, [value rectValue])) {
       return nil;
@@ -129,6 +132,23 @@ CefWindowInfo ChildWindowInfo(NSView* parent) {
   NSRect bounds = [parent bounds];
   info.SetAsChild(parent, CefRect(0, 0, static_cast<int>(bounds.size.width), static_cast<int>(bounds.size.height)));
   return info;
+}
+
+void MakeViewTreeTransparent(NSView* view) {
+  if (!view) {
+    return;
+  }
+  [view setWantsLayer:YES];
+  if (view.layer) {
+    view.layer.opaque = NO;
+    view.layer.backgroundColor = [[NSColor clearColor] CGColor];
+  }
+  if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
+    [(id)view setDrawsBackground:NO];
+  }
+  for (NSView* subview in [view subviews]) {
+    MakeViewTreeTransparent(subview);
+  }
 }
 
 void SetBrowserViewHidden(CefRefPtr<CefBrowser> browser, bool hidden) {
@@ -497,23 +517,20 @@ bool BrowserWindow::SetUiOverlayActive(bool active) {
   if (!uiHostView_ || !contentHostView_) {
     return false;
   }
+  uiOverlayActive_ = active;
   NSView* root = [uiHostView_ superview];
   if (!root) {
     return false;
   }
   [uiHostView_ removeFromSuperview];
   [contentHostView_ removeFromSuperview];
-  if (active) {
-    [root addSubview:contentHostView_];
-    [root addSubview:uiHostView_ positioned:NSWindowAbove relativeTo:contentHostView_];
-  } else {
-    [root addSubview:uiHostView_];
-    [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
-  }
+  [root addSubview:uiHostView_];
+  [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
   if (dragRegionView_) {
     [dragRegionView_ removeFromSuperview];
-    [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:active ? uiHostView_ : contentHostView_];
+    [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:contentHostView_];
   }
+  UpdateContentFrame();
   return true;
 }
 
@@ -558,6 +575,13 @@ std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) con
 
 void BrowserWindow::SetUiBrowser(CefRefPtr<CefBrowser> browser) {
   uiBrowser_ = browser;
+  NSView* view = reinterpret_cast<NSView*>(browser->GetHost()->GetWindowHandle());
+  MakeViewTreeTransparent(uiHostView_);
+  MakeViewTreeTransparent(view);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    MakeViewTreeTransparent(uiHostView_);
+    MakeViewTreeTransparent(view);
+  });
 }
 
 void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefBrowser> browser) {
@@ -819,9 +843,11 @@ void BrowserWindow::UpdateContentFrame() {
       }
     }
   }
-  const CGFloat navHeight = settings->GetString("toolbarDensity") == "comfortable" ? 48.0 : 44.0;
+  const CGFloat navHeight = settings->GetString("toolbarDensity") == "comfortable" ? 58.0 : 48.0;
+  const CGFloat overlayWidth = uiOverlayActive_ ? 480.0 : 0.0;
   NSRect bounds = [uiHostView_ bounds];
-  [contentHostView_ setFrame:NSMakeRect(sidebarWidth, 0, bounds.size.width - sidebarWidth, bounds.size.height - navHeight)];
+  const CGFloat contentWidth = std::max<CGFloat>(320.0, bounds.size.width - sidebarWidth - overlayWidth);
+  [contentHostView_ setFrame:NSMakeRect(sidebarWidth, 0, contentWidth, bounds.size.height - navHeight)];
   ResizeViews();
 }
 

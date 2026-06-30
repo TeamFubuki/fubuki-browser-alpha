@@ -99,6 +99,7 @@ class BrowserWindow {
   NSView* uiHostView_ = nullptr;
   NSView* contentHostView_ = nullptr;
   NSView* dragRegionView_ = nullptr;
+  bool uiOverlayActive_ = false;
 };
 
 }  // namespace fubuki

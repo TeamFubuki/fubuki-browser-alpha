@@ -9,6 +9,7 @@ type Props = {
   onHistory: (anchor?: HTMLElement) => void;
   onDownloads: (anchor?: HTMLElement) => void;
   onSettings: () => void;
+  onOverlayActive: (active: boolean) => void;
 };
 
 function activeTab() {
@@ -99,13 +100,19 @@ function ActionCluster(props: Pick<Props, "onBookmarkEdit" | "onBookmarks" | "on
   );
 }
 
-function MoreMenu(props: Pick<Props, "onBookmarks" | "onHistory" | "onDownloads" | "onSettings">) {
+function MoreMenu(props: Pick<Props, "onBookmarks" | "onHistory" | "onDownloads" | "onSettings" | "onOverlayActive">) {
   let menu: HTMLDivElement | undefined;
   const [open, setOpen] = createSignal(false);
 
   createEffect(() => {
+    props.onOverlayActive(open());
     if (!open()) return;
+    let ready = false;
+    window.setTimeout(() => {
+      ready = true;
+    }, 0);
     const onPointerDown = (event: PointerEvent) => {
+      if (!ready) return;
       if (menu && !menu.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -116,6 +123,7 @@ function MoreMenu(props: Pick<Props, "onBookmarks" | "onHistory" | "onDownloads"
     onCleanup(() => {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
+      props.onOverlayActive(false);
     });
   });
 
@@ -131,19 +139,19 @@ function MoreMenu(props: Pick<Props, "onBookmarks" | "onHistory" | "onDownloads"
 
   return (
     <div ref={menu} class="more-menu">
-      <button class="tool-button" title={label("More", "その他")} aria-label={label("More", "その他")} aria-haspopup="menu" aria-expanded={open()} onClick={() => setOpen(!open())}>
+      <button class="tool-button" title={label("More", "その他")} aria-label={label("More", "その他")} aria-haspopup="menu" aria-expanded={open()} onPointerDown={(event) => event.stopPropagation()} onClick={() => setOpen(!open())}>
         <span aria-hidden="true">•••</span>
       </button>
       <Show when={open()}>
         <div class="menu-popover" role="menu">
-          <button role="menuitem" onClick={() => run(() => void fubuki.invoke("tabs.create", { active: true }))}>New Tab</button>
-          <button role="menuitem" onClick={() => run(() => props.onBookmarks(menu))}>Bookmarks</button>
-          <button role="menuitem" onClick={() => run(() => props.onHistory(menu))}>History</button>
-          <button role="menuitem" onClick={() => run(() => props.onDownloads(menu))}>Downloads</button>
-          <button role="menuitem" onClick={() => run(props.onSettings)}>Settings</button>
+          <button role="menuitem" onClick={() => run(() => void fubuki.invoke("tabs.create", { active: true }))}>{label("New Tab", "新規タブ")}</button>
+          <button role="menuitem" onClick={() => run(() => props.onBookmarks(menu))}>{label("Bookmarks", "ブックマーク")}</button>
+          <button role="menuitem" onClick={() => run(() => props.onHistory(menu))}>{label("History", "履歴")}</button>
+          <button role="menuitem" onClick={() => run(() => props.onDownloads(menu))}>{label("Downloads", "ダウンロード")}</button>
+          <button role="menuitem" onClick={() => run(props.onSettings)}>{label("Settings", "設定")}</button>
           <button role="menuitem" onClick={() => run(() => void fubuki.invoke("app.openDevTools"))}>DevTools</button>
-          <button role="menuitem" onClick={() => run(copyUrl)}>Copy URL</button>
-          <button role="menuitem" onClick={() => run(() => navigate("fubuki://settings/about"))}>About Fubuki</button>
+          <button role="menuitem" onClick={() => run(copyUrl)}>{label("Copy URL", "URLをコピー")}</button>
+          <button role="menuitem" onClick={() => run(() => navigate("fubuki://settings/about"))}>{label("About Fubuki", "Fubukiについて")}</button>
         </div>
       </Show>
     </div>
@@ -174,7 +182,7 @@ export default function TopBar(props: Props) {
       <NavigationControls />
       <Omnibox value={activeTab()?.url ?? ""} onDraft={setDraft} onSubmit={submit} />
       <ActionCluster onBookmarkEdit={props.onBookmarkEdit} onBookmarks={props.onBookmarks} onDownloads={props.onDownloads} />
-      <MoreMenu onBookmarks={props.onBookmarks} onHistory={props.onHistory} onDownloads={props.onDownloads} onSettings={props.onSettings} />
+      <MoreMenu onBookmarks={props.onBookmarks} onHistory={props.onHistory} onDownloads={props.onDownloads} onSettings={props.onSettings} onOverlayActive={props.onOverlayActive} />
     </header>
   );
 }

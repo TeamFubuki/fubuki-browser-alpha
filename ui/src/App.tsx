@@ -29,6 +29,7 @@ export default function App() {
   const [editingBookmark, setEditingBookmark] = createSignal<BrowserRecord | undefined>();
   const [panel, setPanel] = createSignal<"closed" | "bookmarks" | "history" | "downloads">("closed");
   const [panelAnchor, setPanelAnchor] = createSignal<PanelAnchor | undefined>();
+  const [topOverlayActive, setTopOverlayActive] = createSignal(false);
   const [systemDark, setSystemDark] = createSignal(window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
 
   const openSettings = () => {
@@ -50,7 +51,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    const active = bookmarkPanel() !== "closed" || panel() !== "closed";
+    const active = bookmarkPanel() !== "closed" || panel() !== "closed" || topOverlayActive();
     void fubuki.invoke("ui.setOverlayActive", { active }).catch(() => undefined);
   });
 
@@ -79,8 +80,7 @@ export default function App() {
         document.querySelector<HTMLInputElement>(".omnibox input")?.select();
         event.preventDefault();
       } else if (command && event.key.toLowerCase() === "b") {
-        const next = browserState.settings.sidebarVisible === "collapsed" ? "show" : "collapsed";
-        void fubuki.invoke("settings.set", { key: "sidebarVisible", value: next }).then(() => refreshState("settings.saved"));
+        openBookmarks();
         event.preventDefault();
       } else if (command && event.key === ",") {
         openSettings();
@@ -167,6 +167,7 @@ export default function App() {
         onHistory={(anchor) => openPanel("history", anchor)}
         onDownloads={(anchor) => openPanel("downloads", anchor)}
         onSettings={openSettings}
+        onOverlayActive={setTopOverlayActive}
       />
       <WebViewArea />
       <PanelLayer>

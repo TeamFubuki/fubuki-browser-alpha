@@ -164,9 +164,11 @@ void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
   }
   std::string state = "in_progress";
   if (download_item->IsComplete()) {
-    state = "complete";
+    state = "completed";
   } else if (download_item->IsCanceled()) {
     state = "canceled";
+  } else if (download_item->IsInterrupted()) {
+    state = "failed";
   }
   window_->OnDownloadUpdated(download_item->GetURL().ToString(),
                              download_item->GetFullPath().ToString(),

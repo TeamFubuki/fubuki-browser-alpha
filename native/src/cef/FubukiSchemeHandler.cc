@@ -9,6 +9,7 @@
 #include <sqlite3.h>
 
 #include "include/cef_parser.h"
+#include "include/cef_version.h"
 #include "utils/UrlUtils.h"
 
 namespace fubuki {
@@ -127,7 +128,7 @@ std::string Setting(const std::string& key, const std::string& fallback = "") {
 
 UiText TextFor(const std::string& lang) {
   if (lang == "ja") {
-    return {"一般", "外観", "検索", "プライバシー", "About", "設定", "ホームページ", "起動時", "ダウンロード先",
+    return {"一般", "外観", "検索", "プライバシー", "Fubukiについて", "設定", "ホームページ", "起動時", "ダウンロード先",
             "テーマ", "言語", "新規タブ背景", "背景色", "背景画像URL", "保存", "保存しました", "検索エンジン", "カスタム検索URL",
             "権限", "このアルファ版では権限プロンプトは標準で拒否されます。履歴、ブックマーク、ダウンロード、設定はローカルの SQLite に保存されます。",
             "バージョン", "エンジン", "プロファイル", "バンドル", "検索またはURLを入力"};
@@ -262,6 +263,35 @@ std::string SettingsPageHtml(const std::string& url) {
   const std::string unsplashLabel = lang == "ja" ? "吹雪写真" : "Unsplash";
   const std::string customLabel = lang == "ja" ? "カスタムURL" : "Custom URL";
   const std::string solidLabel = lang == "ja" ? "単色" : "Solid";
+  const std::string systemLabel = lang == "ja" ? "システム" : "System";
+  const std::string lightLabel = lang == "ja" ? "ライト" : "Light";
+  const std::string darkLabel = lang == "ja" ? "ダーク" : "Dark";
+  const std::string toolbarDensityLabel = lang == "ja" ? "ツールバー密度" : "Toolbar density";
+  const std::string sidebarLabel = lang == "ja" ? "サイドバー" : "Sidebar";
+  const std::string sidebarWidthLabel = lang == "ja" ? "サイドバー幅" : "Sidebar width";
+  const std::string bookmarksLabel = lang == "ja" ? "ブックマーク" : "Bookmarks";
+  const std::string tabsLabel = lang == "ja" ? "タブ" : "Tabs";
+  const std::string downloadsLabel = lang == "ja" ? "ダウンロード" : "Downloads";
+  const std::string privacyDataLabel = lang == "ja" ? "プライバシーとデータ" : "Privacy & Data";
+  const std::string advancedLabel = lang == "ja" ? "詳細" : "Advanced";
+  const std::string openBookmarkInLabel = lang == "ja" ? "ブックマークを開く先" : "Open bookmark in";
+  const std::string showFaviconLabel = lang == "ja" ? "ブックマークにfaviconを表示" : "Show favicon in bookmarks";
+  const std::string newTabPageLabel = lang == "ja" ? "新規タブページ" : "New tab page";
+  const std::string askBeforeDownloadLabel = lang == "ja" ? "ダウンロード前に確認" : "Ask before download";
+  const std::string clearDownloadHistoryLabel = lang == "ja" ? "ダウンロード履歴を消去" : "Clear download history";
+  const std::string clearDownloadsLabel = lang == "ja" ? "ダウンロードを消去" : "Clear downloads";
+  const std::string customSearchLabel = lang == "ja" ? "カスタム" : "Custom";
+  const std::string clearHistoryLabel = lang == "ja" ? "履歴を消去" : "Clear history";
+  const std::string clearBookmarksLabel = lang == "ja" ? "ブックマークを消去" : "Clear bookmarks";
+  const std::string clearAllLocalDataLabel = lang == "ja" ? "すべてのローカルデータを消去" : "Clear all local data";
+  const std::string clearAllLabel = lang == "ja" ? "すべて消去" : "Clear all";
+  const std::string devToolsLabel = "DevTools";
+  const std::string openDevToolsLabel = lang == "ja" ? "DevToolsを開く" : "Open DevTools";
+  const std::string logsLabel = lang == "ja" ? "ログ" : "Logs";
+  const std::string viewLogsLabel = lang == "ja" ? "ログを表示" : "View logs";
+  const std::string clearLogsLabel = lang == "ja" ? "ログを消去" : "Clear logs";
+  const std::string homeUrlLabel = lang == "ja" ? "ホームURL" : "Home URL";
+  const std::string cefVersionLabel = lang == "ja" ? "CEFバージョン" : "CEF version";
 
   auto settingLink = [&](const std::string& key, const std::string& value, const std::string& returnPage) {
     return "fubuki://settings/set?key=" + key + "&value=" + CefURIEncode(value, false).ToString() + "&return=" + returnPage;
@@ -271,17 +301,17 @@ std::string SettingsPageHtml(const std::string& url) {
   if (page == "appearance") {
     content << "<section><h1>" << HtmlEscape(t.appearance) << "</h1><div class=\"field\"><span>" << HtmlEscape(t.theme)
             << "</span><div class=\"segmented\">"
-            << "<a class=\"chip" << Selected(appearance == "system") << "\" href=\"" << settingLink("appearance", "system", "appearance") << "\">System</a>"
-            << "<a class=\"chip" << Selected(appearance == "light") << "\" href=\"" << settingLink("appearance", "light", "appearance") << "\">Light</a>"
-            << "<a class=\"chip" << Selected(appearance == "dark") << "\" href=\"" << settingLink("appearance", "dark", "appearance") << "\">Dark</a></div></div>"
-            << "<div class=\"field\"><span>Toolbar density</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(appearance == "system") << "\" href=\"" << settingLink("appearance", "system", "appearance") << "\">" << HtmlEscape(systemLabel) << "</a>"
+            << "<a class=\"chip" << Selected(appearance == "light") << "\" href=\"" << settingLink("appearance", "light", "appearance") << "\">" << HtmlEscape(lightLabel) << "</a>"
+            << "<a class=\"chip" << Selected(appearance == "dark") << "\" href=\"" << settingLink("appearance", "dark", "appearance") << "\">" << HtmlEscape(darkLabel) << "</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(toolbarDensityLabel) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(toolbarDensity == "compact") << "\" href=\"" << settingLink("toolbarDensity", "compact", "appearance") << "\">" << HtmlEscape(compactLabel) << "</a>"
             << "<a class=\"chip" << Selected(toolbarDensity == "comfortable") << "\" href=\"" << settingLink("toolbarDensity", "comfortable", "appearance") << "\">" << HtmlEscape(comfortableLabel) << "</a></div></div>"
-            << "<div class=\"field\"><span>Sidebar</span><div class=\"segmented\">"
+            << "<div class=\"field\"><span>" << HtmlEscape(sidebarLabel) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(sidebarVisible == "show") << "\" href=\"" << settingLink("sidebarVisible", "show", "appearance") << "\">" << HtmlEscape(showLabel) << "</a>"
             << "<a class=\"chip" << Selected(sidebarVisible == "collapsed") << "\" href=\"" << settingLink("sidebarVisible", "collapsed", "appearance") << "\">" << HtmlEscape(collapsedLabel) << "</a>"
             << "<a class=\"chip" << Selected(sidebarVisible == "hide") << "\" href=\"" << settingLink("sidebarVisible", "hide", "appearance") << "\">" << HtmlEscape(hideLabel) << "</a></div></div>"
-            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"sidebarWidth\"><input type=\"hidden\" name=\"return\" value=\"appearance\"><label>Sidebar width"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"sidebarWidth\"><input type=\"hidden\" name=\"return\" value=\"appearance\"><label>" << HtmlEscape(sidebarWidthLabel)
             << "<input name=\"value\" type=\"number\" min=\"160\" max=\"240\" value=\"" << HtmlEscape(sidebarWidth) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
             << "<div class=\"field\"><span>" << HtmlEscape(t.language) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(lang == "en") << "\" href=\"" << settingLink("language", "en", "appearance") << "\">English</a>"
@@ -295,62 +325,61 @@ std::string SettingsPageHtml(const std::string& url) {
             << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"newTabBackgroundUrl\"><input type=\"hidden\" name=\"return\" value=\"appearance\"><label>" << HtmlEscape(t.backgroundUrl)
             << "<input name=\"value\" value=\"" << HtmlEscape(bgUrl) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
   } else if (page == "bookmarks") {
-    content << "<section><h1>Bookmarks</h1>"
-            << "<div class=\"field\"><span>Open bookmark in</span><div class=\"segmented\">"
+    content << "<section><h1>" << HtmlEscape(bookmarksLabel) << "</h1>"
+            << "<div class=\"field\"><span>" << HtmlEscape(openBookmarkInLabel) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(openBookmarkIn == "current") << "\" href=\"" << settingLink("openBookmarkIn", "current", "bookmarks") << "\">" << HtmlEscape(currentTabLabel) << "</a>"
             << "<a class=\"chip" << Selected(openBookmarkIn == "new") << "\" href=\"" << settingLink("openBookmarkIn", "new", "bookmarks") << "\">" << HtmlEscape(newWindowTabLabel) << "</a></div></div>"
-            << "<div class=\"field\"><span>Show favicon in bookmarks</span><div class=\"segmented\">"
+            << "<div class=\"field\"><span>" << HtmlEscape(showFaviconLabel) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(showBookmarkFavicons == "on") << "\" href=\"" << settingLink("showBookmarkFavicons", "on", "bookmarks") << "\">" << HtmlEscape(onLabel) << "</a>"
             << "<a class=\"chip" << Selected(showBookmarkFavicons == "off") << "\" href=\"" << settingLink("showBookmarkFavicons", "off", "bookmarks") << "\">" << HtmlEscape(offLabel) << "</a></div></div></section>";
   } else if (page == "tabs") {
-    content << "<section><h1>Tabs</h1>"
-            << "<div class=\"field\"><span>New tab page</span><div class=\"segmented\">"
+    content << "<section><h1>" << HtmlEscape(tabsLabel) << "</h1>"
+            << "<div class=\"field\"><span>" << HtmlEscape(newTabPageLabel) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(newTabPage == "blank") << "\" href=\"" << settingLink("newTabPage", "blank", "tabs") << "\">" << HtmlEscape(blankLabel) << "</a>"
             << "<a class=\"chip" << Selected(newTabPage == "home") << "\" href=\"" << settingLink("newTabPage", "home", "tabs") << "\">" << HtmlEscape(homeLabel) << "</a></div></div></section>";
   } else if (page == "downloads") {
-    content << "<section><h1>Downloads</h1>"
+    content << "<section><h1>" << HtmlEscape(downloadsLabel) << "</h1>"
             << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" value=\"downloads\"><label>" << HtmlEscape(t.downloadFolder)
             << "<input name=\"value\" value=\"" << HtmlEscape(downloadDirectory) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
-            << "<div class=\"field\"><span>Ask before download</span><div class=\"segmented\">"
+            << "<div class=\"field\"><span>" << HtmlEscape(askBeforeDownloadLabel) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(askBeforeDownload == "on") << "\" href=\"" << settingLink("askBeforeDownload", "on", "downloads") << "\">" << HtmlEscape(onLabel) << "</a>"
             << "<a class=\"chip" << Selected(askBeforeDownload == "off") << "\" href=\"" << settingLink("askBeforeDownload", "off", "downloads") << "\">" << HtmlEscape(offLabel) << "</a></div></div>"
-            << "<div class=\"field\"><span>Clear download history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "downloads") << "\">Clear downloads</a></div></div></section>";
+            << "<div class=\"field\"><span>" << HtmlEscape(clearDownloadHistoryLabel) << "</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "downloads") << "\">" << HtmlEscape(clearDownloadsLabel) << "</a></div></div></section>";
   } else if (page == "search") {
     content << "<section><h1>" << HtmlEscape(t.search) << "</h1><div class=\"field\"><span>" << HtmlEscape(t.engine)
             << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(searchEngine == "duckduckgo") << "\" href=\"" << settingLink("searchEngine", "duckduckgo", "search") << "\">DuckDuckGo</a>"
             << "<a class=\"chip" << Selected(searchEngine == "google") << "\" href=\"" << settingLink("searchEngine", "google", "search") << "\">Google</a>"
             << "<a class=\"chip" << Selected(searchEngine == "bing") << "\" href=\"" << settingLink("searchEngine", "bing", "search") << "\">Bing</a>"
-            << "<a class=\"chip" << Selected(searchEngine == "custom") << "\" href=\"" << settingLink("searchEngine", "custom", "search") << "\">Custom</a></div></div>"
+            << "<a class=\"chip" << Selected(searchEngine == "custom") << "\" href=\"" << settingLink("searchEngine", "custom", "search") << "\">" << HtmlEscape(customSearchLabel) << "</a></div></div>"
             << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"customSearchUrl\"><input type=\"hidden\" name=\"return\" value=\"search\"><label>" << HtmlEscape(t.customSearchUrl)
             << "<input name=\"value\" value=\"" << HtmlEscape(customSearchUrl) << "\" placeholder=\"https://example.com/search?q={query}\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
   } else if (page == "privacy") {
-    content << "<section><h1>Privacy & Data</h1><div class=\"hero-line\"></div><h2>" << HtmlEscape(t.permissions)
+    content << "<section><h1>" << HtmlEscape(privacyDataLabel) << "</h1><div class=\"hero-line\"></div><h2>" << HtmlEscape(t.permissions)
             << "</h2><p>" << HtmlEscape(t.privacyBody) << "</p>"
-            << "<div class=\"field\"><span>Clear history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "history", "privacy") << "\">Clear history</a></div></div>"
-            << "<div class=\"field\"><span>Clear bookmarks</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "bookmarks", "privacy") << "\">Clear bookmarks</a></div></div>"
-            << "<div class=\"field\"><span>Clear download history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "privacy") << "\">Clear downloads</a></div></div>"
-            << "<div class=\"field\"><span>Clear all local data</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "all", "privacy") << "\">Clear all</a></div></div></section>";
+            << "<div class=\"field\"><span>" << HtmlEscape(clearHistoryLabel) << "</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "history", "privacy") << "\">" << HtmlEscape(clearHistoryLabel) << "</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(clearBookmarksLabel) << "</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "bookmarks", "privacy") << "\">" << HtmlEscape(clearBookmarksLabel) << "</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(clearDownloadHistoryLabel) << "</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "privacy") << "\">" << HtmlEscape(clearDownloadsLabel) << "</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(clearAllLocalDataLabel) << "</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "all", "privacy") << "\">" << HtmlEscape(clearAllLabel) << "</a></div></div></section>";
   } else if (page == "advanced") {
-    content << "<section><h1>Advanced</h1>"
-            << "<div class=\"field\"><span>DevTools</span><div class=\"segmented\"><a class=\"chip\" href=\"" << settingLink("openDevTools", "1", "advanced") << "\">Open DevTools</a></div></div>"
-            << "<div class=\"field\"><span>Logs</span><div class=\"segmented\"><a class=\"chip\" href=\"fubuki://settings/logs\">View logs</a>"
-            << "<a class=\"chip danger\" href=\"" << settingLink("clearData", "logs", "advanced") << "\">Clear logs</a></div></div></section>";
+    content << "<section><h1>" << HtmlEscape(advancedLabel) << "</h1>"
+            << "<div class=\"field\"><span>" << HtmlEscape(devToolsLabel) << "</span><div class=\"segmented\"><a class=\"chip\" href=\"" << settingLink("openDevTools", "1", "advanced") << "\">" << HtmlEscape(openDevToolsLabel) << "</a></div></div>"
+            << "<div class=\"field\"><span>" << HtmlEscape(logsLabel) << "</span><div class=\"segmented\"><a class=\"chip\" href=\"fubuki://settings/logs\">" << HtmlEscape(viewLogsLabel) << "</a>"
+            << "<a class=\"chip danger\" href=\"" << settingLink("clearData", "logs", "advanced") << "\">" << HtmlEscape(clearLogsLabel) << "</a></div></div></section>";
   } else if (page == "logs") {
     content << LogsHtml();
   } else if (page == "about") {
     content << "<section class=\"about-page\">" << FubukiLogoSvg("about-logo")
-            << "<h1>Fubuki Browser Alpha</h1><p>Quiet speed. Clear chrome. Local-first data.</p>"
+            << "<h1>Fubuki Browser Alpha</h1>"
             << "<div class=\"about-grid\"><div><span>" << HtmlEscape(t.version) << "</span><strong>0.1.0 alpha</strong></div>"
-            << "<div><span>" << HtmlEscape(t.engineName) << "</span><strong>Chromium Embedded Framework</strong></div>"
-            << "<div><span>" << HtmlEscape(t.profile) << "</span><strong>" << HtmlEscape(ProfilePath().string()) << "</strong></div>"
-            << "<div><span>" << HtmlEscape(t.bundle) << "</span><strong>dev.fubuki.browser.alpha</strong></div></div></section>";
+            << "<div><span>" << HtmlEscape(cefVersionLabel) << "</span><strong>" << HtmlEscape(CEF_VERSION) << "</strong></div>"
+            << "<div><span>" << HtmlEscape(lang == "ja" ? "権利表示" : "Copyright") << "</span><strong>Copyright 2026 TeamFubuki<br>Released under the MIT license</strong></div></div></section>";
   } else {
     content << "<section><h1>" << HtmlEscape(t.general) << "</h1>"
             << "<div class=\"field\"><span>" << HtmlEscape(t.startup) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(startupBehavior == "newTab") << "\" href=\"" << settingLink("startupBehavior", "newTab", "general") << "\">" << HtmlEscape(newTabLabel) << "</a>"
             << "<a class=\"chip" << Selected(startupBehavior == "restore") << "\" href=\"" << settingLink("startupBehavior", "restore", "general") << "\">" << HtmlEscape(restoreLabel) << "</a></div></div>"
-            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"homeUrl\"><input type=\"hidden\" name=\"return\" value=\"general\"><label>Home URL"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"homeUrl\"><input type=\"hidden\" name=\"return\" value=\"general\"><label>" << HtmlEscape(homeUrlLabel)
             << "<input name=\"value\" value=\"" << HtmlEscape(homeUrl) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
   }
 
@@ -366,7 +395,7 @@ nav{display:grid;gap:4px}nav a{height:42px;display:flex;align-items:center;gap:1
 main{padding:42px clamp(26px,5vw,70px);display:grid;align-content:start}section{max-width:760px;display:grid;gap:18px}h1{font-size:34px;line-height:1;margin:0;font-weight:760}h2{font-size:18px;margin:0}.field,form{display:grid;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);transition:border-color .08s linear}.field:hover,form:hover{border-color:color-mix(in srgb,var(--accent) 28%,var(--line))}
 label{display:grid;gap:10px;color:var(--muted);font-weight:650}input{height:38px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:0 12px;color:var(--text);font:inherit;user-select:text;transition:border-color .08s linear,box-shadow .08s linear}input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent);background:var(--surface)}
 button,.chip{height:34px;border:0;border-radius:9px;background:var(--panel);color:var(--text);padding:0 12px;text-decoration:none;font:inherit;font-weight:700;display:inline-grid;place-items:center;transition:background-color .08s linear,color .08s linear}.segmented{display:flex;flex-wrap:wrap;gap:8px}.chip.selected,button{background:var(--text);color:var(--bg)}.chip.danger{background:#fee2e2;color:#991b1b}html[data-appearance=dark] .chip.danger{background:#4a1d22;color:#ffb4bd}.hero-line{width:86px;height:6px;border-radius:999px;background:linear-gradient(90deg,#ff9686,#a7abe0,#1aadeb)}
-.about-page{max-width:940px;min-height:calc(100vh - 84px);place-content:center}.about-logo{width:112px;height:112px}.about-page h1{font-size:clamp(46px,7vw,86px);letter-spacing:0}.about-page p{font-size:18px;color:var(--muted);margin:0}.about-grid{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.about-grid div{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.about-grid span{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}.about-grid strong{word-break:break-word}
+.about-page{max-width:760px;min-height:calc(100vh - 84px);place-content:center}.about-logo{width:112px;height:112px}.about-page h1{font-size:clamp(40px,7vw,72px);letter-spacing:0}.about-grid{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.about-grid div{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.about-grid div:last-child{grid-column:1/-1}.about-grid span{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}.about-grid strong{word-break:break-word}
 .log-list{display:grid;gap:8px}.log-list article{display:grid;grid-template-columns:76px minmax(0,1fr);gap:4px 10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px}.log-list span{grid-row:1/3;color:var(--muted);font-size:12px;text-transform:uppercase}.log-list strong{font-weight:600;word-break:break-word}.log-list small{color:var(--muted);font-size:12px}
 @keyframes page-in{from{opacity:0}}
 @media(max-width:760px){.settings{grid-template-columns:1fr}aside{position:static;height:auto}.about-grid{grid-template-columns:1fr}}
@@ -375,11 +404,12 @@ button,.chip{height:34px;border:0;border-radius:9px;background:var(--panel);colo
        << NavItem("general", page, "⌂", t.general)
        << NavItem("search", page, "⌕", t.search)
        << NavItem("appearance", page, "◐", t.appearance)
-       << NavItem("tabs", page, "▣", "Tabs")
-       << NavItem("bookmarks", page, "★", "Bookmarks")
-       << NavItem("downloads", page, "↓", "Downloads")
-       << NavItem("privacy", page, "◇", "Privacy & Data")
-       << NavItem("advanced", page, "⌘", "Advanced")
+       << NavItem("tabs", page, "▣", tabsLabel)
+       << NavItem("bookmarks", page, "★", bookmarksLabel)
+       << NavItem("downloads", page, "↓", downloadsLabel)
+       << NavItem("privacy", page, "◇", privacyDataLabel)
+       << NavItem("advanced", page, "⌘", advancedLabel)
+       << NavItem("about", page, "ⓘ", t.about)
        << "</nav></aside><main>" << content.str() << "</main></div></body></html>";
   return html.str();
 }

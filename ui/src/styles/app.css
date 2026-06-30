@@ -4,7 +4,7 @@
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
   --sidebar-width: 196px;
-  --nav-height: 52px;
+  --nav-height: 48px;
   --traffic-light-safe-width: 76px;
   --space-1: 4px;
   --space-2: 8px;
@@ -94,6 +94,13 @@
 
 * {
   box-sizing: border-box;
+}
+
+html,
+#root {
+  width: 100%;
+  height: 100%;
+  background: transparent;
 }
 
 body {
@@ -206,7 +213,7 @@ select:focus-visible {
   min-height: var(--nav-height);
   align-items: center;
   gap: var(--space-2);
-  padding: 7px 12px;
+  padding: 5px 12px;
   pointer-events: auto;
   z-index: 1;
 }
@@ -308,7 +315,7 @@ select:focus-visible {
 
 .omnibox input {
   width: 100%;
-  height: calc(var(--control-size) + 4px);
+  height: var(--control-size);
   min-width: 0;
   border: 1px solid var(--chrome-border);
   border-radius: var(--radius-xl);
@@ -601,7 +608,7 @@ select:focus-visible {
 .panel-layer {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 100;
   pointer-events: none;
 }
 
@@ -845,7 +852,7 @@ select:focus-visible {
 
 .download-row {
   min-width: 0;
-  min-height: 56px;
+  min-height: 54px;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   grid-template-rows: auto auto auto;
@@ -904,10 +911,12 @@ select:focus-visible {
   grid-column: 2 / 3;
 }
 
-.download-actions {
+.download-state {
   grid-column: 3;
-  display: flex;
-  gap: 5px;
+  justify-self: end;
+  max-width: 92px;
+  padding-left: 8px;
+  text-align: right;
 }
 
 .more-menu {
