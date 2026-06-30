@@ -441,6 +441,18 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
   return ok;
 }
 
+bool BrowserWindow::RemoveHistory(const std::string& url) {
+  const bool ok = dataStore_->RemoveHistory(url);
+  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  return ok;
+}
+
+bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& path) {
+  const bool ok = dataStore_->RemoveDownload(url, path);
+  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  return ok;
+}
+
 bool BrowserWindow::ClearBrowsingData(const std::string& target) {
   bool ok = false;
   if (target == "bookmarks") {
@@ -512,6 +524,8 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   bool ok = false;
   if (key == "removeBookmark") {
     ok = RemoveBookmark(value);
+  } else if (key == "openDevTools") {
+    ok = OpenDevTools();
   } else if (key == "clearData") {
     ok = ClearBrowsingData(value);
   } else {
@@ -792,9 +806,10 @@ void BrowserWindow::UpdateContentFrame() {
     return;
   }
   const auto settings = dataStore_->Settings();
-  const bool sidebarVisible = settings->GetString("sidebarVisible") != "hide";
-  double sidebarWidth = sidebarVisible ? kSidebarWidth : 0.0;
-  if (sidebarVisible) {
+  const std::string sidebarState = settings->GetString("sidebarVisible");
+  const bool sidebarVisible = sidebarState != "hide";
+  double sidebarWidth = sidebarState == "collapsed" ? 54.0 : sidebarVisible ? kSidebarWidth : 0.0;
+  if (sidebarVisible && sidebarState != "collapsed") {
     const std::string widthValue = settings->GetString("sidebarWidth");
     if (!widthValue.empty()) {
       try {

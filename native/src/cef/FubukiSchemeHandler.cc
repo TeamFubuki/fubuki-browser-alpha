@@ -162,6 +162,37 @@ std::string NavItem(const std::string& page, const std::string& active, const st
          "\"><span>" + icon + "</span><strong>" + HtmlEscape(label) + "</strong></a>";
 }
 
+std::string LogsHtml() {
+  std::filesystem::create_directories(ProfilePath());
+  sqlite3* db = nullptr;
+  std::ostringstream out;
+  out << "<section><h1>Logs</h1>";
+  if (sqlite3_open(DatabasePath().string().c_str(), &db) != SQLITE_OK) {
+    return out.str() + "<p>Unable to open log store.</p></section>";
+  }
+  Execute(db, "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT,level TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL)");
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db, "SELECT level,message,created_at FROM logs ORDER BY id DESC LIMIT 120", -1, &statement, nullptr);
+  out << "<div class=\"log-list\">";
+  bool hasRows = false;
+  while (sqlite3_step(statement) == SQLITE_ROW) {
+    hasRows = true;
+    const unsigned char* level = sqlite3_column_text(statement, 0);
+    const unsigned char* message = sqlite3_column_text(statement, 1);
+    const unsigned char* created = sqlite3_column_text(statement, 2);
+    out << "<article><span>" << HtmlEscape(level ? reinterpret_cast<const char*>(level) : "")
+        << "</span><strong>" << HtmlEscape(message ? reinterpret_cast<const char*>(message) : "")
+        << "</strong><small>" << HtmlEscape(created ? reinterpret_cast<const char*>(created) : "") << "</small></article>";
+  }
+  if (!hasRows) {
+    out << "<p>No logs</p>";
+  }
+  out << "</div></section>";
+  sqlite3_finalize(statement);
+  sqlite3_close(db);
+  return out.str();
+}
+
 std::string NewTabHtml() {
   const std::string lang = Setting("language", "en");
   const UiText t = TextFor(lang);
@@ -225,6 +256,7 @@ std::string SettingsPageHtml(const std::string& url) {
   const std::string comfortableLabel = lang == "ja" ? "標準" : "Comfortable";
   const std::string showLabel = lang == "ja" ? "表示" : "Show";
   const std::string hideLabel = lang == "ja" ? "非表示" : "Hide";
+  const std::string collapsedLabel = lang == "ja" ? "折りたたみ" : "Collapsed";
   const std::string onLabel = lang == "ja" ? "オン" : "On";
   const std::string offLabel = lang == "ja" ? "オフ" : "Off";
   const std::string unsplashLabel = lang == "ja" ? "吹雪写真" : "Unsplash";
@@ -247,6 +279,7 @@ std::string SettingsPageHtml(const std::string& url) {
             << "<a class=\"chip" << Selected(toolbarDensity == "comfortable") << "\" href=\"" << settingLink("toolbarDensity", "comfortable", "appearance") << "\">" << HtmlEscape(comfortableLabel) << "</a></div></div>"
             << "<div class=\"field\"><span>Sidebar</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(sidebarVisible == "show") << "\" href=\"" << settingLink("sidebarVisible", "show", "appearance") << "\">" << HtmlEscape(showLabel) << "</a>"
+            << "<a class=\"chip" << Selected(sidebarVisible == "collapsed") << "\" href=\"" << settingLink("sidebarVisible", "collapsed", "appearance") << "\">" << HtmlEscape(collapsedLabel) << "</a>"
             << "<a class=\"chip" << Selected(sidebarVisible == "hide") << "\" href=\"" << settingLink("sidebarVisible", "hide", "appearance") << "\">" << HtmlEscape(hideLabel) << "</a></div></div>"
             << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"sidebarWidth\"><input type=\"hidden\" name=\"return\" value=\"appearance\"><label>Sidebar width"
             << "<input name=\"value\" type=\"number\" min=\"160\" max=\"240\" value=\"" << HtmlEscape(sidebarWidth) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
@@ -269,6 +302,19 @@ std::string SettingsPageHtml(const std::string& url) {
             << "<div class=\"field\"><span>Show favicon in bookmarks</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(showBookmarkFavicons == "on") << "\" href=\"" << settingLink("showBookmarkFavicons", "on", "bookmarks") << "\">" << HtmlEscape(onLabel) << "</a>"
             << "<a class=\"chip" << Selected(showBookmarkFavicons == "off") << "\" href=\"" << settingLink("showBookmarkFavicons", "off", "bookmarks") << "\">" << HtmlEscape(offLabel) << "</a></div></div></section>";
+  } else if (page == "tabs") {
+    content << "<section><h1>Tabs</h1>"
+            << "<div class=\"field\"><span>New tab page</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(newTabPage == "blank") << "\" href=\"" << settingLink("newTabPage", "blank", "tabs") << "\">" << HtmlEscape(blankLabel) << "</a>"
+            << "<a class=\"chip" << Selected(newTabPage == "home") << "\" href=\"" << settingLink("newTabPage", "home", "tabs") << "\">" << HtmlEscape(homeLabel) << "</a></div></div></section>";
+  } else if (page == "downloads") {
+    content << "<section><h1>Downloads</h1>"
+            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" value=\"downloads\"><label>" << HtmlEscape(t.downloadFolder)
+            << "<input name=\"value\" value=\"" << HtmlEscape(downloadDirectory) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
+            << "<div class=\"field\"><span>Ask before download</span><div class=\"segmented\">"
+            << "<a class=\"chip" << Selected(askBeforeDownload == "on") << "\" href=\"" << settingLink("askBeforeDownload", "on", "downloads") << "\">" << HtmlEscape(onLabel) << "</a>"
+            << "<a class=\"chip" << Selected(askBeforeDownload == "off") << "\" href=\"" << settingLink("askBeforeDownload", "off", "downloads") << "\">" << HtmlEscape(offLabel) << "</a></div></div>"
+            << "<div class=\"field\"><span>Clear download history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "downloads") << "\">Clear downloads</a></div></div></section>";
   } else if (page == "search") {
     content << "<section><h1>" << HtmlEscape(t.search) << "</h1><div class=\"field\"><span>" << HtmlEscape(t.engine)
             << "</span><div class=\"segmented\">"
@@ -279,15 +325,19 @@ std::string SettingsPageHtml(const std::string& url) {
             << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"customSearchUrl\"><input type=\"hidden\" name=\"return\" value=\"search\"><label>" << HtmlEscape(t.customSearchUrl)
             << "<input name=\"value\" value=\"" << HtmlEscape(customSearchUrl) << "\" placeholder=\"https://example.com/search?q={query}\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
   } else if (page == "privacy") {
-    content << "<section><h1>" << HtmlEscape(t.privacy) << "</h1><div class=\"hero-line\"></div><h2>" << HtmlEscape(t.permissions)
-            << "</h2><p>" << HtmlEscape(t.privacyBody) << "</p></section>";
-  } else if (page == "data") {
-    content << "<section><h1>Data</h1>"
-            << "<div class=\"field\"><span>Clear bookmarks</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "bookmarks", "data") << "\">Clear bookmarks</a></div></div>"
-            << "<div class=\"field\"><span>Clear history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "history", "data") << "\">Clear history</a></div></div>"
-            << "<div class=\"field\"><span>Clear downloads</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "data") << "\">Clear downloads</a></div></div>"
-            << "<div class=\"field\"><span>Clear logs</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "logs", "data") << "\">Clear logs</a></div></div>"
-            << "<div class=\"field\"><span>Clear all local history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "all", "data") << "\">Clear all</a></div></div></section>";
+    content << "<section><h1>Privacy & Data</h1><div class=\"hero-line\"></div><h2>" << HtmlEscape(t.permissions)
+            << "</h2><p>" << HtmlEscape(t.privacyBody) << "</p>"
+            << "<div class=\"field\"><span>Clear history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "history", "privacy") << "\">Clear history</a></div></div>"
+            << "<div class=\"field\"><span>Clear bookmarks</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "bookmarks", "privacy") << "\">Clear bookmarks</a></div></div>"
+            << "<div class=\"field\"><span>Clear download history</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "downloads", "privacy") << "\">Clear downloads</a></div></div>"
+            << "<div class=\"field\"><span>Clear all local data</span><div class=\"segmented\"><a class=\"chip danger\" href=\"" << settingLink("clearData", "all", "privacy") << "\">Clear all</a></div></div></section>";
+  } else if (page == "advanced") {
+    content << "<section><h1>Advanced</h1>"
+            << "<div class=\"field\"><span>DevTools</span><div class=\"segmented\"><a class=\"chip\" href=\"" << settingLink("openDevTools", "1", "advanced") << "\">Open DevTools</a></div></div>"
+            << "<div class=\"field\"><span>Logs</span><div class=\"segmented\"><a class=\"chip\" href=\"fubuki://settings/logs\">View logs</a>"
+            << "<a class=\"chip danger\" href=\"" << settingLink("clearData", "logs", "advanced") << "\">Clear logs</a></div></div></section>";
+  } else if (page == "logs") {
+    content << LogsHtml();
   } else if (page == "about") {
     content << "<section class=\"about-page\">" << FubukiLogoSvg("about-logo")
             << "<h1>Fubuki Browser Alpha</h1><p>Quiet speed. Clear chrome. Local-first data.</p>"
@@ -300,16 +350,8 @@ std::string SettingsPageHtml(const std::string& url) {
             << "<div class=\"field\"><span>" << HtmlEscape(t.startup) << "</span><div class=\"segmented\">"
             << "<a class=\"chip" << Selected(startupBehavior == "newTab") << "\" href=\"" << settingLink("startupBehavior", "newTab", "general") << "\">" << HtmlEscape(newTabLabel) << "</a>"
             << "<a class=\"chip" << Selected(startupBehavior == "restore") << "\" href=\"" << settingLink("startupBehavior", "restore", "general") << "\">" << HtmlEscape(restoreLabel) << "</a></div></div>"
-            << "<div class=\"field\"><span>New tab page</span><div class=\"segmented\">"
-            << "<a class=\"chip" << Selected(newTabPage == "blank") << "\" href=\"" << settingLink("newTabPage", "blank", "general") << "\">" << HtmlEscape(blankLabel) << "</a>"
-            << "<a class=\"chip" << Selected(newTabPage == "home") << "\" href=\"" << settingLink("newTabPage", "home", "general") << "\">" << HtmlEscape(homeLabel) << "</a></div></div>"
             << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"homeUrl\"><input type=\"hidden\" name=\"return\" value=\"general\"><label>Home URL"
-            << "<input name=\"value\" value=\"" << HtmlEscape(homeUrl) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
-            << "<form action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" value=\"general\"><label>" << HtmlEscape(t.downloadFolder)
-            << "<input name=\"value\" value=\"" << HtmlEscape(downloadDirectory) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form>"
-            << "<div class=\"field\"><span>Ask before download</span><div class=\"segmented\">"
-            << "<a class=\"chip" << Selected(askBeforeDownload == "on") << "\" href=\"" << settingLink("askBeforeDownload", "on", "general") << "\">" << HtmlEscape(onLabel) << "</a>"
-            << "<a class=\"chip" << Selected(askBeforeDownload == "off") << "\" href=\"" << settingLink("askBeforeDownload", "off", "general") << "\">" << HtmlEscape(offLabel) << "</a></div></div></section>";
+            << "<input name=\"value\" value=\"" << HtmlEscape(homeUrl) << "\"></label><button>" << HtmlEscape(t.save) << "</button></form></section>";
   }
 
   std::ostringstream html;
@@ -325,17 +367,19 @@ main{padding:42px clamp(26px,5vw,70px);display:grid;align-content:start}section{
 label{display:grid;gap:10px;color:var(--muted);font-weight:650}input{height:38px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:0 12px;color:var(--text);font:inherit;user-select:text;transition:border-color .08s linear,box-shadow .08s linear}input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent);background:var(--surface)}
 button,.chip{height:34px;border:0;border-radius:9px;background:var(--panel);color:var(--text);padding:0 12px;text-decoration:none;font:inherit;font-weight:700;display:inline-grid;place-items:center;transition:background-color .08s linear,color .08s linear}.segmented{display:flex;flex-wrap:wrap;gap:8px}.chip.selected,button{background:var(--text);color:var(--bg)}.chip.danger{background:#fee2e2;color:#991b1b}html[data-appearance=dark] .chip.danger{background:#4a1d22;color:#ffb4bd}.hero-line{width:86px;height:6px;border-radius:999px;background:linear-gradient(90deg,#ff9686,#a7abe0,#1aadeb)}
 .about-page{max-width:940px;min-height:calc(100vh - 84px);place-content:center}.about-logo{width:112px;height:112px}.about-page h1{font-size:clamp(46px,7vw,86px);letter-spacing:0}.about-page p{font-size:18px;color:var(--muted);margin:0}.about-grid{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.about-grid div{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.about-grid span{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}.about-grid strong{word-break:break-word}
+.log-list{display:grid;gap:8px}.log-list article{display:grid;grid-template-columns:76px minmax(0,1fr);gap:4px 10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px}.log-list span{grid-row:1/3;color:var(--muted);font-size:12px;text-transform:uppercase}.log-list strong{font-weight:600;word-break:break-word}.log-list small{color:var(--muted);font-size:12px}
 @keyframes page-in{from{opacity:0}}
 @media(max-width:760px){.settings{grid-template-columns:1fr}aside{position:static;height:auto}.about-grid{grid-template-columns:1fr}}
 </style></head><body><div class="settings"><aside><div class="brand">)"
        << FubukiLogoSvg() << "<strong>" << HtmlEscape(t.settings) << "</strong></div><nav>"
        << NavItem("general", page, "⌂", t.general)
-       << NavItem("appearance", page, "◐", t.appearance)
-       << NavItem("bookmarks", page, "★", "Bookmarks")
        << NavItem("search", page, "⌕", t.search)
-       << NavItem("privacy", page, "◇", t.privacy)
-       << NavItem("data", page, "⌫", "Data")
-       << NavItem("about", page, "✦", t.about)
+       << NavItem("appearance", page, "◐", t.appearance)
+       << NavItem("tabs", page, "▣", "Tabs")
+       << NavItem("bookmarks", page, "★", "Bookmarks")
+       << NavItem("downloads", page, "↓", "Downloads")
+       << NavItem("privacy", page, "◇", "Privacy & Data")
+       << NavItem("advanced", page, "⌘", "Advanced")
        << "</nav></aside><main>" << content.str() << "</main></div></body></html>";
   return html.str();
 }

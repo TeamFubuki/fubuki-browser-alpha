@@ -106,6 +106,12 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "bookmarks.remove") {
     return BoolValue(window_.RemoveBookmark(params->GetString("url")));
   }
+  if (method == "history.remove") {
+    return BoolValue(window_.RemoveHistory(params->GetString("url")));
+  }
+  if (method == "downloads.remove") {
+    return BoolValue(window_.RemoveDownload(params->GetString("url"), params->GetString("path")));
+  }
   if (method == "data.clear") {
     return BoolValue(window_.ClearBrowsingData(params->GetString("target")));
   }
@@ -114,6 +120,9 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   }
   if (method == "ui.setOverlayActive") {
     return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") && params->GetBool("active")));
+  }
+  if (method == "app.openDevTools") {
+    return BoolValue(window_.OpenDevTools());
   }
   if (method == "commands.execute") {
     const std::string id = params->GetString("id");

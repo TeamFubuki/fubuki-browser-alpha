@@ -117,6 +117,27 @@ bool BrowserDataStore::RemoveBookmark(const std::string& url) {
   return ok;
 }
 
+bool BrowserDataStore::RemoveHistory(const std::string& url) {
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE url=?", -1, &statement, nullptr);
+  BindText(statement, 1, url);
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  sqlite3_finalize(statement);
+  RefreshList("history", history_, kMaxHistoryItems);
+  return ok;
+}
+
+bool BrowserDataStore::RemoveDownload(const std::string& url, const std::string& path) {
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM downloads WHERE url=? OR path=?", -1, &statement, nullptr);
+  BindText(statement, 1, url);
+  BindText(statement, 2, path);
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  sqlite3_finalize(statement);
+  RefreshList("downloads", downloads_, 200);
+  return ok;
+}
+
 bool BrowserDataStore::ClearBookmarks() {
   Execute("DELETE FROM bookmarks");
   RefreshList("bookmarks", bookmarks_, 500);

@@ -1,4 +1,5 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import type { PanelAnchor } from "../App";
 import { fubuki, type BrowserRecord } from "../bridge/fubuki";
 import { browserState, refreshState } from "../stores/browserStore";
 
@@ -6,6 +7,7 @@ type Props = {
   open: boolean;
   mode: "list" | "edit";
   bookmark?: BrowserRecord;
+  anchor?: PanelAnchor;
   onClose: () => void;
 };
 
@@ -19,14 +21,23 @@ function activeBookmark(): BrowserRecord {
   };
 }
 
+function anchorStyle(anchor?: PanelAnchor) {
+  return anchor ? `--popover-top: ${anchor.top}px; --popover-right: ${anchor.right}px;` : undefined;
+}
+
 export default function BookmarkPopover(props: Props) {
   let panel: HTMLElement | undefined;
   const [title, setTitle] = createSignal("");
   const [url, setUrl] = createSignal("");
   const [originalUrl, setOriginalUrl] = createSignal("");
+  const [query, setQuery] = createSignal("");
+  const [listEditing, setListEditing] = createSignal(false);
 
   createEffect(() => {
-    if (!props.open) return;
+    if (!props.open) {
+      setListEditing(false);
+      return;
+    }
     const source = props.bookmark || activeBookmark();
     setTitle(source.title || source.url || "");
     setUrl(source.url || "");
@@ -72,11 +83,31 @@ export default function BookmarkPopover(props: Props) {
     props.onClose();
   };
 
+  const filteredBookmarks = createMemo(() => {
+    const needle = query().trim().toLowerCase();
+    if (!needle) return browserState.bookmarks;
+    return browserState.bookmarks.filter((item) => `${item.title ?? ""} ${item.url ?? ""}`.toLowerCase().includes(needle));
+  });
+
+  const removeBookmark = async (event: MouseEvent, item: BrowserRecord) => {
+    event.stopPropagation();
+    if (!item.url) return;
+    await fubuki.invoke("bookmarks.remove", { url: item.url });
+    await refreshState("bookmarks.changed");
+  };
+
+  const editFromList = (item: BrowserRecord) => {
+    setTitle(item.title || item.url || "");
+    setUrl(item.url || "");
+    setOriginalUrl(item.url || "");
+    setListEditing(true);
+  };
+
   return (
     <Show when={props.open}>
-      <section ref={panel} class="popover bookmark-popover" aria-label="Bookmarks">
+      <section ref={panel} class="popover bookmark-popover" style={anchorStyle(props.anchor)} aria-label="Bookmarks">
         <Show
-          when={props.mode === "edit"}
+          when={props.mode === "edit" || listEditing()}
           fallback={
             <>
               <header>
@@ -88,18 +119,27 @@ export default function BookmarkPopover(props: Props) {
                   Clear
                 </button>
               </header>
-              <Show when={browserState.bookmarks.length > 0} fallback={<p class="empty-state">No bookmarks</p>}>
+              <input class="panel-search" value={query()} placeholder="Search bookmarks" aria-label="Search bookmarks" onInput={(event) => setQuery(event.currentTarget.value)} />
+              <Show when={filteredBookmarks().length > 0} fallback={<p class="empty-state">No bookmarks</p>}>
                 <div class="popover-list">
-                  <For each={browserState.bookmarks}>
+                  <For each={filteredBookmarks()}>
                     {(item) => (
-                      <button class="popover-row" title={item.url} onClick={() => void openBookmark(item)}>
-                        <Show when={browserState.settings.showBookmarkFavicons !== "off"}>
-                          <Show when={item.faviconUrl} fallback={<span class="record-favicon" />}>
-                            <img class="record-favicon" src={item.faviconUrl} alt="" />
+                      <div class="record-line">
+                        <button class="popover-row rich-row" title={item.url} onClick={() => void openBookmark(item)}>
+                          <Show when={browserState.settings.showBookmarkFavicons !== "off"}>
+                            <Show when={item.faviconUrl} fallback={<span class="record-favicon" />}>
+                              <img class="record-favicon" src={item.faviconUrl} alt="" />
+                            </Show>
                           </Show>
-                        </Show>
-                        <span>{item.title || item.url || "Untitled"}</span>
-                      </button>
+                          <span>{item.title || item.url || "Untitled"}</span>
+                          <small>{item.url}</small>
+                        </button>
+                        <button class="row-action" title="Edit" aria-label="Edit" onClick={(event) => {
+                          event.stopPropagation();
+                          editFromList(item);
+                        }}>✎</button>
+                        <button class="row-action" title="Delete" aria-label="Delete" onClick={(event) => void removeBookmark(event, item)}>×</button>
+                      </div>
                     )}
                   </For>
                 </div>
@@ -124,6 +164,9 @@ export default function BookmarkPopover(props: Props) {
               <input value={url()} onInput={(event) => setUrl(event.currentTarget.value)} />
             </label>
             <div class="form-actions">
+              <Show when={originalUrl()}>
+                <button type="button" onClick={() => void fubuki.invoke("bookmarks.remove", { url: originalUrl() }).then(() => refreshState("bookmarks.changed")).then(props.onClose)}>Delete</button>
+              </Show>
               <button type="button" onClick={props.onClose}>Cancel</button>
               <button type="submit">Save</button>
             </div>

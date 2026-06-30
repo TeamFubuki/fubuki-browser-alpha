@@ -1,9 +1,11 @@
 import { For, Show, createEffect, onCleanup } from "solid-js";
+import type { PanelAnchor } from "../App";
 import { fubuki } from "../bridge/fubuki";
 import { browserState, refreshState } from "../stores/browserStore";
 
 type Props = {
   open: boolean;
+  anchor?: PanelAnchor;
   onClose: () => void;
 };
 
@@ -11,6 +13,15 @@ function fileName(path?: string, url?: string) {
   const value = path || url || "";
   const parts = value.split(/[\\/]/);
   return parts.at(-1) || value || "Download";
+}
+
+function pathToFileUrl(path?: string) {
+  if (!path) return "";
+  return `file://${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function anchorStyle(anchor?: PanelAnchor) {
+  return anchor ? `--popover-top: ${anchor.top}px; --popover-right: ${anchor.right}px;` : undefined;
 }
 
 export default function DownloadsPopover(props: Props) {
@@ -32,9 +43,25 @@ export default function DownloadsPopover(props: Props) {
     });
   });
 
+  const openDownload = async (item: { path?: string; url?: string }) => {
+    const target = pathToFileUrl(item.path) || item.url;
+    if (!target) return;
+    if (browserState.activeTabId) {
+      await fubuki.invoke("tabs.navigate", { tabId: browserState.activeTabId, input: target });
+    } else {
+      await fubuki.invoke("tabs.create", { url: target, active: true });
+    }
+    props.onClose();
+  };
+
+  const removeDownload = async (item: { path?: string; url?: string }) => {
+    await fubuki.invoke("downloads.remove", { url: item.url || "", path: item.path || "" });
+    await refreshState("downloads.removed");
+  };
+
   return (
     <Show when={props.open}>
-      <section ref={panel} class="popover downloads-popover" aria-label="Downloads">
+      <section ref={panel} class="popover downloads-popover" style={anchorStyle(props.anchor)} aria-label="Downloads">
         <header>
           <h2>Downloads</h2>
           <button
@@ -51,7 +78,12 @@ export default function DownloadsPopover(props: Props) {
                 <article class="download-row">
                   <span class="download-icon" aria-hidden="true">↓</span>
                   <span>{fileName(item.path, item.url)}</span>
+                  <progress value={item.percent ?? 0} max="100" aria-label="Download progress" />
                   <small>{item.state || "unknown"} · {item.percent ?? 0}% · {item.path || item.url}</small>
+                  <div class="download-actions">
+                    <button class="mini-action" onClick={() => void openDownload(item)}>Open</button>
+                    <button class="mini-action" onClick={() => void removeDownload(item)}>Delete</button>
+                  </div>
                 </article>
               )}
             </For>

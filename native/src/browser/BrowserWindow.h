@@ -41,6 +41,8 @@ class BrowserWindow {
   bool AddActiveBookmark();
   bool SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl);
   bool RemoveBookmark(const std::string& url);
+  bool RemoveHistory(const std::string& url);
+  bool RemoveDownload(const std::string& url, const std::string& path);
   bool ClearBrowsingData(const std::string& target);
   bool SetSetting(const std::string& key, const std::string& value);
   bool SetUiOverlayActive(bool active);

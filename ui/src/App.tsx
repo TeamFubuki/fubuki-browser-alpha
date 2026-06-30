@@ -1,15 +1,34 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { bindNativeEvents, browserState, refreshState } from "./stores/browserStore";
-import Toolbar from "./components/Toolbar";
+import AppShell from "./components/AppShell";
 import BookmarkPopover from "./components/BookmarkPopover";
 import DownloadsPopover from "./components/DownloadsPopover";
-import TabStrip from "./components/TabStrip";
+import HistoryPopover from "./components/HistoryPopover";
+import PanelLayer from "./components/PanelLayer";
+import Sidebar from "./components/Sidebar";
+import TopBar from "./components/TopBar";
+import WebViewArea from "./components/WebViewArea";
 import { fubuki, fubukiLogoDataUri, type BrowserRecord } from "./bridge/fubuki";
+
+export type PanelAnchor = {
+  top: number;
+  right: number;
+};
+
+function anchorFromElement(element?: HTMLElement): PanelAnchor | undefined {
+  if (!element) return undefined;
+  const rect = element.getBoundingClientRect();
+  return {
+    top: Math.round(rect.bottom + 8),
+    right: Math.round(window.innerWidth - rect.right)
+  };
+}
 
 export default function App() {
   const [bookmarkPanel, setBookmarkPanel] = createSignal<"closed" | "list" | "edit">("closed");
   const [editingBookmark, setEditingBookmark] = createSignal<BrowserRecord | undefined>();
-  const [downloadsOpen, setDownloadsOpen] = createSignal(false);
+  const [panel, setPanel] = createSignal<"closed" | "bookmarks" | "history" | "downloads">("closed");
+  const [panelAnchor, setPanelAnchor] = createSignal<PanelAnchor | undefined>();
   const [systemDark, setSystemDark] = createSignal(window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
 
   const openSettings = () => {
@@ -24,12 +43,14 @@ export default function App() {
     const appearance = browserState.settings.appearance || browserState.settings.theme || "system";
     document.documentElement.dataset.theme = appearance === "dark" || (appearance === "system" && systemDark()) ? "dark" : "light";
     document.documentElement.dataset.density = browserState.settings.toolbarDensity || "compact";
-    document.documentElement.style.setProperty("--sidebar-width", `${Math.min(240, Math.max(160, Number(browserState.settings.sidebarWidth) || 196))}px`);
+    const sidebarState = browserState.settings.sidebarVisible || "show";
+    const sidebarWidth = sidebarState === "collapsed" ? 54 : Math.min(240, Math.max(160, Number(browserState.settings.sidebarWidth) || 196));
+    document.documentElement.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
     document.documentElement.dataset.sidebar = browserState.settings.sidebarVisible || "show";
   });
 
   createEffect(() => {
-    const active = bookmarkPanel() !== "closed" || downloadsOpen();
+    const active = bookmarkPanel() !== "closed" || panel() !== "closed";
     void fubuki.invoke("ui.setOverlayActive", { active }).catch(() => undefined);
   });
 
@@ -38,7 +59,7 @@ export default function App() {
     const media = window.matchMedia?.("(prefers-color-scheme: dark)");
     const onSchemeChange = () => setSystemDark(media?.matches ?? false);
     const toggleBookmarks = () => {
-      setBookmarkPanel(bookmarkPanel() === "list" ? "closed" : "list");
+      openBookmarks();
     };
     const toggleActiveBookmark = () => {
       const activeTabId = browserState.activeTabId;
@@ -58,7 +79,7 @@ export default function App() {
         document.querySelector<HTMLInputElement>(".omnibox input")?.select();
         event.preventDefault();
       } else if (command && event.key.toLowerCase() === "b") {
-        const next = browserState.settings.sidebarVisible === "hide" ? "show" : "hide";
+        const next = browserState.settings.sidebarVisible === "collapsed" ? "show" : "collapsed";
         void fubuki.invoke("settings.set", { key: "sidebarVisible", value: next }).then(() => refreshState("settings.saved"));
         event.preventDefault();
       } else if (command && event.key === ",") {
@@ -66,7 +87,8 @@ export default function App() {
         event.preventDefault();
       } else if (event.key === "Escape") {
         setBookmarkPanel("closed");
-        setDownloadsOpen(false);
+        setPanel("closed");
+        setPanelAnchor(undefined);
       }
       if (!activeTabId) return;
       if (command && event.key.toLowerCase() === "r") {
@@ -102,23 +124,56 @@ export default function App() {
     });
   });
 
-  const editBookmark = (bookmark?: BrowserRecord) => {
+  const closePanels = () => {
+    setBookmarkPanel("closed");
+    setPanel("closed");
+    setPanelAnchor(undefined);
+  };
+
+  const editBookmark = (bookmark?: BrowserRecord, anchor?: HTMLElement) => {
     setEditingBookmark(bookmark);
+    setPanel("closed");
+    setPanelAnchor(anchorFromElement(anchor));
     setBookmarkPanel("edit");
   };
 
+  const openBookmarks = (anchor?: HTMLElement) => {
+    setEditingBookmark(undefined);
+    setPanel("closed");
+    const closing = bookmarkPanel() === "list";
+    setPanelAnchor(closing ? undefined : anchorFromElement(anchor));
+    setBookmarkPanel(closing ? "closed" : "list");
+  };
+
+  const openPanel = (next: "history" | "downloads", anchor?: HTMLElement) => {
+    setBookmarkPanel("closed");
+    const closing = panel() === next;
+    setPanelAnchor(closing ? undefined : anchorFromElement(anchor));
+    setPanel(closing ? "closed" : next);
+  };
+
   return (
-    <main class="app-shell">
+    <AppShell>
       <img class="app-logo" src={fubukiLogoDataUri} alt="Fubuki Browser" />
-      <TabStrip />
-      <Toolbar
-        onBookmarkEdit={() => editBookmark()}
-        onBookmarks={() => setBookmarkPanel(bookmarkPanel() === "list" ? "closed" : "list")}
-        onDownloads={() => setDownloadsOpen(!downloadsOpen())}
+      <Sidebar
+        onBookmarks={() => openBookmarks()}
+        onHistory={() => openPanel("history")}
+        onDownloads={() => openPanel("downloads")}
         onSettings={openSettings}
       />
-      <BookmarkPopover open={bookmarkPanel() !== "closed"} mode={bookmarkPanel() === "edit" ? "edit" : "list"} bookmark={editingBookmark()} onClose={() => setBookmarkPanel("closed")} />
-      <DownloadsPopover open={downloadsOpen()} onClose={() => setDownloadsOpen(false)} />
-    </main>
+      <TopBar
+        onBookmarkEdit={(anchor) => editBookmark(undefined, anchor)}
+        onBookmarks={openBookmarks}
+        onHistory={(anchor) => openPanel("history", anchor)}
+        onDownloads={(anchor) => openPanel("downloads", anchor)}
+        onSettings={openSettings}
+      />
+      <WebViewArea />
+      <PanelLayer>
+        <BookmarkPopover open={bookmarkPanel() !== "closed"} mode={bookmarkPanel() === "edit" ? "edit" : "list"} bookmark={editingBookmark()} anchor={panelAnchor()} onClose={closePanels} />
+        <HistoryPopover open={panel() === "history"} anchor={panelAnchor()} onClose={closePanels} />
+        <DownloadsPopover open={panel() === "downloads"} anchor={panelAnchor()} onClose={closePanels} />
+      </PanelLayer>
+    </AppShell>
   );
 }
