@@ -150,8 +150,9 @@ bool FubukiClient::OnBeforeDownload(CefRefPtr<CefBrowser>,
     return false;
   }
   const std::string path = window_->DownloadPathFor(suggested_name.ToString());
+  const bool askBeforeDownload = window_->Store().Settings()->GetString("askBeforeDownload") == "on";
   window_->OnDownloadStarted(download_item->GetURL().ToString(), path);
-  callback->Continue(path, false);
+  callback->Continue(path, askBeforeDownload);
   return true;
 }
 

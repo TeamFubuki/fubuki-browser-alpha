@@ -1,18 +1,21 @@
 import { createSignal } from "solid-js";
 import { fubuki } from "../bridge/fubuki";
 import { browserState, refreshState } from "../stores/browserStore";
-import BookmarkModal from "./BookmarkModal";
-import DownloadsModal from "./DownloadsModal";
 import Omnibox from "./Omnibox";
+
+type Props = {
+  onBookmarkEdit: () => void;
+  onBookmarks: () => void;
+  onDownloads: () => void;
+  onSettings: () => void;
+};
 
 function activeTab() {
   return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
 }
 
-export default function Toolbar() {
+export default function Toolbar(props: Props) {
   const [draft, setDraft] = createSignal("");
-  const [bookmarksOpen, setBookmarksOpen] = createSignal(false);
-  const [downloadsOpen, setDownloadsOpen] = createSignal(false);
 
   const submit = () => {
     const tab = activeTab();
@@ -32,7 +35,8 @@ export default function Toolbar() {
     if (isBookmarked()) {
       await fubuki.invoke("bookmarks.remove", { url: tab.url });
     } else {
-      await fubuki.invoke("bookmarks.addActive");
+      props.onBookmarkEdit();
+      return;
     }
     await refreshState("bookmarks.changed");
   };
@@ -58,17 +62,15 @@ export default function Toolbar() {
       <button classList={{ "tool-button": true, selected: isBookmarked() }} title={isBookmarked() ? label("Remove bookmark", "ブックマークを削除") : label("Add bookmark", "ブックマークを追加")} onClick={() => void toggleBookmark()}>
         <span aria-hidden="true">{isBookmarked() ? "★" : "☆"}</span>
       </button>
-      <button class="tool-button" title={label("Bookmarks", "ブックマーク")} onClick={() => setBookmarksOpen(true)}>
+      <button class="tool-button" title={label("Bookmarks", "ブックマーク")} onClick={props.onBookmarks}>
         <span aria-hidden="true">▤</span>
       </button>
-      <button class="tool-button" title={label("Downloads", "ダウンロード")} onClick={() => setDownloadsOpen(true)}>
+      <button class="tool-button" title={label("Downloads", "ダウンロード")} onClick={props.onDownloads}>
         <span aria-hidden="true">⇩</span>
       </button>
-      <button class="tool-button" title={label("Settings", "設定")} onClick={() => browserState.activeTabId && void fubuki.invoke("tabs.navigate", { tabId: browserState.activeTabId, input: "fubuki://settings/" })}>
+      <button class="tool-button" title={label("Settings", "設定")} onClick={props.onSettings}>
         <span aria-hidden="true">⚙</span>
       </button>
-      <BookmarkModal open={bookmarksOpen()} onClose={() => setBookmarksOpen(false)} />
-      <DownloadsModal open={downloadsOpen()} onClose={() => setDownloadsOpen(false)} />
     </section>
   );
 }

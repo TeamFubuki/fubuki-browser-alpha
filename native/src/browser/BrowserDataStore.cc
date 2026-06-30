@@ -53,10 +53,20 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("homepage", "https://example.com");
   EnsureDefaultSetting("searchEngine", "google");
   EnsureDefaultSetting("customSearchUrl", "https://www.google.com/search?q={query}");
-  EnsureDefaultSetting("startupBehavior", "homepage");
+  EnsureDefaultSetting("startupBehavior", "newTab");
   const char* home = std::getenv("HOME");
   EnsureDefaultSetting("downloadDirectory", home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp");
   EnsureDefaultSetting("theme", "light");
+  EnsureDefaultSetting("appearance", "system");
+  EnsureDefaultSetting("toolbarDensity", "compact");
+  EnsureDefaultSetting("sidebarVisible", "show");
+  EnsureDefaultSetting("sidebarWidth", "196");
+  EnsureDefaultSetting("defaultBookmarkDisplay", "sidebar");
+  EnsureDefaultSetting("openBookmarkIn", "current");
+  EnsureDefaultSetting("showBookmarkFavicons", "on");
+  EnsureDefaultSetting("newTabPage", "blank");
+  EnsureDefaultSetting("homeUrl", "https://example.com");
+  EnsureDefaultSetting("askBeforeDownload", "off");
   EnsureDefaultSetting("language", "en");
   EnsureDefaultSetting("newTabBackgroundMode", "unsplash");
   EnsureDefaultSetting("newTabBackgroundColor", "#f8fafd");
@@ -105,6 +115,30 @@ bool BrowserDataStore::RemoveBookmark(const std::string& url) {
   sqlite3_finalize(statement);
   RefreshList("bookmarks", bookmarks_, 500);
   return ok;
+}
+
+bool BrowserDataStore::ClearBookmarks() {
+  Execute("DELETE FROM bookmarks");
+  RefreshList("bookmarks", bookmarks_, 500);
+  return true;
+}
+
+bool BrowserDataStore::ClearHistory() {
+  Execute("DELETE FROM history");
+  RefreshList("history", history_, kMaxHistoryItems);
+  return true;
+}
+
+bool BrowserDataStore::ClearDownloads() {
+  Execute("DELETE FROM downloads");
+  RefreshList("downloads", downloads_, 200);
+  return true;
+}
+
+bool BrowserDataStore::ClearLogs() {
+  Execute("DELETE FROM logs");
+  RefreshList("logs", logs_, kMaxLogItems);
+  return true;
 }
 
 void BrowserDataStore::AddDownload(const std::string& url, const std::string& path, const std::string& state) {

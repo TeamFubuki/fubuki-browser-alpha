@@ -100,8 +100,14 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "bookmarks.addActive") {
     return BoolValue(window_.AddActiveBookmark());
   }
+  if (method == "bookmarks.save") {
+    return BoolValue(window_.SaveBookmark(params->GetString("title"), params->GetString("url"), params->GetString("faviconUrl")));
+  }
   if (method == "bookmarks.remove") {
     return BoolValue(window_.RemoveBookmark(params->GetString("url")));
+  }
+  if (method == "data.clear") {
+    return BoolValue(window_.ClearBrowsingData(params->GetString("target")));
   }
   if (method == "settings.set") {
     return BoolValue(window_.SetSetting(params->GetString("key"), params->GetString("value")));

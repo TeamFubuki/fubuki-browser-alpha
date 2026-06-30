@@ -39,7 +39,9 @@ class BrowserWindow {
   bool HandleShortcut(bool commandDown, bool altDown, int keyCode, char character);
   bool OpenDevTools();
   bool AddActiveBookmark();
+  bool SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl);
   bool RemoveBookmark(const std::string& url);
+  bool ClearBrowsingData(const std::string& target);
   bool SetSetting(const std::string& key, const std::string& value);
   bool SetUiOverlayActive(bool active);
   bool HandleSettingsUrl(const std::string& tabId, const std::string& url);
@@ -74,6 +76,7 @@ class BrowserWindow {
   void RegisterCommands();
   void WireEvents();
   void ResizeViews();
+  void UpdateContentFrame();
   void UpdateTabPatch(const std::string& tabId,
                       const std::string& title,
                       const std::string& url,

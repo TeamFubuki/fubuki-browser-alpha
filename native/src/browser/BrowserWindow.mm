@@ -2,6 +2,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 
@@ -58,7 +59,7 @@
   }
 
   const NSPoint localPoint = point;
-  if (localPoint.x >= 220.0 && localPoint.y <= contentHeight_ - 56.0) {
+  if (localPoint.x >= 196.0 && localPoint.y <= contentHeight_ - 48.0) {
     return nil;
   }
   for (NSValue* value in blockedRects_) {
@@ -118,8 +119,8 @@ namespace fubuki {
 
 namespace {
 
-constexpr CGFloat kSidebarWidth = 220.0;
-constexpr CGFloat kNavHeight = 56.0;
+constexpr CGFloat kSidebarWidth = 196.0;
+constexpr CGFloat kNavHeight = 48.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
 
@@ -237,8 +238,19 @@ void BrowserWindow::Show() {
   CreateNativeWindow();
   CreateUiBrowser();
   const std::string startupBehavior = dataStore_->Settings()->GetString("startupBehavior");
-  const std::string homepage = dataStore_->Settings()->GetString("homepage");
-  CreateTab(startupBehavior == "newTab" ? "fubuki://newtab/" : homepage, true);
+  const std::string homeUrl = dataStore_->Settings()->GetString("homeUrl").empty()
+                                  ? dataStore_->Settings()->GetString("homepage")
+                                  : dataStore_->Settings()->GetString("homeUrl");
+  std::string startUrl = dataStore_->Settings()->GetString("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
+  if (startupBehavior == "restore" && dataStore_->History()->GetSize() > 0) {
+    if (auto last = dataStore_->History()->GetDictionary(0)) {
+      const std::string lastUrl = last->GetString("url");
+      if (!lastUrl.empty()) {
+        startUrl = lastUrl;
+      }
+    }
+  }
+  CreateTab(startUrl, true);
   [window_ makeKeyAndOrderFront:nil];
 }
 
@@ -333,6 +345,29 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
   if ((commandDown && character == 'l') || (commandDown && character == 'L')) {
     return FocusOmnibox();
   }
+  if (commandDown && character == ',') {
+    return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
+  }
+  if (commandDown && (character == 'b' || character == 'B')) {
+    if (uiBrowser_) {
+      uiBrowser_->GetMainFrame()->ExecuteJavaScript(
+          "window.dispatchEvent(new CustomEvent('fubuki:toggle-bookmarks'));",
+          "fubuki://app/",
+          0);
+      return true;
+    }
+    return false;
+  }
+  if (commandDown && (character == 'd' || character == 'D')) {
+    if (uiBrowser_) {
+      uiBrowser_->GetMainFrame()->ExecuteJavaScript(
+          "window.dispatchEvent(new CustomEvent('fubuki:toggle-active-bookmark'));",
+          "fubuki://app/",
+          0);
+      return true;
+    }
+    return false;
+  }
   if (!tab) {
     return false;
   }
@@ -344,9 +379,6 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
   }
   if (commandDown && (character == 'w' || character == 'W')) {
     return CloseTab(tabId);
-  }
-  if (commandDown && (character == 'd' || character == 'D')) {
-    return AddActiveBookmark();
   }
   if ((commandDown && character == '[') || (altDown && keyCode == 0x25)) {
     return GoBack(tabId);
@@ -397,19 +429,53 @@ bool BrowserWindow::AddActiveBookmark() {
   return ok;
 }
 
+bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
+  const bool ok = dataStore_->AddBookmark(title, url, faviconUrl);
+  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  return ok;
+}
+
 bool BrowserWindow::RemoveBookmark(const std::string& url) {
   const bool ok = dataStore_->RemoveBookmark(url);
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
+bool BrowserWindow::ClearBrowsingData(const std::string& target) {
+  bool ok = false;
+  if (target == "bookmarks") {
+    ok = dataStore_->ClearBookmarks();
+  } else if (target == "history") {
+    ok = dataStore_->ClearHistory();
+  } else if (target == "downloads") {
+    ok = dataStore_->ClearDownloads();
+  } else if (target == "logs") {
+    ok = dataStore_->ClearLogs();
+  } else if (target == "all") {
+    ok = dataStore_->ClearBookmarks() && dataStore_->ClearHistory() && dataStore_->ClearDownloads() && dataStore_->ClearLogs();
+  }
+  if (ok) {
+    if (target != "logs" && target != "all") {
+      dataStore_->Log("info", "Browsing data cleared: " + target);
+    }
+    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  }
+  return ok;
+}
+
 bool BrowserWindow::SetSetting(const std::string& key, const std::string& value) {
   if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior" &&
       key != "theme" && key != "language" && key != "newTabBackgroundMode" && key != "newTabBackgroundColor" &&
-      key != "newTabBackgroundUrl" && key != "customSearchUrl") {
+      key != "newTabBackgroundUrl" && key != "customSearchUrl" && key != "appearance" &&
+      key != "toolbarDensity" && key != "sidebarVisible" && key != "sidebarWidth" &&
+      key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
+      key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload") {
     return false;
   }
   dataStore_->SetSetting(key, value);
+  if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
+    UpdateContentFrame();
+  }
   dataStore_->Log("info", "Setting updated: " + key);
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return true;
@@ -446,6 +512,8 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   bool ok = false;
   if (key == "removeBookmark") {
     ok = RemoveBookmark(value);
+  } else if (key == "clearData") {
+    ok = ClearBrowsingData(value);
   } else {
     ok = SetSetting(key, value);
   }
@@ -605,6 +673,7 @@ void BrowserWindow::CreateNativeWindow() {
   [root addSubview:uiHostView_];
   [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
   [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:contentHostView_];
+  UpdateContentFrame();
 }
 
 void BrowserWindow::CreateUiBrowser() {
@@ -682,6 +751,11 @@ void BrowserWindow::RegisterCommands() {
     value->SetBool(AddActiveBookmark());
     return value;
   });
+  commands_.Register("bookmarks.save", [this](CefRefPtr<CefDictionaryValue> args) {
+    auto value = CefValue::Create();
+    value->SetBool(SaveBookmark(args->GetString("title"), args->GetString("url"), args->GetString("faviconUrl")));
+    return value;
+  });
 }
 
 void BrowserWindow::WireEvents() {
@@ -711,6 +785,29 @@ void BrowserWindow::ResizeViews() {
     NSView* view = reinterpret_cast<NSView*>(tab.browser->GetHost()->GetWindowHandle());
     [view setFrame:[contentHostView_ bounds]];
   }
+}
+
+void BrowserWindow::UpdateContentFrame() {
+  if (!contentHostView_ || !uiHostView_) {
+    return;
+  }
+  const auto settings = dataStore_->Settings();
+  const bool sidebarVisible = settings->GetString("sidebarVisible") != "hide";
+  double sidebarWidth = sidebarVisible ? kSidebarWidth : 0.0;
+  if (sidebarVisible) {
+    const std::string widthValue = settings->GetString("sidebarWidth");
+    if (!widthValue.empty()) {
+      try {
+        sidebarWidth = std::clamp(std::stod(widthValue), 160.0, 240.0);
+      } catch (...) {
+        sidebarWidth = kSidebarWidth;
+      }
+    }
+  }
+  const CGFloat navHeight = settings->GetString("toolbarDensity") == "comfortable" ? 48.0 : 44.0;
+  NSRect bounds = [uiHostView_ bounds];
+  [contentHostView_ setFrame:NSMakeRect(sidebarWidth, 0, bounds.size.width - sidebarWidth, bounds.size.height - navHeight)];
+  ResizeViews();
 }
 
 void BrowserWindow::UpdateTabPatch(const std::string& tabId,

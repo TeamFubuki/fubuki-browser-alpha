@@ -37,6 +37,16 @@ export type BrowserState = {
     customSearchUrl: string;
     startupBehavior: string;
     theme: string;
+    appearance: "system" | "light" | "dark" | string;
+    toolbarDensity: "compact" | "comfortable" | string;
+    sidebarVisible: "show" | "hide" | string;
+    sidebarWidth: string;
+    defaultBookmarkDisplay: "sidebar" | "popover" | string;
+    openBookmarkIn: "current" | "new" | string;
+    showBookmarkFavicons: "on" | "off" | string;
+    newTabPage: "blank" | "home" | string;
+    homeUrl: string;
+    askBeforeDownload: "on" | "off" | string;
     language: string;
     newTabBackgroundMode: string;
     newTabBackgroundColor: string;
