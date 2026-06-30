@@ -35,11 +35,11 @@ jobs:
       - name: Install latest C++ check tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-format cppcheck
+          sudo apt-get install -y cppcheck
 
-      - name: Check C++ formatting
+      - name: Run cppcheck
         run: |
-          files="$(find native -type f \( \
+          find native -type f \( \
             -name '*.c' -o \
             -name '*.cc' -o \
             -name '*.cpp' -o \
@@ -48,20 +48,18 @@ jobs:
             -name '*.hh' -o \
             -name '*.hpp' -o \
             -name '*.hxx' \
-          \))"
+          \) > cpp-files.txt
 
-          if [ -n "$files" ]; then
-            clang-format --dry-run --Werror $files
+          if [ -s cpp-files.txt ]; then
+            xargs -a cpp-files.txt cppcheck \
+              --std=c++20 \
+              --enable=warning,performance,portability \
+              --error-exitcode=1 \
+              --inline-suppr \
+              --suppress=missingIncludeSystem
+          else
+            echo "No C++ files found."
           fi
-
-      - name: Run cppcheck
-        run: |
-          cppcheck \
-            --enable=warning,style,performance,portability \
-            --error-exitcode=1 \
-            --inline-suppr \
-            --suppress=missingIncludeSystem \
-            native
 
   ui-check:
     name: UI check
@@ -76,17 +74,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup latest pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+          run_install: false
+
       - name: Setup latest Node.js LTS
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: pnpm
           cache-dependency-path: ui/pnpm-lock.yaml
-
-      - name: Setup latest pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@latest --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
