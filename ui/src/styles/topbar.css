@@ -1,0 +1,60 @@
+.top-bar {
+  -webkit-app-region: drag;
+  grid-area: topbar;
+  min-width: 0;
+  height: var(--topbar-height);
+  display: grid;
+  grid-template-columns: var(--button-size) var(--button-size) var(--button-size) minmax(160px, 1fr) var(--button-size);
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--topbar-bg);
+  pointer-events: auto;
+}
+
+.topbar-button {
+  width: var(--button-size);
+  height: var(--button-size);
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.topbar-button:hover {
+  background: var(--hover);
+}
+
+.topbar-button:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.topbar-button.bookmarked {
+  color: var(--accent);
+}
+
+.omnibox {
+  -webkit-app-region: no-drag;
+  min-width: 0;
+}
+
+.omnibox-input {
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: var(--content-bg);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.omnibox-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}

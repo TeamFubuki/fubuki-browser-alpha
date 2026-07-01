@@ -63,6 +63,8 @@ void FubukiInstallBasicMenu() {
   AddCommandItem(viewMenu, @"Reload Page", @"tabs.reload", @"r");
   AddCommandItem(viewMenu, @"Stop Loading", @"tabs.stop", @".");
   [viewMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(viewMenu, @"Developer Tools", @"app.openDevTools", @"");
+  [viewMenu addItem:[NSMenuItem separatorItem]];
   AddItem(viewMenu, @"Enter Full Screen", @selector(toggleFullScreen:), @"f");
   [[viewMenu itemWithTitle:@"Enter Full Screen"] setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
   AddSubmenu(mainMenu, @"View", viewMenu);

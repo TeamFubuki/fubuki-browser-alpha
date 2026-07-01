@@ -1,6 +1,7 @@
 #include "browser/BrowserWindow.h"
 
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -11,11 +12,63 @@
 #include "include/wrapper/cef_helpers.h"
 #include "utils/UrlUtils.h"
 
+@interface FubukiUiHostView : NSView
+@property(nonatomic) BOOL overlayActive;
+@property(nonatomic) CGFloat sidebarWidth;
+@property(nonatomic) CGFloat navHeight;
+@property(nonatomic) CGFloat overlayWidth;
+@property(nonatomic) CGFloat overlayHeight;
+- (BOOL)isInteractivePoint:(NSPoint)point;
+@end
+
 @interface FubukiDragRegionView : NSView
+@property(nonatomic) CGFloat sidebarWidth;
+@property(nonatomic) CGFloat navHeight;
 - (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height;
 @end
 
+namespace fubuki {
+class BrowserWindow;
+BrowserWindow* GetActiveBrowserWindow();
+}
+
 @interface FubukiWindowDelegate : NSObject <NSWindowDelegate>
+@end
+
+@implementation FubukiUiHostView
+
+- (BOOL)isOpaque {
+  return NO;
+}
+
+- (BOOL)isInteractivePoint:(NSPoint)point {
+  const NSRect bounds = [self bounds];
+  if (point.y >= bounds.size.height - self.navHeight) {
+    return YES;
+  }
+  if (self.sidebarWidth > 0.0 && point.x <= self.sidebarWidth) {
+    return YES;
+  }
+  if (self.overlayActive) {
+    const CGFloat panelWidth = std::min<CGFloat>(self.overlayWidth, std::max<CGFloat>(0.0, bounds.size.width - 16.0));
+    const CGFloat panelHeight = std::min<CGFloat>(self.overlayHeight, std::max<CGFloat>(0.0, bounds.size.height - self.navHeight - 16.0));
+    const NSRect panelRect = NSMakeRect(bounds.size.width - panelWidth - 8.0,
+                                        bounds.size.height - self.navHeight - panelHeight - 8.0,
+                                        panelWidth,
+                                        panelHeight);
+    if (NSPointInRect(point, panelRect)) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
+- (NSView*)hitTest:(NSPoint)point {
+  if (![self isInteractivePoint:point]) {
+    return nil;
+  }
+  return [super hitTest:point];
+}
 @end
 
 @implementation FubukiDragRegionView {
@@ -30,6 +83,8 @@
     draggableRects_ = [NSMutableArray array];
     blockedRects_ = [NSMutableArray array];
     contentHeight_ = frame.size.height;
+    self.sidebarWidth = 196.0;
+    self.navHeight = 48.0;
     [self setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   }
   return self;
@@ -59,10 +114,10 @@
   }
 
   const NSPoint localPoint = point;
-  if (localPoint.x >= 196.0 && localPoint.y <= contentHeight_ - 48.0) {
+  if (localPoint.x >= self.sidebarWidth && localPoint.y <= contentHeight_ - self.navHeight) {
     return nil;
   }
-  if (localPoint.y >= contentHeight_ - 58.0 && localPoint.x >= [self bounds].size.width - 240.0) {
+  if (localPoint.y >= contentHeight_ - self.navHeight && localPoint.x >= [self bounds].size.width - 280.0) {
     return nil;
   }
   for (NSValue* value in blockedRects_) {
@@ -116,6 +171,12 @@
     [button setAlphaValue:1.0];
   }
 }
+
+- (void)windowDidResize:(NSNotification*)notification {
+  if (auto* window = fubuki::GetActiveBrowserWindow()) {
+    window->UpdateContentFrame();
+  }
+}
 @end
 
 namespace fubuki {
@@ -123,7 +184,7 @@ namespace fubuki {
 namespace {
 
 constexpr CGFloat kSidebarWidth = 196.0;
-constexpr CGFloat kNavHeight = 48.0;
+constexpr CGFloat kNavHeight = 42.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
 
@@ -159,15 +220,38 @@ void SetBrowserViewHidden(CefRefPtr<CefBrowser> browser, bool hidden) {
   [view setHidden:hidden];
 }
 
+void UpdateUiHostClip(NSView* view, bool overlayActive, CGFloat sidebarWidth, CGFloat navHeight, CGFloat overlayWidth, CGFloat overlayHeight) {
+  if (!view || !view.layer) {
+    return;
+  }
+  const NSRect bounds = [view bounds];
+  CGMutablePathRef path = CGPathCreateMutable();
+  CGPathAddRect(path, nullptr, CGRectMake(0.0, bounds.size.height - navHeight, bounds.size.width, navHeight));
+  if (sidebarWidth > 0.0) {
+    CGPathAddRect(path, nullptr, CGRectMake(0.0, 0.0, sidebarWidth, bounds.size.height));
+  }
+  if (overlayActive) {
+    const CGFloat panelWidth = std::min<CGFloat>(overlayWidth, std::max<CGFloat>(0.0, bounds.size.width - 16.0));
+    const CGFloat panelHeight = std::min<CGFloat>(overlayHeight, std::max<CGFloat>(0.0, bounds.size.height - navHeight - 16.0));
+    CGPathAddRect(path,
+                  nullptr,
+                  CGRectMake(bounds.size.width - panelWidth - 8.0,
+                             navHeight + 8.0,
+                             panelWidth,
+                             panelHeight));
+  }
+  CAShapeLayer* mask = [CAShapeLayer layer];
+  mask.frame = bounds;
+  mask.path = path;
+  view.layer.mask = mask;
+  CGPathRelease(path);
+}
+
 std::filesystem::path ProfilePath() {
   const char* home = std::getenv("HOME");
   return home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
               : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
 }
-
-BrowserWindow* gActiveBrowserWindow = nullptr;
-NSMutableArray<NSWindow*>* gDevToolsWindows = nil;
-FubukiWindowDelegate* gWindowDelegate = nil;
 
 std::string QueryParam(const std::string& url, const std::string& key) {
   const size_t queryStart = url.find('?');
@@ -185,7 +269,9 @@ std::string QueryParam(const std::string& url, const std::string& key) {
       const std::string value = equals == std::string::npos ? "" : pair.substr(equals + 1);
       return CefURIDecode(value,
                           true,
-                          static_cast<cef_uri_unescape_rule_t>(UU_SPACES | UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS))
+                          static_cast<cef_uri_unescape_rule_t>(UU_SPACES | UU_PATH_SEPARATORS |
+                                                               UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+                                                               UU_REPLACE_PLUS_WITH_SPACE))
           .ToString();
     }
     if (end == std::string::npos) {
@@ -197,6 +283,14 @@ std::string QueryParam(const std::string& url, const std::string& key) {
 }
 
 }  // namespace
+
+BrowserWindow* gActiveBrowserWindow = nullptr;
+NSMutableArray<NSWindow*>* gDevToolsWindows = nil;
+FubukiWindowDelegate* gWindowDelegate = nil;
+
+BrowserWindow* GetActiveBrowserWindow() {
+  return gActiveBrowserWindow;
+}
 
 BrowserWindow::BrowserWindow(EventBus& eventBus, TabManager& tabManager)
     : eventBus_(eventBus),
@@ -231,6 +325,9 @@ bool DispatchBrowserMenuCommand(const std::string& commandId) {
   }
   if (commandId == "app.openSettings") {
     return tab ? window->Navigate(tabId, "fubuki://settings/") : window->CreateTab("fubuki://settings/", true);
+  }
+  if (commandId == "app.openDevTools") {
+    return window->OpenDevTools();
   }
   if (!tab) {
     return false;
@@ -300,6 +397,14 @@ bool BrowserWindow::CloseTab(const std::string& tabId) {
     tab->browser = nullptr;
   }
   const bool ok = tabManager_.CloseTab(tabId);
+  for (const auto& item : tabManager_.GetTabs()) {
+    if (!item.browser) {
+      if (Tab* newTab = tabManager_.GetTab(item.id)) {
+        CreateTabBrowser(*newTab);
+      }
+    }
+  }
+  ResizeViews();
   SetActiveContentView();
   return ok;
 }
@@ -369,14 +474,8 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
   }
   if (commandDown && (character == 'b' || character == 'B')) {
-    if (uiBrowser_) {
-      uiBrowser_->GetMainFrame()->ExecuteJavaScript(
-          "window.dispatchEvent(new CustomEvent('fubuki:toggle-bookmarks'));",
-          "fubuki://app/",
-          0);
-      return true;
-    }
-    return false;
+    const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
+    return SetSetting("sidebarVisible", current == "hide" ? "show" : "hide");
   }
   if (commandDown && (character == 'd' || character == 'D')) {
     if (uiBrowser_) {
@@ -513,22 +612,29 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   return true;
 }
 
-bool BrowserWindow::SetUiOverlayActive(bool active) {
+bool BrowserWindow::SetUiOverlayActive(bool active, double overlayWidth, double overlayHeight) {
   if (!uiHostView_ || !contentHostView_) {
     return false;
   }
   uiOverlayActive_ = active;
+  uiOverlayWidth_ = overlayWidth;
+  uiOverlayHeight_ = overlayHeight;
   NSView* root = [uiHostView_ superview];
   if (!root) {
     return false;
   }
   [uiHostView_ removeFromSuperview];
   [contentHostView_ removeFromSuperview];
-  [root addSubview:uiHostView_];
-  [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
+  if (active) {
+    [root addSubview:contentHostView_];
+    [root addSubview:uiHostView_ positioned:NSWindowAbove relativeTo:contentHostView_];
+  } else {
+    [root addSubview:uiHostView_];
+    [root addSubview:contentHostView_ positioned:NSWindowAbove relativeTo:uiHostView_];
+  }
   if (dragRegionView_) {
     [dragRegionView_ removeFromSuperview];
-    [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:contentHostView_];
+    [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:(active ? uiHostView_ : contentHostView_)];
   }
   UpdateContentFrame();
   return true;
@@ -549,7 +655,11 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = SetSetting(key, value);
   }
   if (ok && tabManager_.GetTab(tabId)) {
-    Navigate(tabId, returnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + returnPage);
+    if (returnPage.rfind("fubuki://", 0) == 0) {
+      Navigate(tabId, returnPage);
+    } else {
+      Navigate(tabId, returnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + returnPage);
+    }
   }
   return ok;
 }
@@ -698,7 +808,7 @@ void BrowserWindow::CreateNativeWindow() {
   [root.layer setBackgroundColor:[[NSColor clearColor] CGColor]];
   [window_ setContentView:root];
 
-  uiHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
+  uiHostView_ = [[FubukiUiHostView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
   contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(kSidebarWidth, 0, frame.size.width - kSidebarWidth, frame.size.height - kNavHeight)];
   dragRegionView_ = [[FubukiDragRegionView alloc] initWithFrame:[uiHostView_ frame]];
   [uiHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -719,7 +829,7 @@ void BrowserWindow::CreateUiBrowser() {
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_),
                                 new FubukiClient(this, "", true),
-                                "fubuki://app/index.html?v=4",
+                                "fubuki://app/index.html?v=5",
                                 settings,
                                 nullptr,
                                 nullptr);
@@ -776,7 +886,9 @@ void BrowserWindow::RegisterCommands() {
   });
   commands_.Register("ui.setOverlayActive", [this](CefRefPtr<CefDictionaryValue> args) {
     auto value = CefValue::Create();
-    value->SetBool(SetUiOverlayActive(args->HasKey("active") && args->GetBool("active")));
+    const double overlayWidth = args->HasKey("width") ? args->GetDouble("width") : 392.0;
+    const double overlayHeight = args->HasKey("height") ? args->GetDouble("height") : 560.0;
+    value->SetBool(SetUiOverlayActive(args->HasKey("active") && args->GetBool("active"), overlayWidth, overlayHeight));
     return value;
   });
   commands_.Register("app.openDevTools", [this](CefRefPtr<CefDictionaryValue>) {
@@ -837,17 +949,27 @@ void BrowserWindow::UpdateContentFrame() {
     const std::string widthValue = settings->GetString("sidebarWidth");
     if (!widthValue.empty()) {
       try {
-        sidebarWidth = std::clamp(std::stod(widthValue), 160.0, 240.0);
+        sidebarWidth = std::clamp(std::stod(widthValue), 180.0, 220.0);
       } catch (...) {
         sidebarWidth = kSidebarWidth;
       }
     }
   }
-  const CGFloat navHeight = settings->GetString("toolbarDensity") == "comfortable" ? 58.0 : 48.0;
-  const CGFloat overlayWidth = uiOverlayActive_ ? 480.0 : 0.0;
+  const CGFloat navHeight = kNavHeight;
   NSRect bounds = [uiHostView_ bounds];
-  const CGFloat contentWidth = std::max<CGFloat>(320.0, bounds.size.width - sidebarWidth - overlayWidth);
-  [contentHostView_ setFrame:NSMakeRect(sidebarWidth, 0, contentWidth, bounds.size.height - navHeight)];
+  const CGFloat contentWidth = std::max<CGFloat>(0.0, bounds.size.width - sidebarWidth);
+  const CGFloat contentHeight = std::max<CGFloat>(0.0, bounds.size.height - navHeight);
+  FubukiUiHostView* uiHost = (FubukiUiHostView*)uiHostView_;
+  uiHost.sidebarWidth = sidebarWidth;
+  uiHost.navHeight = navHeight;
+  uiHost.overlayActive = uiOverlayActive_;
+  uiHost.overlayWidth = uiOverlayWidth_;
+  uiHost.overlayHeight = uiOverlayHeight_;
+  FubukiDragRegionView* dragHost = (FubukiDragRegionView*)dragRegionView_;
+  dragHost.sidebarWidth = sidebarWidth;
+  dragHost.navHeight = navHeight;
+  [contentHostView_ setFrame:NSMakeRect(sidebarWidth, 0, contentWidth, contentHeight)];
+  UpdateUiHostClip(uiHostView_, uiOverlayActive_, sidebarWidth, navHeight, uiOverlayWidth_, uiOverlayHeight_);
   ResizeViews();
 }
 

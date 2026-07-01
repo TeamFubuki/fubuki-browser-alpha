@@ -1,44 +1,43 @@
 import { createEffect, createSignal } from "solid-js";
-import { For } from "solid-js";
+import { fubuki } from "../bridge/fubuki";
 import { browserState } from "../stores/browserStore";
 
-type Props = {
-  value: string;
-  onDraft: (value: string) => void;
-  onSubmit: () => void;
-};
+function activeTab() {
+  return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
+}
 
-export default function Omnibox(props: Props) {
-  const [value, setValue] = createSignal(props.value);
+export default function Omnibox() {
+  const [draft, setDraft] = createSignal("");
 
   createEffect(() => {
-    setValue(props.value);
-    props.onDraft(props.value);
+    setDraft(activeTab()?.url ?? "");
   });
+
+  const submit = () => {
+    const tab = activeTab();
+    const input = draft().trim();
+    if (!tab || !input) return;
+    void fubuki.invoke("tabs.navigate", { tabId: tab.id, input });
+  };
 
   return (
     <form
       class="omnibox"
       onSubmit={(event) => {
         event.preventDefault();
-        props.onSubmit();
+        submit();
       }}
     >
       <input
-        value={value()}
-        list="omnibox-suggestions"
+        class="omnibox-input"
+        value={draft()}
         aria-label="Search or enter URL"
+        autocomplete="off"
+        autocapitalize="off"
         spellcheck={false}
-        onInput={(event) => {
-          setValue(event.currentTarget.value);
-          props.onDraft(event.currentTarget.value);
-        }}
+        onFocus={(event) => event.currentTarget.select()}
+        onInput={(event) => setDraft(event.currentTarget.value)}
       />
-      <datalist id="omnibox-suggestions">
-        <For each={[...browserState.bookmarks, ...browserState.history].slice(0, 80)}>
-          {(item) => <option value={item.url || ""} label={item.title || item.url || ""} />}
-        </For>
-      </datalist>
     </form>
   );
 }

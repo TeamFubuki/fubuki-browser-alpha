@@ -11,25 +11,15 @@ const initialState: BrowserState & { status: string } = {
   logs: [],
   settings: {
     homepage: "https://example.com",
-    downloadDirectory: "",
     searchEngine: "google",
     customSearchUrl: "https://www.google.com/search?q={query}",
-    startupBehavior: "homepage",
     theme: "light",
     appearance: "system",
-    toolbarDensity: "compact",
     sidebarVisible: "show",
     sidebarWidth: "196",
-    defaultBookmarkDisplay: "sidebar",
-    openBookmarkIn: "current",
-    showBookmarkFavicons: "on",
     newTabPage: "blank",
     homeUrl: "https://example.com",
-    askBeforeDownload: "off",
-    language: "en",
-    newTabBackgroundMode: "unsplash",
-    newTabBackgroundColor: "#f8fafd",
-    newTabBackgroundUrl: ""
+    language: "en"
   },
   profilePath: "",
   status: "Starting"
