@@ -1,0 +1,81 @@
+version: 2
+
+updates:
+  # UI dependencies.
+  # pnpm is handled by Dependabot through the npm ecosystem.
+  - package-ecosystem: "npm"
+    directory: "/ui"
+
+    schedule:
+      interval: "daily"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+
+    open-pull-requests-limit: 10
+    rebase-strategy: "auto"
+    versioning-strategy: "increase-if-necessary"
+
+    commit-message:
+      prefix: "deps(ui)"
+      prefix-development: "deps-dev(ui)"
+      include: "scope"
+
+    labels:
+      - "dependencies"
+      - "ui"
+
+    cooldown:
+      semver-major-days: 7
+      semver-minor-days: 2
+      semver-patch-days: 1
+
+    groups:
+      ui-production-minor-patch:
+        dependency-type: "production"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      ui-development-minor-patch:
+        dependency-type: "development"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      ui-major-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  # GitHub Actions used by CI and repository automation.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+
+    schedule:
+      interval: "daily"
+      time: "09:30"
+      timezone: "Asia/Tokyo"
+
+    open-pull-requests-limit: 10
+    rebase-strategy: "auto"
+
+    commit-message:
+      prefix: "ci(deps)"
+      include: "scope"
+
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+    cooldown:
+      default-days: 1
+
+    groups:
+      github-actions:
+        patterns:
+          - "*"
