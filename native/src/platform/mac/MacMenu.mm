@@ -40,11 +40,17 @@ void FubukiInstallBasicMenu() {
 
   NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
   AddCommandItem(fileMenu, @"New Tab", @"tabs.create", @"t");
-  AddCommandItem(fileMenu, @"Open Location", @"app.focusOmnibox", @"l");
-  AddCommandItem(fileMenu, @"Settings", @"app.openSettings", @"");
-  AddCommandItem(fileMenu, @"Close Tab", @"tabs.close", @"w");
+  AddCommandItem(fileMenu, @"New Window", @"windows.create", @"n");
+  NSMenuItem* privateWindow = AddCommandItem(fileMenu, @"New Private Window", @"windows.createPrivate", @"N");
+  [privateWindow setKeyEquivalentModifierMask:NSEventModifierFlagShift | NSEventModifierFlagCommand];
   [fileMenu addItem:[NSMenuItem separatorItem]];
-  AddItem(fileMenu, @"Close Window", @selector(performClose:), @"W");
+  AddCommandItem(fileMenu, @"Open Location", @"app.focusOmnibox", @"l");
+  AddCommandItem(fileMenu, @"Home", @"tabs.home", @"");
+  AddCommandItem(fileMenu, @"Close Tab", @"tabs.close", @"w");
+  NSMenuItem* closeWindow = AddCommandItem(fileMenu, @"Close Window", @"windows.close", @"W");
+  [closeWindow setKeyEquivalentModifierMask:NSEventModifierFlagShift | NSEventModifierFlagCommand];
+  [fileMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(fileMenu, @"Print...", @"page.print", @"p");
   AddSubmenu(mainMenu, @"File", fileMenu);
 
   NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
@@ -57,11 +63,19 @@ void FubukiInstallBasicMenu() {
   AddItem(editMenu, @"Paste and Match Style", @selector(pasteAsPlainText:), @"V");
   AddItem(editMenu, @"Delete", @selector(delete:), @"");
   AddItem(editMenu, @"Select All", @selector(selectAll:), @"a");
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(editMenu, @"Find...", @"page.find", @"f");
   AddSubmenu(mainMenu, @"Edit", editMenu);
 
   NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
   AddCommandItem(viewMenu, @"Reload Page", @"tabs.reload", @"r");
   AddCommandItem(viewMenu, @"Stop Loading", @"tabs.stop", @".");
+  [viewMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(viewMenu, @"Zoom In", @"page.zoomIn", @"+");
+  AddCommandItem(viewMenu, @"Zoom Out", @"page.zoomOut", @"-");
+  AddCommandItem(viewMenu, @"Actual Size", @"page.zoomReset", @"0");
+  [viewMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(viewMenu, @"View Source", @"page.viewSource", @"");
   [viewMenu addItem:[NSMenuItem separatorItem]];
   AddCommandItem(viewMenu, @"Developer Tools", @"app.openDevTools", @"");
   [viewMenu addItem:[NSMenuItem separatorItem]];
@@ -72,7 +86,23 @@ void FubukiInstallBasicMenu() {
   NSMenu* historyMenu = [[NSMenu alloc] initWithTitle:@"History"];
   AddCommandItem(historyMenu, @"Back", @"tabs.goBack", @"[");
   AddCommandItem(historyMenu, @"Forward", @"tabs.goForward", @"]");
+  [historyMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(historyMenu, @"Reopen Closed Tab", @"tabs.reopenClosed", @"T");
+  AddCommandItem(historyMenu, @"Reopen Closed Window", @"windows.reopenClosed", @"");
+  [historyMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(historyMenu, @"Show History", @"app.openHistory", @"");
   AddSubmenu(mainMenu, @"History", historyMenu);
+
+  NSMenu* bookmarksMenu = [[NSMenu alloc] initWithTitle:@"Bookmarks"];
+  AddCommandItem(bookmarksMenu, @"Bookmark This Tab", @"bookmarks.addActive", @"d");
+  AddCommandItem(bookmarksMenu, @"Show Bookmarks", @"app.openBookmarks", @"");
+  AddSubmenu(mainMenu, @"Bookmarks", bookmarksMenu);
+
+  NSMenu* toolsMenu = [[NSMenu alloc] initWithTitle:@"Tools"];
+  AddCommandItem(toolsMenu, @"Downloads", @"app.openDownloads", @"");
+  AddCommandItem(toolsMenu, @"Settings", @"app.openSettings", @"");
+  AddCommandItem(toolsMenu, @"Debug", @"app.openDebug", @"");
+  AddSubmenu(mainMenu, @"Tools", toolsMenu);
 
   NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
   AddItem(windowMenu, @"Minimize", @selector(performMiniaturize:), @"m");

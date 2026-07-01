@@ -4,10 +4,12 @@ export type Tab = {
   url: string;
   faviconUrl: string;
   errorText: string;
+  zoomLevel: number;
   isLoading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   isActive: boolean;
+  isPinned: boolean;
 };
 
 export type BrowserRecord = {
@@ -19,17 +21,45 @@ export type BrowserRecord = {
   percent?: number;
   level?: string;
   message?: string;
+  permission?: string;
+  value?: string;
   createdAt: string;
+};
+
+export type BrowserCommand = {
+  id: string;
+  title: string;
+  category: string;
+  shortcut: string;
+};
+
+export type WindowSnapshot = {
+  id: string;
+  private?: boolean;
+  activeTabId: string;
+  tabs: Array<{
+    title: string;
+    url: string;
+    faviconUrl: string;
+    pinned: boolean;
+    active: boolean;
+  }>;
 };
 
 export type BrowserState = {
   bridgeVersion: string;
+  windowId: string;
+  isPrivate: boolean;
   activeTabId: string;
   tabs: Tab[];
+  windows: WindowSnapshot[];
   history: BrowserRecord[];
   bookmarks: BrowserRecord[];
   downloads: BrowserRecord[];
+  permissions: BrowserRecord[];
   logs: BrowserRecord[];
+  commands: BrowserCommand[];
+  recentEvents: BrowserRecord[];
   settings: {
     homepage: string;
     searchEngine: string;
@@ -117,3 +147,31 @@ window.fubuki = {
 };
 
 export const fubuki = window.fubuki;
+
+export const commands = {
+  execute: <T = unknown>(id: string, args: Record<string, unknown> = {}) =>
+    fubuki.invoke<T>("commands.execute", { id, args }),
+  list: () => fubuki.invoke<BrowserCommand[]>("commands.list")
+};
+
+export const tabs = {
+  create: (url = "fubuki://newtab/") => commands.execute<boolean>("tabs.create", { url }),
+  activate: (tabId: string) => fubuki.invoke<boolean>("tabs.activate", { tabId }),
+  close: (tabId: string) => commands.execute<boolean>("tabs.close", { tabId }),
+  pin: (tabId: string, pinned: boolean) => commands.execute<boolean>(pinned ? "tabs.pin" : "tabs.unpin", { tabId }),
+  duplicate: (tabId: string) => commands.execute<boolean>("tabs.duplicate", { tabId }),
+  reopenClosed: () => commands.execute<boolean>("tabs.reopenClosed"),
+  closeOther: (tabId: string) => commands.execute<boolean>("tabs.closeOther", { tabId }),
+  closeToRight: (tabId: string) => commands.execute<boolean>("tabs.closeToRight", { tabId }),
+  moveToNewWindow: (tabId: string) => commands.execute<boolean>("tabs.moveToNewWindow", { tabId })
+};
+
+export const page = {
+  find: (query: string, forward = true) => commands.execute<boolean>("page.find", { query, forward }),
+  stopFinding: () => commands.execute<boolean>("page.stopFinding", { clear: true }),
+  zoomIn: () => commands.execute<boolean>("page.zoomIn"),
+  zoomOut: () => commands.execute<boolean>("page.zoomOut"),
+  zoomReset: () => commands.execute<boolean>("page.zoomReset"),
+  print: () => commands.execute<boolean>("page.print"),
+  viewSource: () => commands.execute<boolean>("page.viewSource")
+};

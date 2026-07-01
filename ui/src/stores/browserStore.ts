@@ -3,12 +3,18 @@ import { fubuki, type BrowserState } from "../bridge/fubuki";
 
 const initialState: BrowserState & { status: string } = {
   bridgeVersion: "1",
+  windowId: "",
+  isPrivate: false,
   activeTabId: "",
   tabs: [],
+  windows: [],
   history: [],
   bookmarks: [],
   downloads: [],
+  permissions: [],
   logs: [],
+  commands: [],
+  recentEvents: [],
   settings: {
     homepage: "https://example.com",
     searchEngine: "google",
@@ -19,7 +25,8 @@ const initialState: BrowserState & { status: string } = {
     sidebarWidth: "196",
     newTabPage: "blank",
     homeUrl: "https://example.com",
-    language: "en"
+    language: "en",
+    defaultZoomLevel: "0"
   },
   profilePath: "",
   status: "Starting"
@@ -55,6 +62,14 @@ export function bindNativeEvents() {
     "navigation.finished",
     "navigation.failed",
     "downloads.updated",
+    "download.changed",
+    "bookmark.changed",
+    "history.changed",
+    "setting.changed",
+    "permission.changed",
+    "window.created",
+    "window.closed",
+    "window.focused",
     "app.stateChanged"
   ];
 

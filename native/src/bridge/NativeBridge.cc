@@ -1,5 +1,6 @@
 #include "bridge/NativeBridge.h"
 
+#include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
 #include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
@@ -82,6 +83,27 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "tabs.close") {
     return BoolValue(window_.CloseTab(params->GetString("tabId")));
   }
+  if (method == "tabs.pin") {
+    return BoolValue(window_.PinTab(params->GetString("tabId"), params->HasKey("pinned") && params->GetBool("pinned")));
+  }
+  if (method == "tabs.duplicate") {
+    return BoolValue(window_.DuplicateTab(params->GetString("tabId")));
+  }
+  if (method == "tabs.reopenClosed") {
+    return BoolValue(window_.ReopenClosedTab());
+  }
+  if (method == "tabs.closeOther") {
+    return BoolValue(window_.CloseOtherTabs(params->GetString("tabId")));
+  }
+  if (method == "tabs.closeToRight") {
+    return BoolValue(window_.CloseTabsToRight(params->GetString("tabId")));
+  }
+  if (method == "tabs.move") {
+    return BoolValue(window_.MoveTab(params->GetString("tabId"), params->GetInt("toIndex")));
+  }
+  if (method == "tabs.moveToNewWindow") {
+    return BoolValue(window_.MoveTabToNewWindow(params->GetString("tabId")));
+  }
   if (method == "tabs.navigate") {
     return BoolValue(window_.Navigate(params->GetString("tabId"), params->GetString("input")));
   }
@@ -97,6 +119,42 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "tabs.goForward") {
     return BoolValue(window_.GoForward(params->GetString("tabId")));
   }
+  if (method == "tabs.home") {
+    return BoolValue(window_.GoHome());
+  }
+  if (method == "windows.create") {
+    return BoolValue(window_.App().NewWindow(false, nullptr) != nullptr);
+  }
+  if (method == "windows.createPrivate") {
+    return BoolValue(window_.App().NewPrivateWindow());
+  }
+  if (method == "windows.close") {
+    return BoolValue(window_.CloseWindow());
+  }
+  if (method == "windows.reopenClosed") {
+    return BoolValue(window_.App().ReopenClosedWindow());
+  }
+  if (method == "page.find") {
+    return BoolValue(window_.FindInPage(params->GetString("query"), !params->HasKey("forward") || params->GetBool("forward")));
+  }
+  if (method == "page.stopFinding") {
+    return BoolValue(window_.StopFinding(!params->HasKey("clear") || params->GetBool("clear")));
+  }
+  if (method == "page.zoomIn") {
+    return BoolValue(window_.ZoomIn());
+  }
+  if (method == "page.zoomOut") {
+    return BoolValue(window_.ZoomOut());
+  }
+  if (method == "page.zoomReset") {
+    return BoolValue(window_.ResetZoom());
+  }
+  if (method == "page.print") {
+    return BoolValue(window_.PrintPage());
+  }
+  if (method == "page.viewSource") {
+    return BoolValue(window_.ViewSource());
+  }
   if (method == "bookmarks.addActive") {
     return BoolValue(window_.AddActiveBookmark());
   }
@@ -109,14 +167,29 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "history.remove") {
     return BoolValue(window_.RemoveHistory(params->GetString("url")));
   }
+  if (method == "history.clearRange") {
+    return BoolValue(window_.ClearHistoryRange(params->GetString("range")));
+  }
   if (method == "downloads.remove") {
     return BoolValue(window_.RemoveDownload(params->GetString("url"), params->GetString("path")));
+  }
+  if (method == "downloads.open") {
+    return BoolValue(window_.OpenDownloadedFile(params->GetString("path")));
+  }
+  if (method == "downloads.reveal") {
+    return BoolValue(window_.RevealDownloadedFile(params->GetString("path")));
   }
   if (method == "data.clear") {
     return BoolValue(window_.ClearBrowsingData(params->GetString("target")));
   }
   if (method == "settings.set") {
     return BoolValue(window_.SetSetting(params->GetString("key"), params->GetString("value")));
+  }
+  if (method == "settings.reset") {
+    return BoolValue(window_.ResetSetting(params->GetString("key")));
+  }
+  if (method == "permissions.set") {
+    return BoolValue(window_.SetPermission(params->GetString("origin"), params->GetString("permission"), params->GetString("value")));
   }
   if (method == "ui.setOverlayActive") {
     const double overlayWidth = params->HasKey("width") ? params->GetDouble("width") : 392.0;
@@ -133,6 +206,11 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
       args = params->GetDictionary("args");
     }
     return window_.Commands().Execute(id, args);
+  }
+  if (method == "commands.list") {
+    auto value = CefValue::Create();
+    value->SetList(window_.Commands().List());
+    return value;
   }
   return ErrorValue("Unknown bridge method: " + method);
 }
@@ -171,10 +249,12 @@ CefRefPtr<CefDictionaryValue> NativeBridge::TabToDictionary(const Tab& tab) cons
   dict->SetString("url", tab.url);
   dict->SetString("faviconUrl", tab.faviconUrl);
   dict->SetString("errorText", tab.errorText);
+  dict->SetDouble("zoomLevel", tab.zoomLevel);
   dict->SetBool("isLoading", tab.isLoading);
   dict->SetBool("canGoBack", tab.canGoBack);
   dict->SetBool("canGoForward", tab.canGoForward);
   dict->SetBool("isActive", tab.isActive);
+  dict->SetBool("isPinned", tab.isPinned);
   return dict;
 }
 
@@ -185,14 +265,35 @@ CefRefPtr<CefValue> NativeBridge::StateValue() const {
   for (size_t i = 0; i < snapshot.size(); ++i) {
     tabs->SetDictionary(i, TabToDictionary(snapshot[i]));
   }
+  auto windows = CefListValue::Create();
+  const auto windowSnapshot = window_.App().Windows();
+  for (size_t i = 0; i < windowSnapshot.size(); ++i) {
+    windows->SetDictionary(i, windowSnapshot[i]->SessionSnapshot());
+  }
+  auto events = CefListValue::Create();
+  const auto recentEvents = window_.App().Events().RecentEvents();
+  for (size_t i = 0; i < recentEvents.size(); ++i) {
+    auto item = CefDictionaryValue::Create();
+    item->SetString("name", recentEvents[i].name);
+    item->SetString("windowId", recentEvents[i].windowId);
+    item->SetString("tabId", recentEvents[i].tabId);
+    item->SetString("message", recentEvents[i].message);
+    events->SetDictionary(i, item);
+  }
   state->SetString("bridgeVersion", "1");
+  state->SetString("windowId", window_.WindowId());
+  state->SetBool("isPrivate", window_.IsPrivate());
   state->SetString("activeTabId", window_.Tabs().GetActiveTabId());
   state->SetString("profilePath", window_.Store().ProfilePath());
   state->SetList("tabs", tabs);
+  state->SetList("windows", windows);
   state->SetList("history", CopyListOrEmpty(window_.Store().History()));
   state->SetList("bookmarks", CopyListOrEmpty(window_.Store().Bookmarks()));
   state->SetList("downloads", CopyListOrEmpty(window_.Store().Downloads()));
+  state->SetList("permissions", CopyListOrEmpty(window_.Store().Permissions()));
   state->SetList("logs", CopyListOrEmpty(window_.Store().Logs()));
+  state->SetList("commands", window_.Commands().List());
+  state->SetList("recentEvents", events);
   state->SetDictionary("settings", CopyDictionaryOrEmpty(window_.Store().Settings()));
   auto value = CefValue::Create();
   value->SetDictionary(state);

@@ -22,16 +22,21 @@ class BrowserDataStore {
   bool RemoveDownload(const std::string& url, const std::string& path);
   bool ClearBookmarks();
   bool ClearHistory();
+  bool ClearHistoryRange(const std::string& range);
   bool ClearDownloads();
   bool ClearLogs();
+  bool SetPermission(const std::string& origin, const std::string& permission, const std::string& value);
+  bool RemovePermission(const std::string& origin, const std::string& permission);
   void AddDownload(const std::string& url, const std::string& path, const std::string& state);
   void UpdateDownload(const std::string& url, const std::string& path, const std::string& state, int percent);
   void Log(const std::string& level, const std::string& message);
   void SetSetting(const std::string& key, const std::string& value);
+  void ResetSetting(const std::string& key);
 
   CefRefPtr<CefListValue> History() const { return history_; }
   CefRefPtr<CefListValue> Bookmarks() const { return bookmarks_; }
   CefRefPtr<CefListValue> Downloads() const { return downloads_; }
+  CefRefPtr<CefListValue> Permissions() const { return permissions_; }
   CefRefPtr<CefListValue> Logs() const { return logs_; }
   CefRefPtr<CefDictionaryValue> Settings() const { return settings_; }
   std::string ProfilePath() const { return profilePath_.string(); }
@@ -42,6 +47,7 @@ class BrowserDataStore {
   void Execute(const std::string& sql) const;
   void EnsureSchema();
   void EnsureDefaultSetting(const std::string& key, const std::string& value);
+  std::string DefaultSetting(const std::string& key) const;
   int CountRows(const std::string& table) const;
   void MigrateJsonFiles();
   void MigrateSettingsJson(const std::filesystem::path& path);
@@ -57,6 +63,7 @@ class BrowserDataStore {
   CefRefPtr<CefListValue> history_;
   CefRefPtr<CefListValue> bookmarks_;
   CefRefPtr<CefListValue> downloads_;
+  CefRefPtr<CefListValue> permissions_;
   CefRefPtr<CefDictionaryValue> settings_;
   CefRefPtr<CefListValue> logs_;
 };

@@ -27,9 +27,9 @@ Tab& TabManager::CreateTab(const std::string& url, bool active) {
     activeTabId_ = tabs_.back().id;
   }
 
-  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), tabs_.back().id, ""});
+  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), "", tabs_.back().id, ""});
   if (active) {
-    eventBus_.Publish({EventType::TabActivated, "tabs.activated", tabs_.back(), tabs_.back().id, ""});
+    eventBus_.Publish({EventType::TabActivated, "tabs.activated", tabs_.back(), "", tabs_.back().id, ""});
   }
   return tabs_.back();
 }
@@ -44,7 +44,7 @@ bool TabManager::CloseTab(const std::string& tabId) {
   const size_t closedIndex = static_cast<size_t>(std::distance(tabs_.begin(), it));
   Tab closed = *it;
   tabs_.erase(it);
-  eventBus_.Publish({EventType::TabClosed, "tabs.closed", closed, tabId, ""});
+  eventBus_.Publish({EventType::TabClosed, "tabs.closed", closed, "", tabId, ""});
 
   if (tabs_.empty()) {
     CreateTab("fubuki://newtab/", true);
@@ -68,7 +68,7 @@ bool TabManager::ActivateTab(const std::string& tabId) {
     tab.isActive = tab.id == tabId;
   }
   activeTabId_ = tabId;
-  eventBus_.Publish({EventType::TabActivated, "tabs.activated", *target, tabId, ""});
+  eventBus_.Publish({EventType::TabActivated, "tabs.activated", *target, "", tabId, ""});
   return true;
 }
 
@@ -92,6 +92,29 @@ bool TabManager::ActivatePrevious() {
     index = current == 0 ? tabs_.size() - 1 : current - 1;
   }
   return ActivateTab(tabs_[index].id);
+}
+
+bool TabManager::MoveTab(const std::string& tabId, size_t toIndex) {
+  auto it = std::find_if(tabs_.begin(), tabs_.end(), [&](const Tab& tab) { return tab.id == tabId; });
+  if (it == tabs_.end()) {
+    return false;
+  }
+  toIndex = std::min(toIndex, tabs_.size() - 1);
+  Tab moved = *it;
+  tabs_.erase(it);
+  tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(toIndex), moved);
+  eventBus_.Publish({EventType::TabUpdated, "tabs.updated", moved, "", tabId, "reordered"});
+  return true;
+}
+
+bool TabManager::SetPinned(const std::string& tabId, bool pinned) {
+  Tab* tab = GetTab(tabId);
+  if (!tab) {
+    return false;
+  }
+  tab->isPinned = pinned;
+  eventBus_.Publish({EventType::TabUpdated, "tabs.updated", *tab, "", tabId, pinned ? "pinned" : "unpinned"});
+  return true;
 }
 
 Tab* TabManager::GetTab(const std::string& tabId) {
@@ -120,10 +143,12 @@ void TabManager::UpdateTab(const std::string& tabId, const Tab& patch) {
   tab->url = patch.url.empty() ? tab->url : patch.url;
   tab->faviconUrl = patch.faviconUrl.empty() ? tab->faviconUrl : patch.faviconUrl;
   tab->errorText = patch.errorText;
+  tab->zoomLevel = patch.zoomLevel;
   tab->isLoading = patch.isLoading;
   tab->canGoBack = patch.canGoBack;
   tab->canGoForward = patch.canGoForward;
-  eventBus_.Publish({EventType::TabUpdated, "tabs.updated", *tab, tabId, ""});
+  tab->isPinned = patch.isPinned;
+  eventBus_.Publish({EventType::TabUpdated, "tabs.updated", *tab, "", tabId, ""});
 }
 
 void TabManager::SetBrowser(const std::string& tabId, CefRefPtr<CefBrowser> browser) {

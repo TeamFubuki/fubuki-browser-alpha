@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include "browser/BrowserWindow.h"
+#include "browser/BrowserAppController.h"
 #include "events/EventBus.h"
 #include "include/cef_app.h"
 #include "include/wrapper/cef_message_router.h"
@@ -36,9 +36,7 @@ class FubukiCefApp : public CefApp,
  private:
   std::string uiDistPath_;
   CefRefPtr<CefMessageRouterRendererSide> rendererRouter_;
-  EventBus eventBus_;
-  std::unique_ptr<TabManager> tabManager_;
-  std::unique_ptr<BrowserWindow> browserWindow_;
+  std::unique_ptr<BrowserAppController> browserApp_;
 
   IMPLEMENT_REFCOUNTING(FubukiCefApp);
 };

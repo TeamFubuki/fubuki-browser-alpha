@@ -1,4 +1,5 @@
-import { fubuki } from "../bridge/fubuki";
+import { createSignal, onCleanup, onMount } from "solid-js";
+import { commands, fubuki, page } from "../bridge/fubuki";
 import { browserState, refreshState } from "../stores/browserStore";
 import Omnibox from "./Omnibox";
 
@@ -27,8 +28,31 @@ async function toggleBookmark() {
 }
 
 export default function TopBar() {
+  const [findOpen, setFindOpen] = createSignal(false);
+  const [findText, setFindText] = createSignal("");
+
+  onMount(() => {
+    const showFind = () => setFindOpen(true);
+    window.addEventListener("fubuki:show-find", showFind);
+    onCleanup(() => window.removeEventListener("fubuki:show-find", showFind));
+  });
+
+  const security = () => {
+    const url = activeTab()?.url ?? "";
+    if (activeTab()?.errorText) return { label: "Error", icon: "!" };
+    if (url.startsWith("fubuki://")) return { label: "Internal page", icon: "F" };
+    if (url.startsWith("https://")) return { label: "Secure HTTPS", icon: "✓" };
+    if (url.startsWith("http://")) return { label: "Not secure HTTP", icon: "i" };
+    return { label: "Page", icon: "·" };
+  };
+
+  const submitFind = (forward = true) => {
+    const query = findText().trim();
+    if (query) void page.find(query, forward);
+  };
+
   return (
-    <header class="top-bar" aria-label="Navigation">
+    <header classList={{ "top-bar": true, private: browserState.isPrivate }} aria-label="Navigation">
       <button class="topbar-button" title="Back" aria-label="Back" disabled={!activeTab()?.canGoBack} onClick={() => void fubuki.invoke("tabs.goBack", { tabId: browserState.activeTabId })}>
         <span aria-hidden="true">←</span>
       </button>
@@ -44,6 +68,12 @@ export default function TopBar() {
       >
         <span aria-hidden="true">{activeTab()?.isLoading ? "×" : "↻"}</span>
       </button>
+      <button class="topbar-button" title="Home" aria-label="Home" onClick={() => void commands.execute("tabs.home")}>
+        <span aria-hidden="true">⌂</span>
+      </button>
+      <button class="topbar-button security" title={security().label} aria-label={security().label}>
+        <span aria-hidden="true">{security().icon}</span>
+      </button>
       <Omnibox />
       <button
         classList={{ "topbar-button": true, bookmarked: isBookmarked() }}
@@ -54,6 +84,38 @@ export default function TopBar() {
       >
         <span aria-hidden="true">{isBookmarked() ? "★" : "☆"}</span>
       </button>
+      <button class="topbar-button" title="Zoom out" aria-label="Zoom out" onClick={() => void page.zoomOut()}>
+        <span aria-hidden="true">−</span>
+      </button>
+      <button class="topbar-button" title="Zoom in" aria-label="Zoom in" onClick={() => void page.zoomIn()}>
+        <span aria-hidden="true">+</span>
+      </button>
+      <button class="topbar-button" title="DevTools" aria-label="DevTools" onClick={() => void commands.execute("app.openDevTools")}>
+        <span aria-hidden="true">⌁</span>
+      </button>
+      {findOpen() && (
+        <form
+          class="find-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitFind(true);
+          }}
+        >
+          <input value={findText()} placeholder="Find" aria-label="Find in page" onInput={(event) => setFindText(event.currentTarget.value)} autofocus />
+          <button type="button" title="Previous match" onClick={() => submitFind(false)}>↑</button>
+          <button type="button" title="Next match" onClick={() => submitFind(true)}>↓</button>
+          <button
+            type="button"
+            title="Close find"
+            onClick={() => {
+              setFindOpen(false);
+              void page.stopFinding();
+            }}
+          >
+            ×
+          </button>
+        </form>
+      )}
     </header>
   );
 }

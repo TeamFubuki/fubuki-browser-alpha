@@ -18,6 +18,8 @@ class TabManager {
   bool ActivateTab(const std::string& tabId);
   bool ActivateNext();
   bool ActivatePrevious();
+  bool MoveTab(const std::string& tabId, size_t toIndex);
+  bool SetPinned(const std::string& tabId, bool pinned);
   Tab* GetTab(const std::string& tabId);
   Tab* GetActiveTab();
   std::vector<Tab> GetTabs() const;

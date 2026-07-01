@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { fubuki } from "./bridge/fubuki";
+import { commands, fubuki, page, tabs } from "./bridge/fubuki";
 import BrowserShell from "./components/BrowserShell";
 import { bindNativeEvents, browserState, refreshState } from "./stores/browserStore";
 
@@ -67,8 +67,43 @@ export default function App() {
         event.preventDefault();
         return;
       }
+      if (key === "n" && event.shiftKey) {
+        void commands.execute("windows.createPrivate");
+        event.preventDefault();
+        return;
+      }
+      if (key === "n") {
+        void commands.execute("windows.create");
+        event.preventDefault();
+        return;
+      }
+      if (key === "t" && event.shiftKey) {
+        void tabs.reopenClosed();
+        event.preventDefault();
+        return;
+      }
       if (key === "t") {
-        void fubuki.invoke("tabs.create", { active: true });
+        void tabs.create();
+        event.preventDefault();
+        return;
+      }
+      if (key === "f") {
+        window.dispatchEvent(new CustomEvent("fubuki:show-find"));
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "+" || event.key === "=") {
+        void page.zoomIn();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "-") {
+        void page.zoomOut();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "0") {
+        void page.zoomReset();
         event.preventDefault();
         return;
       }
@@ -88,7 +123,10 @@ export default function App() {
         return;
       }
       if (!tab) return;
-      if (key === "w") {
+      if (key === "w" && event.shiftKey) {
+        void commands.execute("windows.close");
+        event.preventDefault();
+      } else if (key === "w") {
         void fubuki.invoke("tabs.close", { tabId: tab.id });
         event.preventDefault();
       } else if (key === "r") {

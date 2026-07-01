@@ -11,6 +11,9 @@
 namespace fubuki {
 
 enum class EventType {
+  WindowCreated,
+  WindowClosed,
+  WindowFocused,
   TabCreated,
   TabUpdated,
   TabClosed,
@@ -18,6 +21,11 @@ enum class EventType {
   NavigationStarted,
   NavigationFinished,
   NavigationFailed,
+  BookmarkChanged,
+  HistoryChanged,
+  DownloadChanged,
+  SettingChanged,
+  PermissionChanged,
   AppStateChanged,
 };
 
@@ -25,6 +33,7 @@ struct Event {
   EventType type;
   std::string name;
   Tab tab;
+  std::string windowId;
   std::string tabId;
   std::string message;
 };
@@ -36,11 +45,13 @@ class EventBus {
   int Subscribe(EventType type, Listener listener);
   void Unsubscribe(EventType type, int token);
   void Publish(const Event& event);
+  std::vector<Event> RecentEvents() const;
 
  private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   int nextToken_ = 1;
   std::map<EventType, std::map<int, Listener>> listeners_;
+  std::vector<Event> recentEvents_;
 };
 
 }  // namespace fubuki

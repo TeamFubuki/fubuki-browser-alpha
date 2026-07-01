@@ -4,7 +4,7 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 34px 32px minmax(0, 1fr) auto;
+  grid-template-rows: 34px 32px 28px minmax(0, 1fr) 24px auto;
   gap: 8px;
   padding: 8px;
   padding-top: 10px;
@@ -45,7 +45,7 @@
 .sidebar-actions {
   -webkit-app-region: no-drag;
   display: grid;
-  grid-template-columns: repeat(3, var(--button-size));
+  grid-template-columns: repeat(4, var(--button-size));
   justify-content: space-between;
   gap: 6px;
   padding-top: 8px;

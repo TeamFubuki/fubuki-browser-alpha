@@ -1,15 +1,20 @@
 .top-bar {
   -webkit-app-region: drag;
+  position: relative;
   grid-area: topbar;
   min-width: 0;
   height: var(--topbar-height);
   display: grid;
-  grid-template-columns: var(--button-size) var(--button-size) var(--button-size) minmax(160px, 1fr) var(--button-size);
+  grid-template-columns: repeat(5, var(--button-size)) minmax(160px, 1fr) repeat(4, var(--button-size));
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
   background: var(--topbar-bg);
   pointer-events: auto;
+}
+
+.top-bar.private {
+  background: color-mix(in srgb, var(--topbar-bg) 72%, #17151f);
 }
 
 .topbar-button {
@@ -36,6 +41,11 @@
   color: var(--accent);
 }
 
+.topbar-button.security {
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .omnibox {
   -webkit-app-region: no-drag;
   min-width: 0;
@@ -57,4 +67,45 @@
 .omnibox-input:focus {
   border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.find-bar {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: calc(var(--topbar-height) + 6px);
+  right: 10px;
+  z-index: 10;
+  height: 34px;
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) repeat(3, 28px);
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.14);
+}
+
+.find-bar input {
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--content-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.find-bar button {
+  width: 28px;
+  height: 24px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+}
+
+.find-bar button:hover {
+  background: var(--hover);
 }

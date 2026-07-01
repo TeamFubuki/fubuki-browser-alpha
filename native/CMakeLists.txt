@@ -31,6 +31,7 @@ set(FUBUKI_SOURCES
   src/cef/FubukiClient.cc
   src/cef/FubukiRenderApp.cc
   src/cef/FubukiSchemeHandler.cc
+  src/browser/BrowserAppController.cc
   src/browser/BrowserWindow.mm
   src/browser/BrowserDataStore.cc
   src/browser/Tab.cc
