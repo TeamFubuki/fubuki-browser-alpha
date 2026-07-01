@@ -81,8 +81,7 @@ sqlite3* OpenDatabase() {
   Execute(db, "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
   Execute(db, "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at TEXT NOT NULL)");
   Execute(db, "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY AUTOINCREMENT,url TEXT,path TEXT,state TEXT,percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  Execute(db, "ALTER TABLE downloads ADD COLUMN updated_at TEXT");
-  Execute(db, "UPDATE downloads SET updated_at=created_at WHERE updated_at IS NULL OR updated_at=''");
+  Execute(db, "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
   return db;
 }
 

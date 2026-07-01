@@ -201,13 +201,12 @@ void BrowserDataStore::UpdateDownload(const std::string& url, const std::string&
 
   if (state == "completed" && !path.empty()) {
     sqlite3_prepare_v2(db_,
-                      "DELETE FROM downloads WHERE id NOT IN (SELECT MAX(id) FROM downloads WHERE path=? AND state='completed') "
-                      "AND path=? AND state='completed' AND created_at >= datetime('now', '-5 minutes')",
+                      "DELETE FROM downloads WHERE id NOT IN "
+                      "(SELECT MAX(id) FROM downloads WHERE COALESCE(path,'')=COALESCE(?, '') GROUP BY COALESCE(path,''))",
                       -1,
                       &statement,
                       nullptr);
     BindText(statement, 1, path);
-    BindText(statement, 2, path);
     sqlite3_step(statement);
     sqlite3_finalize(statement);
   }
@@ -267,7 +266,23 @@ void BrowserDataStore::EnsureSchema() {
   Execute("CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, favicon_url TEXT, created_at TEXT NOT NULL)");
   Execute("CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL)");
   Execute("CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, path TEXT, state TEXT, percent INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT)");
-  Execute("ALTER TABLE downloads ADD COLUMN updated_at TEXT");
+  {
+    bool hasUpdatedAtIndex = false;
+    sqlite3_stmt* pragmaStmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "PRAGMA table_info(downloads)", -1, &pragmaStmt, nullptr) == SQLITE_OK) {
+      while (sqlite3_step(pragmaStmt) == SQLITE_ROW) {
+        const char* colName = reinterpret_cast<const char*>(sqlite3_column_text(pragmaStmt, 1));
+        if (colName && std::string(colName) == "updated_at") {
+          hasUpdatedAtIndex = true;
+          break;
+        }
+      }
+    }
+    sqlite3_finalize(pragmaStmt);
+    if (!hasUpdatedAtIndex) {
+      Execute("ALTER TABLE downloads ADD COLUMN updated_at TEXT");
+    }
+  }
   Execute("UPDATE downloads SET updated_at=created_at WHERE updated_at IS NULL OR updated_at=''");
   Execute("DELETE FROM downloads WHERE id NOT IN (SELECT MAX(id) FROM downloads GROUP BY COALESCE(url,''), COALESCE(path,''))");
   Execute("CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT, created_at TEXT NOT NULL)");

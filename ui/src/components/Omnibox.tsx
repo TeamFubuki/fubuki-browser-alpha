@@ -1,4 +1,4 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import { fubuki } from "../bridge/fubuki";
 import { browserState } from "../stores/browserStore";
 
@@ -6,11 +6,24 @@ function activeTab() {
   return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
 }
 
+function isNonNavigableUrl(url: string | undefined): boolean {
+  return !url || url.startsWith("fubuki://") || url.startsWith("data:");
+}
+
 export default function Omnibox() {
   const [draft, setDraft] = createSignal("");
+  const [focused, setFocused] = createSignal(false);
+  let lastSyncedTabId = "";
 
   createEffect(() => {
-    setDraft(activeTab()?.url ?? "");
+    const tabId = browserState.activeTabId;
+    const tab = browserState.tabs.find((t) => t.id === tabId);
+    const url = tab?.url ?? "";
+
+    if (!focused() || tabId !== lastSyncedTabId) {
+      setDraft(url);
+      lastSyncedTabId = tabId;
+    }
   });
 
   const submit = () => {
@@ -19,6 +32,10 @@ export default function Omnibox() {
     if (!tab || !input) return;
     void fubuki.invoke("tabs.navigate", { tabId: tab.id, input });
   };
+
+  let inputRef: HTMLInputElement | undefined;
+
+  onCleanup(() => {});
 
   return (
     <form
@@ -29,13 +46,18 @@ export default function Omnibox() {
       }}
     >
       <input
+        ref={inputRef}
         class="omnibox-input"
         value={draft()}
         aria-label="Search or enter URL"
         autocomplete="off"
         autocapitalize="off"
         spellcheck={false}
-        onFocus={(event) => event.currentTarget.select()}
+        onFocus={() => {
+          setFocused(true);
+          inputRef?.select();
+        }}
+        onBlur={() => setFocused(false)}
         onInput={(event) => setDraft(event.currentTarget.value)}
       />
     </form>

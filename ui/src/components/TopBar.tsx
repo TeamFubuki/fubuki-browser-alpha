@@ -49,7 +49,7 @@ export default function TopBar() {
         classList={{ "topbar-button": true, bookmarked: isBookmarked() }}
         title={isBookmarked() ? "Remove bookmark" : "Add bookmark"}
         aria-label={isBookmarked() ? "Remove bookmark" : "Add bookmark"}
-        disabled={!activeTab()?.url || activeTab()?.url.startsWith("fubuki://")}
+        disabled={!activeTab()?.url || activeTab()?.url.startsWith("fubuki://") || activeTab()?.url.startsWith("data:")}
         onClick={() => void toggleBookmark()}
       >
         <span aria-hidden="true">{isBookmarked() ? "★" : "☆"}</span>

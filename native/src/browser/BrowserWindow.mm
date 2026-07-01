@@ -236,7 +236,7 @@ void UpdateUiHostClip(NSView* view, bool overlayActive, CGFloat sidebarWidth, CG
     CGPathAddRect(path,
                   nullptr,
                   CGRectMake(bounds.size.width - panelWidth - 8.0,
-                             navHeight + 8.0,
+                             bounds.size.height - navHeight - panelHeight - 8.0,
                              panelWidth,
                              panelHeight));
   }
