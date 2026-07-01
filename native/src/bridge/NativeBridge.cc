@@ -119,7 +119,9 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
     return BoolValue(window_.SetSetting(params->GetString("key"), params->GetString("value")));
   }
   if (method == "ui.setOverlayActive") {
-    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") && params->GetBool("active")));
+    const double overlayWidth = params->HasKey("width") ? params->GetDouble("width") : 392.0;
+    const double overlayHeight = params->HasKey("height") ? params->GetDouble("height") : 560.0;
+    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") && params->GetBool("active"), overlayWidth, overlayHeight));
   }
   if (method == "app.openDevTools") {
     return BoolValue(window_.OpenDevTools());

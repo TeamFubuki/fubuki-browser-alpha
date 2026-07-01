@@ -201,12 +201,13 @@ void BrowserDataStore::UpdateDownload(const std::string& url, const std::string&
 
   if (state == "completed" && !path.empty()) {
     sqlite3_prepare_v2(db_,
-                      "DELETE FROM downloads WHERE id NOT IN "
-                      "(SELECT MAX(id) FROM downloads WHERE COALESCE(path,'')=COALESCE(?, '') GROUP BY COALESCE(path,''))",
+                      "DELETE FROM downloads WHERE COALESCE(path,'')=COALESCE(?, '') "
+                      "AND id NOT IN (SELECT MAX(id) FROM downloads WHERE COALESCE(path,'')=COALESCE(?, ''))",
                       -1,
                       &statement,
                       nullptr);
     BindText(statement, 1, path);
+    BindText(statement, 2, path);
     sqlite3_step(statement);
     sqlite3_finalize(statement);
   }
