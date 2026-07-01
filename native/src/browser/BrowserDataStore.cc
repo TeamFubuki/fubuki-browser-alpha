@@ -16,6 +16,7 @@ namespace fubuki {
 namespace {
 
 constexpr size_t kMaxHistoryItems = 500;
+constexpr size_t kMaxDownloadItems = 20;
 constexpr size_t kMaxLogItems = 300;
 
 std::string ColumnText(sqlite3_stmt* statement, int column) {
@@ -117,6 +118,29 @@ bool BrowserDataStore::RemoveBookmark(const std::string& url) {
   return ok;
 }
 
+bool BrowserDataStore::RemoveHistory(const std::string& url) {
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE url=?", -1, &statement, nullptr);
+  BindText(statement, 1, url);
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  sqlite3_finalize(statement);
+  RefreshList("history", history_, kMaxHistoryItems);
+  return ok;
+}
+
+bool BrowserDataStore::RemoveDownload(const std::string& url, const std::string& path) {
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM downloads WHERE (url=? AND ?<>'') OR (path=? AND ?<>'')", -1, &statement, nullptr);
+  BindText(statement, 1, url);
+  BindText(statement, 2, url);
+  BindText(statement, 3, path);
+  BindText(statement, 4, path);
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  sqlite3_finalize(statement);
+  RefreshList("downloads", downloads_, kMaxDownloadItems);
+  return ok;
+}
+
 bool BrowserDataStore::ClearBookmarks() {
   Execute("DELETE FROM bookmarks");
   RefreshList("bookmarks", bookmarks_, 500);
@@ -131,7 +155,7 @@ bool BrowserDataStore::ClearHistory() {
 
 bool BrowserDataStore::ClearDownloads() {
   Execute("DELETE FROM downloads");
-  RefreshList("downloads", downloads_, 200);
+  RefreshList("downloads", downloads_, kMaxDownloadItems);
   return true;
 }
 
@@ -146,17 +170,49 @@ void BrowserDataStore::AddDownload(const std::string& url, const std::string& pa
 }
 
 void BrowserDataStore::UpdateDownload(const std::string& url, const std::string& path, const std::string& state, int percent) {
+  const std::string now = NowIsoString();
   sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT INTO downloads(url,path,state,percent,created_at) VALUES(?,?,?,?,?)", -1, &statement, nullptr);
-  BindText(statement, 1, url);
-  BindText(statement, 2, path);
-  BindText(statement, 3, state);
-  sqlite3_bind_int(statement, 4, percent);
-  BindText(statement, 5, NowIsoString());
+  sqlite3_prepare_v2(db_,
+                    "UPDATE downloads SET state=?,percent=?,updated_at=? "
+                    "WHERE COALESCE(url,'')=COALESCE(?, '') AND COALESCE(path,'')=COALESCE(?, '')",
+                    -1,
+                    &statement,
+                    nullptr);
+  BindText(statement, 1, state);
+  sqlite3_bind_int(statement, 2, percent);
+  BindText(statement, 3, now);
+  BindText(statement, 4, url);
+  BindText(statement, 5, path);
   sqlite3_step(statement);
+  const bool updated = sqlite3_changes(db_) > 0;
   sqlite3_finalize(statement);
+
+  if (!updated) {
+    sqlite3_prepare_v2(db_, "INSERT INTO downloads(url,path,state,percent,created_at,updated_at) VALUES(?,?,?,?,?,?)", -1, &statement, nullptr);
+    BindText(statement, 1, url);
+    BindText(statement, 2, path);
+    BindText(statement, 3, state);
+    sqlite3_bind_int(statement, 4, percent);
+    BindText(statement, 5, now);
+    BindText(statement, 6, now);
+    sqlite3_step(statement);
+    sqlite3_finalize(statement);
+  }
+
+  if (state == "completed" && !path.empty()) {
+    sqlite3_prepare_v2(db_,
+                      "DELETE FROM downloads WHERE COALESCE(path,'')=COALESCE(?, '') "
+                      "AND id NOT IN (SELECT MAX(id) FROM downloads WHERE COALESCE(path,'')=COALESCE(?, ''))",
+                      -1,
+                      &statement,
+                      nullptr);
+    BindText(statement, 1, path);
+    BindText(statement, 2, path);
+    sqlite3_step(statement);
+    sqlite3_finalize(statement);
+  }
   Execute("DELETE FROM downloads WHERE id NOT IN (SELECT id FROM downloads ORDER BY id DESC LIMIT 200)");
-  RefreshList("downloads", downloads_, 200);
+  RefreshList("downloads", downloads_, kMaxDownloadItems);
 }
 
 void BrowserDataStore::Log(const std::string& level, const std::string& message) {
@@ -210,7 +266,26 @@ void BrowserDataStore::EnsureSchema() {
   Execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   Execute("CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, favicon_url TEXT, created_at TEXT NOT NULL)");
   Execute("CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL)");
-  Execute("CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, path TEXT, state TEXT, percent INTEGER DEFAULT 0, created_at TEXT NOT NULL)");
+  Execute("CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, path TEXT, state TEXT, percent INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT)");
+  {
+    bool hasUpdatedAtIndex = false;
+    sqlite3_stmt* pragmaStmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "PRAGMA table_info(downloads)", -1, &pragmaStmt, nullptr) == SQLITE_OK) {
+      while (sqlite3_step(pragmaStmt) == SQLITE_ROW) {
+        const char* colName = reinterpret_cast<const char*>(sqlite3_column_text(pragmaStmt, 1));
+        if (colName && std::string(colName) == "updated_at") {
+          hasUpdatedAtIndex = true;
+          break;
+        }
+      }
+    }
+    sqlite3_finalize(pragmaStmt);
+    if (!hasUpdatedAtIndex) {
+      Execute("ALTER TABLE downloads ADD COLUMN updated_at TEXT");
+    }
+  }
+  Execute("UPDATE downloads SET updated_at=created_at WHERE updated_at IS NULL OR updated_at=''");
+  Execute("DELETE FROM downloads WHERE id NOT IN (SELECT MAX(id) FROM downloads GROUP BY COALESCE(url,''), COALESCE(path,''))");
   Execute("CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT, created_at TEXT NOT NULL)");
 }
 
@@ -337,7 +412,7 @@ void BrowserDataStore::RefreshCaches() {
   RefreshSettings();
   RefreshList("history", history_, kMaxHistoryItems);
   RefreshList("bookmarks", bookmarks_, 500);
-  RefreshList("downloads", downloads_, 200);
+  RefreshList("downloads", downloads_, kMaxDownloadItems);
   RefreshList("logs", logs_, kMaxLogItems);
 }
 
@@ -358,7 +433,7 @@ void BrowserDataStore::RefreshList(const std::string& table, CefRefPtr<CefListVa
                           : table == "history"
                               ? "SELECT title,url,NULL,created_at,NULL,NULL,NULL FROM history ORDER BY id DESC LIMIT ?"
                           : table == "downloads"
-                              ? "SELECT NULL,url,NULL,created_at,path,state,percent FROM downloads ORDER BY id DESC LIMIT ?"
+                              ? "SELECT NULL,url,NULL,COALESCE(updated_at,created_at),path,state,percent FROM downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC LIMIT ?"
                               : "SELECT NULL,NULL,NULL,created_at,NULL,level,message FROM logs ORDER BY id DESC LIMIT ?";
   sqlite3_stmt* statement = nullptr;
   sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement, nullptr);

@@ -1,0 +1,127 @@
+.vertical-tab-list {
+  -webkit-app-region: no-drag;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+}
+
+.vertical-tab-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.vertical-tab-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+  background-clip: padding-box;
+}
+
+.vertical-tab {
+  height: var(--tab-height);
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  border-radius: 7px;
+  color: var(--muted);
+}
+
+.vertical-tab:hover {
+  background: var(--hover);
+}
+
+.vertical-tab.active {
+  background: var(--active);
+  color: var(--text);
+}
+
+.tab-activate {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 8px;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.vertical-tab.active .tab-title {
+  font-weight: 650;
+}
+
+.tab-close {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.tab-close:hover {
+  opacity: 1;
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tab-icon {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tab-icon::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #46a7ff, #6b78e6 58%, #ff9585);
+}
+
+.tab-icon:has(img)::before,
+.tab-icon.loading::before {
+  content: none;
+}
+
+.tab-icon img {
+  width: 16px;
+  height: 16px;
+}
+
+.tab-icon.loading {
+  border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: tab-spin 0.85s linear infinite;
+}
+
+@keyframes tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

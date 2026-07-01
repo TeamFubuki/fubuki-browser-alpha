@@ -18,6 +18,8 @@ class BrowserDataStore {
   void AddHistory(const std::string& title, const std::string& url);
   bool AddBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl);
   bool RemoveBookmark(const std::string& url);
+  bool RemoveHistory(const std::string& url);
+  bool RemoveDownload(const std::string& url, const std::string& path);
   bool ClearBookmarks();
   bool ClearHistory();
   bool ClearDownloads();

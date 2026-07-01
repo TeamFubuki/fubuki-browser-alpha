@@ -1,0 +1,53 @@
+.sidebar {
+  -webkit-app-region: drag;
+  grid-area: sidebar;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 34px 32px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  padding-top: 10px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--line);
+  pointer-events: auto;
+}
+
+:root[data-sidebar="hide"] .sidebar {
+  display: none;
+}
+
+.sidebar-drag-area {
+  -webkit-app-region: drag;
+}
+
+.new-tab-button,
+.sidebar-actions button {
+  width: var(--button-size);
+  height: var(--button-size);
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.new-tab-button:hover,
+.sidebar-actions button:hover {
+  background: var(--hover);
+}
+
+.new-tab-button {
+  justify-self: start;
+}
+
+.sidebar-actions {
+  -webkit-app-region: no-drag;
+  display: grid;
+  grid-template-columns: repeat(3, var(--button-size));
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}

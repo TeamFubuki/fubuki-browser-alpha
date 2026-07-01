@@ -41,9 +41,11 @@ class BrowserWindow {
   bool AddActiveBookmark();
   bool SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl);
   bool RemoveBookmark(const std::string& url);
+  bool RemoveHistory(const std::string& url);
+  bool RemoveDownload(const std::string& url, const std::string& path);
   bool ClearBrowsingData(const std::string& target);
   bool SetSetting(const std::string& key, const std::string& value);
-  bool SetUiOverlayActive(bool active);
+  bool SetUiOverlayActive(bool active, double overlayWidth = 392.0, double overlayHeight = 560.0);
   bool HandleSettingsUrl(const std::string& tabId, const std::string& url);
   bool HandleNewTabSearchUrl(const std::string& tabId, const std::string& url);
   std::string DownloadPathFor(const std::string& suggestedName) const;
@@ -68,6 +70,7 @@ class BrowserWindow {
   BrowserDataStore& Store() { return *dataStore_; }
   const BrowserDataStore& Store() const { return *dataStore_; }
   CefRefPtr<CefBrowser> UiBrowser() const { return uiBrowser_; }
+  void UpdateContentFrame();
 
  private:
   void CreateNativeWindow();
@@ -76,7 +79,6 @@ class BrowserWindow {
   void RegisterCommands();
   void WireEvents();
   void ResizeViews();
-  void UpdateContentFrame();
   void UpdateTabPatch(const std::string& tabId,
                       const std::string& title,
                       const std::string& url,
@@ -97,6 +99,9 @@ class BrowserWindow {
   NSView* uiHostView_ = nullptr;
   NSView* contentHostView_ = nullptr;
   NSView* dragRegionView_ = nullptr;
+  bool uiOverlayActive_ = false;
+  double uiOverlayWidth_ = 392.0;
+  double uiOverlayHeight_ = 560.0;
 };
 
 }  // namespace fubuki

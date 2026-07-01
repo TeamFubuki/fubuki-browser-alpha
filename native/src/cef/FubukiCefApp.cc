@@ -55,6 +55,9 @@ void FubukiCefApp::OnContextInitialized() {
   CefRegisterSchemeHandlerFactory("fubuki", "app", new FubukiSchemeHandlerFactory(uiDistPath_));
   CefRegisterSchemeHandlerFactory("fubuki", "newtab", new FubukiSchemeHandlerFactory(uiDistPath_));
   CefRegisterSchemeHandlerFactory("fubuki", "settings", new FubukiSchemeHandlerFactory(uiDistPath_));
+  CefRegisterSchemeHandlerFactory("fubuki", "bookmarks", new FubukiSchemeHandlerFactory(uiDistPath_));
+  CefRegisterSchemeHandlerFactory("fubuki", "downloads", new FubukiSchemeHandlerFactory(uiDistPath_));
+  CefRegisterSchemeHandlerFactory("fubuki", "history", new FubukiSchemeHandlerFactory(uiDistPath_));
 
   tabManager_ = std::make_unique<TabManager>(eventBus_);
   browserWindow_ = std::make_unique<BrowserWindow>(eventBus_, *tabManager_);

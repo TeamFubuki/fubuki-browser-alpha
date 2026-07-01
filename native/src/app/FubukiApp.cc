@@ -28,6 +28,7 @@ int RunFubukiApplication(int argc, char* argv[]) {
   CefSettings settings;
   settings.no_sandbox = true;
   settings.persist_session_cookies = true;
+  settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   const char* home = std::getenv("HOME");
   const auto basePath = home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
                              : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";

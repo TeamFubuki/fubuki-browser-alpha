@@ -1,34 +1,64 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
+import { fubuki } from "../bridge/fubuki";
+import { browserState } from "../stores/browserStore";
 
-type Props = {
-  value: string;
-  onDraft: (value: string) => void;
-  onSubmit: () => void;
-};
+function activeTab() {
+  return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
+}
 
-export default function Omnibox(props: Props) {
-  const [value, setValue] = createSignal(props.value);
+function isNonNavigableUrl(url: string | undefined): boolean {
+  return !url || url.startsWith("fubuki://") || url.startsWith("data:");
+}
+
+export default function Omnibox() {
+  const [draft, setDraft] = createSignal("");
+  const [focused, setFocused] = createSignal(false);
+  let lastSyncedTabId = "";
 
   createEffect(() => {
-    setValue(props.value);
-    props.onDraft(props.value);
+    const tabId = browserState.activeTabId;
+    const tab = browserState.tabs.find((t) => t.id === tabId);
+    const url = tab?.url ?? "";
+
+    if (!focused() || tabId !== lastSyncedTabId) {
+      setDraft(url);
+      lastSyncedTabId = tabId;
+    }
   });
+
+  const submit = () => {
+    const tab = activeTab();
+    const input = draft().trim();
+    if (!tab || !input) return;
+    void fubuki.invoke("tabs.navigate", { tabId: tab.id, input });
+  };
+
+  let inputRef: HTMLInputElement | undefined;
+
+  onCleanup(() => {});
 
   return (
     <form
       class="omnibox"
       onSubmit={(event) => {
         event.preventDefault();
-        props.onSubmit();
+        submit();
       }}
     >
       <input
-        value={value()}
+        ref={inputRef}
+        class="omnibox-input"
+        value={draft()}
+        aria-label="Search or enter URL"
+        autocomplete="off"
+        autocapitalize="off"
         spellcheck={false}
-        onInput={(event) => {
-          setValue(event.currentTarget.value);
-          props.onDraft(event.currentTarget.value);
+        onFocus={() => {
+          setFocused(true);
+          inputRef?.select();
         }}
+        onBlur={() => setFocused(false)}
+        onInput={(event) => setDraft(event.currentTarget.value)}
       />
     </form>
   );
