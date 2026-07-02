@@ -37,6 +37,15 @@ std::string HtmlEscape(const std::string& value) {
   return out.str();
 }
 
+bool StartsWith(const std::string& value, const std::string& prefix) {
+  return value.rfind(prefix, 0) == 0;
+}
+
+bool IsTrustedSettingsActionSource(const std::string& url) {
+  return url == "fubuki://settings" || StartsWith(url, "fubuki://settings/") ||
+         url == "fubuki://bookmarks" || StartsWith(url, "fubuki://bookmarks/");
+}
+
 }  // namespace
 
 FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
@@ -196,21 +205,20 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>,
 bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>,
                                   CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request,
-                                  bool,
-                                  bool) {
+                                  bool user_gesture,
+                                  bool is_redirect) {
   if (!window_ || isUi_ || !frame || !frame->IsMain() || !request) {
     return false;
   }
   const std::string url = request->GetURL().ToString();
-  if (url.rfind("fubuki://settings/set", 0) == 0) {
-    const std::string currentUrl = frame->GetURL().ToString();
-    if (currentUrl.rfind("fubuki://settings/", 0) != 0) {
+  if (StartsWith(url, "fubuki://settings/set")) {
+    if (!user_gesture || is_redirect || !IsTrustedSettingsActionSource(frame->GetURL().ToString())) {
       return true;
     }
     window_->HandleSettingsUrl(tabId_, url);
     return true;
   }
-  if (url.rfind("fubuki://newtab/search", 0) == 0) {
+  if (StartsWith(url, "fubuki://newtab/search")) {
     window_->HandleNewTabSearchUrl(tabId_, url);
     return true;
   }
