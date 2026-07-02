@@ -30,8 +30,9 @@ command -v tar >/dev/null || { echo "tar is required" >&2; exit 1; }
 
 mkdir -p "$CACHE_DIR"
 
-selection="$(
-  CEF_PLATFORM="$CEF_PLATFORM" CEF_CHANNEL="$CEF_CHANNEL" INDEX_URL="$INDEX_URL" BASE_URL="$BASE_URL" python3 - <<'PY'
+selection_file="$(mktemp "$CACHE_DIR/selection.XXXXXX.json")"
+
+CEF_PLATFORM="$CEF_PLATFORM" CEF_CHANNEL="$CEF_CHANNEL" INDEX_URL="$INDEX_URL" python3 - <<'PY' > "$selection_file"
 import json
 import os
 import re
@@ -41,7 +42,7 @@ import urllib.request
 platform = os.environ["CEF_PLATFORM"]
 channel = os.environ["CEF_CHANNEL"]
 index_url = os.environ["INDEX_URL"]
-base_url = os.environ["BASE_URL"].rstrip("/")
+archive_pattern = re.compile(rf"cef_binary_[A-Za-z0-9.+_-]+_{re.escape(platform)}\.tar\.bz2")
 
 with urllib.request.urlopen(index_url, timeout=60) as response:
     index = json.load(response)
@@ -57,7 +58,14 @@ def standard_archive(files):
     suffix = f"_{platform}.tar.bz2"
     for item in files:
         name = item.get("name", "")
-        if name.endswith(suffix) and "_minimal" not in name and "_client" not in name and "_symbols" not in name and "_debug" not in name:
+        if (
+            archive_pattern.fullmatch(name)
+            and name.endswith(suffix)
+            and "_minimal" not in name
+            and "_client" not in name
+            and "_symbols" not in name
+            and "_debug" not in name
+        ):
             return name
     return None
 
@@ -73,14 +81,22 @@ if not candidates:
     raise SystemExit(f"No standard CEF archive found for {platform} channel={channel}")
 
 _, version, name = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
-print(f"CEF_FILE={name}")
-print(f"CEF_URL={base_url}/{name}")
-print(f"CEF_VERSION={version.get('cef_version', '')}")
-print(f"CHROMIUM_VERSION={version.get('chromium_version', '')}")
+json.dump({
+    "cef_file": name,
+    "cef_version": version.get("cef_version", ""),
+    "chromium_version": version.get("chromium_version", ""),
+}, sys.stdout)
 PY
-)"
 
-eval "$selection"
+json_get() {
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[sys.argv[2]])' "$selection_file" "$1"
+}
+
+CEF_FILE="$(json_get cef_file)"
+CEF_URL="${BASE_URL%/}/$CEF_FILE"
+CEF_VERSION="$(json_get cef_version)"
+CHROMIUM_VERSION="$(json_get chromium_version)"
+rm -f "$selection_file"
 
 archive="$CACHE_DIR/$CEF_FILE"
 echo "Selected CEF: $CEF_VERSION / Chromium $CHROMIUM_VERSION"
