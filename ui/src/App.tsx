@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { commands, fubuki, page, tabs } from "./bridge/fubuki";
 import BrowserShell from "./components/BrowserShell";
+import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from "./sidebarSizing";
 import { bindNativeEvents, browserState, refreshState } from "./stores/browserStore";
 
 function activeTab() {
@@ -23,8 +24,10 @@ export default function App() {
     const appearance = browserState.settings.appearance || browserState.settings.theme || "system";
     document.documentElement.dataset.theme = appearance === "dark" || (appearance === "system" && systemDark()) ? "dark" : "light";
     document.documentElement.dataset.sidebar = browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
-    const width = Math.min(280, Math.max(168, Number(browserState.settings.sidebarWidth) || 196));
-    document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    if (document.documentElement.dataset.sidebarResizing !== "true") {
+      const width = clampSidebarWidth(Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH);
+      document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    }
   });
 
   onMount(() => {

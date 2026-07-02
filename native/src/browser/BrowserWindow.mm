@@ -16,6 +16,12 @@
 #include "include/wrapper/cef_helpers.h"
 #include "utils/UrlUtils.h"
 
+namespace {
+constexpr CGFloat kMinSidebarWidth = 168.0;
+constexpr CGFloat kDefaultSidebarWidth = 196.0;
+constexpr CGFloat kMaxSidebarWidth = 280.0;
+}
+
 @interface FubukiUiHostView : NSView
 @property(nonatomic) BOOL overlayActive;
 @property(nonatomic) CGFloat sidebarWidth;
@@ -88,7 +94,7 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
     draggableRects_ = [NSMutableArray array];
     blockedRects_ = [NSMutableArray array];
     contentHeight_ = frame.size.height;
-    self.sidebarWidth = 196.0;
+    self.sidebarWidth = kDefaultSidebarWidth;
     self.navHeight = 48.0;
     [self setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   }
@@ -206,7 +212,6 @@ namespace fubuki {
 
 namespace {
 
-constexpr CGFloat kSidebarWidth = 196.0;
 constexpr CGFloat kNavHeight = 42.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
@@ -905,9 +910,9 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   std::string savedValue = value;
   if (key == "sidebarWidth") {
     try {
-      savedValue = std::to_string(static_cast<int>(std::clamp(std::stod(value), 168.0, 280.0)));
+      savedValue = std::to_string(static_cast<int>(std::clamp(std::stod(value), static_cast<double>(kMinSidebarWidth), static_cast<double>(kMaxSidebarWidth))));
     } catch (...) {
-      savedValue = "196";
+      savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
     }
   }
   dataStore_->SetSetting(key, savedValue);
@@ -945,7 +950,7 @@ bool BrowserWindow::SetPermission(const std::string& origin, const std::string& 
 }
 
 bool BrowserWindow::SetLiveSidebarWidth(double width) {
-  liveSidebarWidth_ = std::clamp(width, 168.0, 280.0);
+  liveSidebarWidth_ = std::clamp(width, static_cast<double>(kMinSidebarWidth), static_cast<double>(kMaxSidebarWidth));
   UpdateContentFrame();
   return true;
 }
@@ -1213,7 +1218,7 @@ void BrowserWindow::CreateNativeWindow() {
   [window_ setContentView:root];
 
   uiHostView_ = [[FubukiUiHostView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
-  contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(kSidebarWidth, 0, frame.size.width - kSidebarWidth, frame.size.height - kNavHeight)];
+  contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(kDefaultSidebarWidth, 0, frame.size.width - kDefaultSidebarWidth, frame.size.height - kNavHeight)];
   dragRegionView_ = [[FubukiDragRegionView alloc] initWithFrame:[uiHostView_ frame]];
   [uiHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -1543,23 +1548,23 @@ void BrowserWindow::UpdateContentFrame() {
   }
   const auto settings = dataStore_->Settings();
   const std::string sidebarState = settings->GetString("sidebarVisible");
-  const bool sidebarVisible = sidebarState != "hide";
-  double sidebarWidth = sidebarState == "collapsed" ? 54.0 : sidebarVisible ? kSidebarWidth : 0.0;
-  if (sidebarVisible && sidebarState != "collapsed") {
+  const bool sidebarVisible = sidebarState == "show";
+  double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;
+  if (sidebarVisible) {
     if (liveSidebarWidth_ > 0.0) {
       sidebarWidth = liveSidebarWidth_;
     } else {
       const std::string widthValue = settings->GetString("sidebarWidth");
       if (!widthValue.empty()) {
         try {
-          sidebarWidth = std::clamp(std::stod(widthValue), 168.0, 280.0);
+          sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth), static_cast<double>(kMaxSidebarWidth));
         } catch (...) {
-          sidebarWidth = kSidebarWidth;
+          sidebarWidth = kDefaultSidebarWidth;
         }
       }
     }
   }
-  if (!sidebarVisible || sidebarState == "collapsed") {
+  if (!sidebarVisible) {
     liveSidebarWidth_ = 0.0;
   }
   const CGFloat navHeight = kNavHeight;
