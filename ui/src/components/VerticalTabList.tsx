@@ -64,39 +64,40 @@ export default function VerticalTabList() {
       </Show>
       <div class="vertical-tab-list" role="tablist" aria-label="Open tabs">
         <For each={filteredTabs()}>
-          {(tab, index) => (
-          <div
-            classList={{ "vertical-tab": true, active: tab.isActive, pinned: tab.isPinned }}
-            title={titleFor(tab)}
-            role="tab"
-            aria-selected={tab.isActive}
-            draggable
-            onDragStart={(event) => event.dataTransfer?.setData("text/plain", tab.id)}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              const draggedId = event.dataTransfer?.getData("text/plain");
-              if (draggedId) void fubuki.invoke("tabs.move", { tabId: draggedId, toIndex: index() });
-            }}
-          >
-            <button class="tab-activate" onClick={() => void fubuki.invoke("tabs.activate", { tabId: tab.id })}>
-              <Favicon tab={tab} />
-              <span class="tab-title">{titleFor(tab)}</span>
-            </button>
-            <button
-              class="tab-close"
-              title="Close tab"
-              aria-label={`Close ${titleFor(tab)}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                void fubuki.invoke("tabs.close", { tabId: tab.id });
+          {(tab) => (
+            <div
+              classList={{ "vertical-tab": true, active: tab.isActive, pinned: tab.isPinned }}
+              title={titleFor(tab)}
+              role="tab"
+              aria-selected={tab.isActive}
+              draggable
+              onDragStart={(event) => event.dataTransfer?.setData("text/plain", tab.id)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const draggedId = event.dataTransfer?.getData("text/plain");
+                const targetIndex = browserState.tabs.findIndex((item) => item.id === tab.id);
+                if (draggedId && targetIndex >= 0) void fubuki.invoke("tabs.move", { tabId: draggedId, toIndex: targetIndex });
               }}
             >
-              <span aria-hidden="true">x</span>
-            </button>
-          </div>
-        )}
-      </For>
+              <button class="tab-activate" onClick={() => void fubuki.invoke("tabs.activate", { tabId: tab.id })}>
+                <Favicon tab={tab} />
+                <span class="tab-title">{titleFor(tab)}</span>
+              </button>
+              <button
+                class="tab-close"
+                title="Close tab"
+                aria-label={`Close ${titleFor(tab)}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void fubuki.invoke("tabs.close", { tabId: tab.id });
+                }}
+              >
+                <span aria-hidden="true">x</span>
+              </button>
+            </div>
+          )}
+        </For>
       </div>
     </section>
   );

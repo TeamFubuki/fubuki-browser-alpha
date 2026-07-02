@@ -872,7 +872,7 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     cookieManager->DeleteCookies("", "", nullptr);
     context->ClearHttpCache(nullptr);
-    ok = dataStore_->ClearBookmarks() && dataStore_->ClearHistory() && dataStore_->ClearDownloads() && dataStore_->ClearLogs();
+    ok = dataStore_->ClearHistory() && dataStore_->ClearDownloads() && dataStore_->ClearLogs();
   }
   if (ok) {
     if (target != "logs" && target != "all") {
@@ -936,7 +936,12 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
 }
 
 bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
-  return false;
+  const bool ok = dataStore_->SetPermission(origin, permission, value);
+  if (ok) {
+    eventBus_.Publish({EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
+    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  }
+  return ok;
 }
 
 bool BrowserWindow::SetLiveSidebarWidth(double width) {
