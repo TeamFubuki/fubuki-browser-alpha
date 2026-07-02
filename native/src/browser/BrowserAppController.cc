@@ -196,7 +196,8 @@ bool DispatchBrowserMenuCommand(const std::string& commandId) {
   }
   if (!window && (commandId == "tabs.create" || commandId == "app.openDownloads" ||
                   commandId == "app.openHistory" || commandId == "app.openBookmarks" ||
-                  commandId == "app.openSettings")) {
+                  commandId == "app.openSettings" || commandId == "app.openDebug" ||
+                  commandId == "app.toggleSidebar")) {
     window = app->NewWindow(false, nullptr);
   }
   if (!window) {

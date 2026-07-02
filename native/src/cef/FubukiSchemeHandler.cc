@@ -155,10 +155,11 @@ std::string PageChrome(const std::string& title, const std::string& body) {
   std::ostringstream html;
   html << "<!doctype html><html data-appearance=\"" << HtmlEscape(appearance) << "\"><head><meta charset=\"utf-8\"><title>"
        << HtmlEscape(title) << "</title>" << FubukiFaviconLink() << R"(<style>
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;--bg:#f7f8fa;--surface:#fff;--text:#17191d;--muted:#626b77;--line:rgb(24 32 44/.13);--hover:rgb(24 32 44/.06);--accent:#2563eb}
-html[data-appearance=dark] body{--bg:#17191d;--surface:#202329;--text:#f4f6f8;--muted:#a5adba;--line:rgb(255 255 255/.13);--hover:rgb(255 255 255/.07);--accent:#8ab4ff;color-scheme:dark}
-@media(prefers-color-scheme:dark){html[data-appearance=system] body{--bg:#17191d;--surface:#202329;--text:#f4f6f8;--muted:#a5adba;--line:rgb(255 255 255/.13);--hover:rgb(255 255 255/.07);--accent:#8ab4ff;color-scheme:dark}}
-main{width:min(880px,calc(100vw - 48px));margin:0 auto;padding:36px 0 56px}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px}h1{font-size:30px;line-height:1.1;margin:0;font-weight:720}a{color:inherit}.list{display:grid;gap:6px}.row{min-height:46px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);text-decoration:none}.row:hover,.button:hover{background:color-mix(in srgb,var(--surface) 88%,var(--accent))}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#46a7ff,#6b78e6 58%,#ff9585)}.favicon img{width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:620}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}.button,.chip{height:30px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620}.danger{color:#b42318}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:16px}.field{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}.field>span{font-weight:650}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{border-color:var(--accent);color:var(--accent)}input{height:32px;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--bg);color:var(--text);font:inherit}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;letter-spacing:0;--bg:#f5f6f8;--surface:#fff;--surface-2:#eef1f4;--text:#15171a;--muted:#66707c;--line:rgb(22 28 36/.12);--hover:rgb(22 28 36/.055);--active:rgb(28 101 242/.1);--accent:#1f6feb;--danger:#b42318;--shadow:0 1px 2px rgb(18 24 32/.06)}
+html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}
+@media(prefers-color-scheme:dark){html[data-appearance=system] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}}
+@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 25%,transparent)}100%{box-shadow:0 0 0 6px transparent}}
+main{width:min(1040px,calc(100vw - 48px));margin:0 auto;padding:34px 0 56px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px}h1{font-size:30px;line-height:1.08;margin:0;font-weight:720}h2{font-size:13px;margin:14px 0 5px;color:var(--muted);font-weight:680}a{color:inherit}.list{display:grid;gap:7px}.row{min-height:48px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);text-decoration:none;animation:rowIn .28s cubic-bezier(.2,.8,.2,1);transition:background .16s ease,border-color .16s ease,transform .16s ease}.row:hover{background:var(--hover);border-color:color-mix(in srgb,var(--line) 55%,var(--accent));transform:translateY(-1px)}.row>a{min-width:0;text-decoration:none}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#25a8d7,#6d7edc 58%,#f08072)}.favicon img{width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:640}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;line-height:1.45}.button,.chip{min-height:30px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}.button:hover,.chip:hover{background:var(--hover);transform:translateY(-1px)}.danger{color:var(--danger)}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:14px}.field{display:grid;gap:11px;padding:14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);animation:rowIn .28s cubic-bezier(.2,.8,.2,1);scroll-margin-top:18px}.field>span{font-weight:680}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));background:var(--active);color:var(--accent)}input{height:34px;min-width:220px;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);font:inherit;outline:0;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}input:focus{border-color:var(--accent);animation:focusPulse .5s ease}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}.settings-nav{position:sticky;top:20px;display:grid;gap:4px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow)}.settings-nav a{min-height:34px;display:flex;align-items:center;padding:0 10px;border-radius:6px;color:var(--muted);font-weight:640;text-decoration:none;transition:background .16s ease,color .16s ease,transform .16s ease}.settings-nav a:hover{background:var(--hover);color:var(--text);transform:translateX(2px)}.settings-content{display:grid;gap:14px}.settings-search{margin-bottom:0}.section-kicker{color:var(--muted);font-size:12px}.switch-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}@media(max-width:760px){main{width:min(100% - 28px,1040px);padding-top:24px}.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}input{min-width:0;width:100%}.row{grid-template-columns:20px minmax(0,1fr)}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 </style></head><body><main><header>)"
        << FubukiLogoSvg() << "<h1>" << HtmlEscape(title) << "</h1></header>" << body << "</main></body></html>";
   return html.str();
@@ -266,31 +267,36 @@ std::string SettingsHtml() {
   };
 
   std::ostringstream body;
-  body << "<section class=\"section\">"
-       << "<form class=\"inline-form\"><input type=\"search\" placeholder=\"Search settings\" oninput=\"for(const field of document.querySelectorAll('[data-setting-section]')) field.style.display=field.textContent.toLowerCase().includes(this.value.toLowerCase())?'grid':'none'\"></form>"
-       << "<div class=\"field\" data-setting-section><span>General</span><div class=\"segmented\">"
+  body << "<div class=\"settings-layout\">"
+       << "<nav class=\"settings-nav\" aria-label=\"Settings sections\">"
+       << "<a href=\"#general\">General</a><a href=\"#appearance\">Appearance</a><a href=\"#tabs\">Tabs</a>"
+       << "<a href=\"#windows\">Windows</a><a href=\"#search\">Search</a><a href=\"#privacy\">Privacy</a>"
+       << "<a href=\"#downloads\">Downloads</a><a href=\"#developer\">Developer</a>"
+       << "</nav><section class=\"settings-content\">"
+       << "<form class=\"inline-form settings-search\"><input type=\"search\" placeholder=\"Search settings\" oninput=\"for(const field of document.querySelectorAll('[data-setting-section]')) field.style.display=field.textContent.toLowerCase().includes(this.value.toLowerCase())?'grid':'none'\"></form>"
+       << "<div id=\"general\" class=\"field\" data-setting-section><span>General</span><div class=\"section-kicker\">Choose how Fubuki starts and where Home opens.</div><div class=\"segmented\">"
        << chip("startupBehavior", startupBehavior, "newTab", "New tab")
        << chip("startupBehavior", startupBehavior, "restore", "Restore previous session")
        << chip("startupBehavior", startupBehavior, "homePage", "Home page")
        << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"homeUrl\"><input type=\"hidden\" name=\"return\" value=\"fubuki://settings/\"><input name=\"value\" value=\""
        << HtmlEscape(Setting("homeUrl", "https://example.com")) << "\" placeholder=\"Home page URL\"><button class=\"button\">Save</button><a class=\"button\" href=\""
        << ActionLink("resetSetting", "startupBehavior", "fubuki://settings/") << "\">Reset</a></form></div>"
-       << "<div class=\"field\" data-setting-section><span>Appearance</span><div class=\"segmented\">"
+       << "<div id=\"appearance\" class=\"field\" data-setting-section><span>Appearance</span><div class=\"section-kicker\">Use a flat system, light, or dark internal page theme.</div><div class=\"segmented\">"
        << chip("appearance", appearance, "system", "System")
        << chip("appearance", appearance, "light", "Light")
        << chip("appearance", appearance, "dark", "Dark")
        << "</div><a class=\"button\" href=\"" << ActionLink("resetSetting", "appearance", "fubuki://settings/") << "\">Reset</a></div>"
-       << "<div class=\"field\" data-setting-section><span>Tabs</span><div class=\"segmented\">"
+       << "<div id=\"tabs\" class=\"field\" data-setting-section><span>Tabs</span><div class=\"section-kicker\">Tune the new tab destination and page zoom default.</div><div class=\"segmented\">"
        << chip("newTabPage", newTabPage, "blank", "Blank new tab")
        << chip("newTabPage", newTabPage, "home", "Home on new tab")
        << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"defaultZoomLevel\"><input type=\"hidden\" name=\"return\" value=\"fubuki://settings/\"><input name=\"value\" value=\""
        << HtmlEscape(Setting("defaultZoomLevel", "0")) << "\" placeholder=\"Default zoom level\"><button class=\"button\">Save</button><a class=\"button\" href=\""
        << ActionLink("resetSetting", "defaultZoomLevel", "fubuki://settings/") << "\">Reset</a></form></div>"
-       << "<div class=\"field\" data-setting-section><span>Windows</span><div class=\"segmented\">"
+       << "<div id=\"windows\" class=\"field\" data-setting-section><span>Windows</span><div class=\"section-kicker\">Control browser chrome visibility.</div><div class=\"segmented\">"
        << chip("sidebarVisible", sidebarVisible, "show", "Show sidebar")
        << chip("sidebarVisible", sidebarVisible, "hide", "Hide sidebar")
        << "</div></div>"
-       << "<div class=\"field\" data-setting-section><span>Search</span><div class=\"segmented\">"
+       << "<div id=\"search\" class=\"field\" data-setting-section><span>Search</span><div class=\"section-kicker\">Set the engine used from the omnibox and new tab page.</div><div class=\"segmented\">"
        << chip("searchEngine", searchEngine, "google", "Google")
        << chip("searchEngine", searchEngine, "duckduckgo", "DuckDuckGo")
        << chip("searchEngine", searchEngine, "bing", "Bing")
@@ -298,24 +304,24 @@ std::string SettingsHtml() {
        << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"customSearchUrl\"><input type=\"hidden\" name=\"return\" value=\"fubuki://settings/\"><input name=\"value\" value=\""
        << HtmlEscape(customSearchUrl) << "\" placeholder=\"https://example.com/search?q={query}\"><button class=\"button\">Save</button><a class=\"button\" href=\""
        << ActionLink("resetSetting", "searchEngine", "fubuki://settings/") << "\">Reset</a></form></div>"
-       << "<div class=\"field\" data-setting-section><span>Privacy</span><div class=\"segmented\">"
+       << "<div id=\"privacy\" class=\"field\" data-setting-section><span>Privacy</span><div class=\"section-kicker\">Clear local browsing records and web storage.</div><div class=\"segmented\">"
        << "<a class=\"chip danger\" href=\"" << ActionLink("clearData", "history", "fubuki://settings/") << "\">History</a>"
        << "<a class=\"chip danger\" href=\"" << ActionLink("clearData", "cookies", "fubuki://settings/") << "\">Cookies</a>"
        << "<a class=\"chip danger\" href=\"" << ActionLink("clearData", "cache", "fubuki://settings/") << "\">Cache</a>"
        << "<a class=\"chip danger\" href=\"" << ActionLink("clearData", "downloads", "fubuki://settings/") << "\">Downloads</a>"
        << "<a class=\"chip danger\" href=\"" << ActionLink("clearData", "all", "fubuki://settings/") << "\">All</a>"
        << "</div></div>"
-       << "<div class=\"field\" data-setting-section><span>Downloads</span><div class=\"segmented\">"
+       << "<div id=\"downloads\" class=\"field\" data-setting-section><span>Downloads</span><div class=\"section-kicker\">Set download confirmation and the default folder.</div><div class=\"segmented\">"
        << chip("askBeforeDownload", askBeforeDownload, "on", "Ask before download")
        << chip("askBeforeDownload", askBeforeDownload, "off", "Download automatically")
        << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\"><input type=\"hidden\" name=\"key\" value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" value=\"fubuki://settings/\"><input name=\"value\" value=\""
        << HtmlEscape(Setting("downloadDirectory", "")) << "\" placeholder=\"Download directory\"><button class=\"button\">Save</button><a class=\"button\" href=\""
        << ActionLink("resetSetting", "downloadDirectory", "fubuki://settings/") << "\">Reset</a></form></div>"
        << "<div class=\"field\" data-setting-section><span>Shortcuts</span><div class=\"meta\">Cmd+T, Cmd+N, Cmd+Shift+N, Cmd+W, Cmd+Shift+T, Cmd+L, Cmd+R, Cmd+F, Cmd+,, Cmd+Plus, Cmd+Minus, Cmd+0</div></div>"
-       << "<div class=\"field\" data-setting-section><span>Developer</span><div class=\"segmented\"><a class=\"chip\" href=\""
+       << "<div id=\"developer\" class=\"field\" data-setting-section><span>Developer</span><div class=\"section-kicker\">Inspect the app shell and internal diagnostics.</div><div class=\"segmented\"><a class=\"chip\" href=\""
        << ActionLink("openDevTools", "1", "fubuki://settings/") << "\">Open DevTools</a><a class=\"chip\" href=\"fubuki://debug/\">Debug page</a></div></div>"
        << "<div class=\"field\" data-setting-section><span>Experimental</span><div class=\"meta\">Future plugin API foundation: command registry, bridge versioning, and structured events.</div></div>"
-       << "</section>";
+       << "</section></div>";
   return PageChrome("Settings", body.str());
 }
 
@@ -376,7 +382,7 @@ std::string DebugHtml() {
 std::string NewTabHtml() {
   std::ostringstream html;
   html << R"(<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title>)" << FubukiFaviconLink() << R"(<style>
-*{box-sizing:border-box}html,body{height:100%}body{margin:0;display:grid;place-items:center;background:#fff;color:#17191d;font:15px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif}main{width:min(620px,calc(100vw - 40px));display:grid;gap:22px;justify-items:center}.logo{width:58px;height:58px}h1{margin:0;font-size:32px;line-height:1;font-weight:720}form{width:100%}input{width:100%;height:42px;border:1px solid rgb(24 32 44/.16);border-radius:8px;padding:0 12px;font:inherit;outline:0}input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgb(37 99 235/.18)}
+*{box-sizing:border-box}html,body{height:100%}@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 rgb(31 111 235/.24)}100%{box-shadow:0 0 0 7px transparent}}body{margin:0;display:grid;place-items:center;background:#f5f6f8;color:#15171a;font:15px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;letter-spacing:0}main{width:min(620px,calc(100vw - 40px));display:grid;gap:20px;justify-items:center;animation:pageIn .34s cubic-bezier(.2,.8,.2,1)}.logo{width:58px;height:58px}h1{margin:0;font-size:32px;line-height:1;font-weight:720}form{width:100%}input{width:100%;height:44px;border:1px solid rgb(24 32 44/.14);border-radius:7px;background:#fff;padding:0 13px;font:inherit;outline:0;transition:border-color .16s ease,background .16s ease}input:focus{border-color:#1f6feb;animation:focusPulse .5s ease}@media(prefers-color-scheme:dark){body{background:#14161a;color:#f4f6f8}input{background:#1d2025;border-color:rgb(255 255 255/.12);color:#f4f6f8}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style></head><body><main>)"
        << FubukiLogoSvg() << R"(<h1>Fubuki Browser Alpha</h1><form action="fubuki://newtab/search" method="get"><input name="q" autofocus autocomplete="off" placeholder="Search or enter URL"></form></main></body></html>)";
   return html.str();

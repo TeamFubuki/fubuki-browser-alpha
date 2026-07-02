@@ -71,13 +71,16 @@ void FubukiInstallBasicMenu() {
   AddCommandItem(viewMenu, @"Reload Page", @"tabs.reload", @"r");
   AddCommandItem(viewMenu, @"Stop Loading", @"tabs.stop", @".");
   [viewMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(viewMenu, @"Toggle Sidebar", @"app.toggleSidebar", @"b");
+  [viewMenu addItem:[NSMenuItem separatorItem]];
   AddCommandItem(viewMenu, @"Zoom In", @"page.zoomIn", @"+");
   AddCommandItem(viewMenu, @"Zoom Out", @"page.zoomOut", @"-");
   AddCommandItem(viewMenu, @"Actual Size", @"page.zoomReset", @"0");
   [viewMenu addItem:[NSMenuItem separatorItem]];
   AddCommandItem(viewMenu, @"View Source", @"page.viewSource", @"");
   [viewMenu addItem:[NSMenuItem separatorItem]];
-  AddCommandItem(viewMenu, @"Developer Tools", @"app.openDevTools", @"");
+  NSMenuItem* devTools = AddCommandItem(viewMenu, @"Developer Tools", @"app.openDevTools", @"i");
+  [devTools setKeyEquivalentModifierMask:NSEventModifierFlagOption | NSEventModifierFlagCommand];
   [viewMenu addItem:[NSMenuItem separatorItem]];
   AddItem(viewMenu, @"Enter Full Screen", @selector(toggleFullScreen:), @"f");
   [[viewMenu itemWithTitle:@"Enter Full Screen"] setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
@@ -92,6 +95,21 @@ void FubukiInstallBasicMenu() {
   [historyMenu addItem:[NSMenuItem separatorItem]];
   AddCommandItem(historyMenu, @"Show History", @"app.openHistory", @"");
   AddSubmenu(mainMenu, @"History", historyMenu);
+
+  NSMenu* tabMenu = [[NSMenu alloc] initWithTitle:@"Tab"];
+  AddCommandItem(tabMenu, @"Duplicate Tab", @"tabs.duplicate", @"");
+  AddCommandItem(tabMenu, @"Pin Tab", @"tabs.pin", @"");
+  AddCommandItem(tabMenu, @"Unpin Tab", @"tabs.unpin", @"");
+  [tabMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(tabMenu, @"Next Tab", @"tabs.activateNext", @"]");
+  [[tabMenu itemWithTitle:@"Next Tab"] setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
+  AddCommandItem(tabMenu, @"Previous Tab", @"tabs.activatePrevious", @"[");
+  [[tabMenu itemWithTitle:@"Previous Tab"] setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
+  [tabMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(tabMenu, @"Close Other Tabs", @"tabs.closeOther", @"");
+  AddCommandItem(tabMenu, @"Close Tabs to the Right", @"tabs.closeToRight", @"");
+  AddCommandItem(tabMenu, @"Move Tab to New Window", @"tabs.moveToNewWindow", @"");
+  AddSubmenu(mainMenu, @"Tab", tabMenu);
 
   NSMenu* bookmarksMenu = [[NSMenu alloc] initWithTitle:@"Bookmarks"];
   AddCommandItem(bookmarksMenu, @"Bookmark This Tab", @"bookmarks.addActive", @"d");

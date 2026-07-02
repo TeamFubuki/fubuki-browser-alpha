@@ -85,6 +85,37 @@ void FubukiClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   }
 }
 
+bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>,
+                                 CefRefPtr<CefFrame>,
+                                 int,
+                                 const CefString& target_url,
+                                 const CefString&,
+                                 WindowOpenDisposition,
+                                 bool,
+                                 const CefPopupFeatures&,
+                                 CefWindowInfo&,
+                                 CefRefPtr<CefClient>&,
+                                 CefBrowserSettings&,
+                                 CefRefPtr<CefDictionaryValue>&,
+                                 bool*) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window_ || isUi_) {
+    return true;
+  }
+  const std::string url = target_url.ToString();
+  if (url.empty() || url == "about:blank") {
+    if (!window_->IsPrivate()) {
+      window_->Store().Log("info", "Blocked empty popup");
+    }
+    return true;
+  }
+  if (!window_->IsPrivate()) {
+    window_->Store().Log("info", "Opened popup in new tab: " + url);
+  }
+  window_->CreateTab(url, true);
+  return true;
+}
+
 bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
   return false;
 }
@@ -123,11 +154,14 @@ void FubukiClient::OnLoadError(CefRefPtr<CefBrowser>,
     window_->OnNavigationFailed(tabId_, message);
     const std::string html =
         "<!doctype html><meta charset=\"utf-8\"><title>Page load failed</title>"
-        "<style>body{font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:48px;color:#202124}"
-        "main{max-width:760px}h1{font-size:28px;margin:0 0 12px}p{line-height:1.5;color:#4b5563}"
-        "code{background:#f1f3f4;padding:2px 5px;border-radius:4px;word-break:break-all}"
-        ".actions{display:flex;gap:8px;margin-top:20px}button,a{border:1px solid #c6ccd4;border-radius:6px;background:#fff;color:#1f2328;"
-        "font:inherit;padding:7px 12px;text-decoration:none}</style>"
+        "<style>*{box-sizing:border-box}@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}"
+        "body{font:15px -apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;margin:0;padding:48px;background:#f5f6f8;color:#15171a}"
+        "main{max-width:760px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}h1{font-size:28px;line-height:1.1;margin:0 0 12px;font-weight:720}p{line-height:1.5;color:#66707c}"
+        "code{display:inline-block;max-width:100%;background:#fff;border:1px solid rgb(22 28 36/.12);padding:3px 6px;border-radius:6px;word-break:break-all}"
+        ".actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}button,a{border:1px solid rgb(22 28 36/.14);border-radius:7px;background:#fff;color:#15171a;"
+        "font:inherit;font-weight:620;padding:7px 12px;text-decoration:none;transition:background .16s ease,transform .16s ease}button:hover,a:hover{background:rgb(22 28 36/.055);transform:translateY(-1px)}"
+        "@media(prefers-color-scheme:dark){body{background:#14161a;color:#f4f6f8}p{color:#a7b0bd}code,button,a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}}"
+        "@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style>"
         "<main><h1>Page load failed</h1><p>" +
         HtmlEscape(message) + "</p><p>Check the URL, reload the page, or go back.</p><p><code>" + HtmlEscape(failed) +
         "</code></p><div class=\"actions\"><a href=\"" + HtmlEscape(failed) +

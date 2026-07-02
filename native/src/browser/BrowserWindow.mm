@@ -1432,6 +1432,12 @@ void BrowserWindow::RegisterCommands() {
     value->SetBool(tab ? Navigate(tab->id, "fubuki://debug/") : CreateTab("fubuki://debug/", true));
     return value;
   });
+  commands_.Register("app.toggleSidebar", "Toggle Sidebar", "UI", "Cmd+B", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
+    value->SetBool(SetSetting("sidebarVisible", current == "hide" ? "show" : "hide"));
+    return value;
+  });
   commands_.Register("app.openDevTools", "Developer Tools", "Developer", "Cmd+Option+I", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
     value->SetBool(OpenDevTools());
