@@ -253,6 +253,17 @@ std::filesystem::path ProfilePath() {
               : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
 }
 
+bool IsSafeSettingsReturnPage(const std::string& returnPage) {
+  if (returnPage.empty()) {
+    return true;
+  }
+  if (returnPage.rfind("set", 0) == 0 || returnPage.rfind("/set", 0) == 0 ||
+      returnPage.rfind("fubuki://settings/set", 0) == 0) {
+    return false;
+  }
+  return returnPage.rfind("fubuki://", 0) == 0 || returnPage.find("://") == std::string::npos;
+}
+
 std::string QueryParam(const std::string& url, const std::string& key) {
   const size_t queryStart = url.find('?');
   if (queryStart == std::string::npos) {
@@ -655,10 +666,11 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = SetSetting(key, value);
   }
   if (ok && tabManager_.GetTab(tabId)) {
-    if (returnPage.rfind("fubuki://", 0) == 0) {
-      Navigate(tabId, returnPage);
+    const std::string safeReturnPage = IsSafeSettingsReturnPage(returnPage) ? returnPage : "";
+    if (safeReturnPage.rfind("fubuki://", 0) == 0) {
+      Navigate(tabId, safeReturnPage);
     } else {
-      Navigate(tabId, returnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + returnPage);
+      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + safeReturnPage);
     }
   }
   return ok;

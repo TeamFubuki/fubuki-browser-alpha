@@ -203,6 +203,10 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>,
   }
   const std::string url = request->GetURL().ToString();
   if (url.rfind("fubuki://settings/set", 0) == 0) {
+    const std::string currentUrl = frame->GetURL().ToString();
+    if (currentUrl.rfind("fubuki://settings/", 0) != 0) {
+      return true;
+    }
     window_->HandleSettingsUrl(tabId_, url);
     return true;
   }
