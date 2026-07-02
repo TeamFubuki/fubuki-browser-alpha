@@ -542,7 +542,7 @@ bool BrowserWindow::MoveTabToNewWindow(const std::string& tabId) {
   item->SetBool("active", true);
   tabs->SetDictionary(0, item);
   windowState->SetList("tabs", tabs);
-  app_.NewWindow(privateWindow_, windowState);
+  app_.RequestNewWindow(privateWindow_, windowState);
   CloseTab(tabId);
   return true;
 }
@@ -692,10 +692,10 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return FocusOmnibox();
   }
   if (commandDown && character == 'N') {
-    return GetBrowserAppController() ? GetBrowserAppController()->NewPrivateWindow() : false;
+    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewPrivateWindow() : false;
   }
   if (commandDown && character == 'n') {
-    return GetBrowserAppController() ? GetBrowserAppController()->NewWindow(false, nullptr) != nullptr : false;
+    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewWindow(false, nullptr) : false;
   }
   if (commandDown && character == ',') {
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
@@ -1372,12 +1372,12 @@ void BrowserWindow::RegisterCommands() {
   });
   commands_.Register("windows.create", "New Window", "Windows", "Cmd+N", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
-    value->SetBool(app_.NewWindow(false, nullptr) != nullptr);
+    value->SetBool(app_.RequestNewWindow(false, nullptr));
     return value;
   });
   commands_.Register("windows.createPrivate", "New Private Window", "Windows", "Cmd+Shift+N", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
-    value->SetBool(app_.NewPrivateWindow());
+    value->SetBool(app_.RequestNewPrivateWindow());
     return value;
   });
   commands_.Register("windows.close", "Close Window", "Windows", "Cmd+Shift+W", [this](CefRefPtr<CefDictionaryValue>) {

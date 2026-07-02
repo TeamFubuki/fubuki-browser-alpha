@@ -3,7 +3,9 @@
 #include <algorithm>
 
 #include "browser/BrowserWindow.h"
+#include "include/base/cef_callback.h"
 #include "include/cef_parser.h"
+#include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 
 namespace fubuki {
@@ -68,6 +70,23 @@ BrowserWindow* BrowserAppController::NewWindow(bool privateWindow, CefRefPtr<Cef
 
 bool BrowserAppController::NewPrivateWindow() {
   return NewWindow(true, nullptr) != nullptr;
+}
+
+bool BrowserAppController::RequestNewWindow(bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](BrowserAppController* app, bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
+                            if (app) {
+                              app->NewWindow(privateWindow, restoreState);
+                            }
+                          },
+                          this,
+                          privateWindow,
+                          restoreState));
+  return true;
+}
+
+bool BrowserAppController::RequestNewPrivateWindow() {
+  return RequestNewWindow(true, nullptr);
 }
 
 bool BrowserAppController::CloseActiveWindow() {
@@ -183,10 +202,10 @@ bool DispatchBrowserMenuCommand(const std::string& commandId) {
     return false;
   }
   if (commandId == "windows.create") {
-    return app->NewWindow(false, nullptr) != nullptr;
+    return app->RequestNewWindow(false, nullptr);
   }
   if (commandId == "windows.createPrivate") {
-    return app->NewPrivateWindow();
+    return app->RequestNewPrivateWindow();
   }
   if (commandId == "windows.close") {
     return app->CloseActiveWindow();
