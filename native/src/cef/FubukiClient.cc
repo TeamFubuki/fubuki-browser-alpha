@@ -10,6 +10,10 @@ namespace fubuki {
 
 namespace {
 
+bool IsFubukiSettingsPage(const std::string& url) {
+  return url == "fubuki://settings" || url.rfind("fubuki://settings/", 0) == 0;
+}
+
 std::string HtmlEscape(const std::string& value) {
   std::ostringstream out;
   for (const char c : value) {
@@ -203,6 +207,9 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>,
   }
   const std::string url = request->GetURL().ToString();
   if (url.rfind("fubuki://settings/set", 0) == 0) {
+    if (!IsFubukiSettingsPage(frame->GetURL().ToString())) {
+      return false;
+    }
     window_->HandleSettingsUrl(tabId_, url);
     return true;
   }
