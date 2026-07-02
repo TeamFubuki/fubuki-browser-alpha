@@ -36,6 +36,7 @@ BrowserDataStore::BrowserDataStore(std::filesystem::path profilePath)
       history_(CefListValue::Create()),
       bookmarks_(CefListValue::Create()),
       downloads_(CefListValue::Create()),
+      permissions_(CefListValue::Create()),
       settings_(CefDictionaryValue::Create()),
       logs_(CefListValue::Create()) {}
 
@@ -55,6 +56,7 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("searchEngine", "google");
   EnsureDefaultSetting("customSearchUrl", "https://www.google.com/search?q={query}");
   EnsureDefaultSetting("startupBehavior", "newTab");
+  EnsureDefaultSetting("sessionJson", "");
   const char* home = std::getenv("HOME");
   EnsureDefaultSetting("downloadDirectory", home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp");
   EnsureDefaultSetting("theme", "light");
@@ -68,6 +70,9 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("newTabPage", "blank");
   EnsureDefaultSetting("homeUrl", "https://example.com");
   EnsureDefaultSetting("askBeforeDownload", "off");
+  EnsureDefaultSetting("defaultZoomLevel", "0");
+  EnsureDefaultSetting("closeWindowWithLastTab", "off");
+  EnsureDefaultSetting("privateSearchEngine", "default");
   EnsureDefaultSetting("language", "en");
   EnsureDefaultSetting("newTabBackgroundMode", "unsplash");
   EnsureDefaultSetting("newTabBackgroundColor", "#f8fafd");
@@ -141,6 +146,18 @@ bool BrowserDataStore::RemoveDownload(const std::string& url, const std::string&
   return ok;
 }
 
+bool BrowserDataStore::HasDownloadPath(const std::string& path) const {
+  if (path.empty()) {
+    return false;
+  }
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "SELECT 1 FROM downloads WHERE path=? LIMIT 1", -1, &statement, nullptr);
+  BindText(statement, 1, path);
+  const bool ok = sqlite3_step(statement) == SQLITE_ROW;
+  sqlite3_finalize(statement);
+  return ok;
+}
+
 bool BrowserDataStore::ClearBookmarks() {
   Execute("DELETE FROM bookmarks");
   RefreshList("bookmarks", bookmarks_, 500);
@@ -153,6 +170,42 @@ bool BrowserDataStore::ClearHistory() {
   return true;
 }
 
+bool BrowserDataStore::ClearHistoryRange(const std::string& range) {
+  if (range == "all") {
+    return ClearHistory();
+  }
+
+  auto cutoff = std::chrono::system_clock::now();
+  if (range == "lastHour") {
+    cutoff -= std::chrono::hours(1);
+  } else if (range == "today") {
+    const auto nowTime = std::chrono::system_clock::to_time_t(cutoff);
+    std::tm tm{};
+    localtime_r(&nowTime, &tm);
+    tm.tm_hour = 0;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    cutoff = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+  } else {
+    return false;
+  }
+
+  const auto cutoffTime = std::chrono::system_clock::to_time_t(cutoff);
+  std::tm tm{};
+  localtime_r(&cutoffTime, &tm);
+  std::ostringstream out;
+  out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S%z");
+  const std::string cutoffText = out.str();
+
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE created_at >= ?", -1, &statement, nullptr);
+  BindText(statement, 1, cutoffText);
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE;
+  sqlite3_finalize(statement);
+  RefreshList("history", history_, kMaxHistoryItems);
+  return ok;
+}
+
 bool BrowserDataStore::ClearDownloads() {
   Execute("DELETE FROM downloads");
   RefreshList("downloads", downloads_, kMaxDownloadItems);
@@ -163,6 +216,43 @@ bool BrowserDataStore::ClearLogs() {
   Execute("DELETE FROM logs");
   RefreshList("logs", logs_, kMaxLogItems);
   return true;
+}
+
+bool BrowserDataStore::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
+  if (origin.empty() || permission.empty() ||
+      (permission != "notifications" && permission != "camera" && permission != "microphone" &&
+       permission != "location" && permission != "popups")) {
+    return false;
+  }
+  if (value != "ask" && value != "allow" && value != "deny") {
+    return false;
+  }
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_,
+                    "INSERT INTO site_permissions(origin,permission,value,updated_at) VALUES(?,?,?,?) "
+                    "ON CONFLICT(origin,permission) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                    -1,
+                    &statement,
+                    nullptr);
+  BindText(statement, 1, origin);
+  BindText(statement, 2, permission);
+  BindText(statement, 3, value);
+  BindText(statement, 4, NowIsoString());
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE;
+  sqlite3_finalize(statement);
+  RefreshList("site_permissions", permissions_, 500);
+  return ok;
+}
+
+bool BrowserDataStore::RemovePermission(const std::string& origin, const std::string& permission) {
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM site_permissions WHERE origin=? AND permission=?", -1, &statement, nullptr);
+  BindText(statement, 1, origin);
+  BindText(statement, 2, permission);
+  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  sqlite3_finalize(statement);
+  RefreshList("site_permissions", permissions_, 500);
+  return ok;
 }
 
 void BrowserDataStore::AddDownload(const std::string& url, const std::string& path, const std::string& state) {
@@ -237,6 +327,13 @@ void BrowserDataStore::SetSetting(const std::string& key, const std::string& val
   RefreshSettings();
 }
 
+void BrowserDataStore::ResetSetting(const std::string& key) {
+  const std::string value = DefaultSetting(key);
+  if (!value.empty() || key == "sessionJson") {
+    SetSetting(key, value);
+  }
+}
+
 CefRefPtr<CefDictionaryValue> BrowserDataStore::NewRecord() const {
   auto item = CefDictionaryValue::Create();
   item->SetString("createdAt", NowIsoString());
@@ -287,6 +384,7 @@ void BrowserDataStore::EnsureSchema() {
   Execute("UPDATE downloads SET updated_at=created_at WHERE updated_at IS NULL OR updated_at=''");
   Execute("DELETE FROM downloads WHERE id NOT IN (SELECT MAX(id) FROM downloads GROUP BY COALESCE(url,''), COALESCE(path,''))");
   Execute("CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT, created_at TEXT NOT NULL)");
+  Execute("CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT NULL, permission TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(origin, permission))");
 }
 
 void BrowserDataStore::EnsureDefaultSetting(const std::string& key, const std::string& value) {
@@ -296,6 +394,37 @@ void BrowserDataStore::EnsureDefaultSetting(const std::string& key, const std::s
   BindText(statement, 2, value);
   sqlite3_step(statement);
   sqlite3_finalize(statement);
+}
+
+std::string BrowserDataStore::DefaultSetting(const std::string& key) const {
+  if (key == "homepage") return "https://example.com";
+  if (key == "searchEngine") return "google";
+  if (key == "customSearchUrl") return "https://www.google.com/search?q={query}";
+  if (key == "startupBehavior") return "newTab";
+  if (key == "sessionJson") return "";
+  if (key == "downloadDirectory") {
+    const char* home = std::getenv("HOME");
+    return home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
+  }
+  if (key == "theme") return "light";
+  if (key == "appearance") return "system";
+  if (key == "toolbarDensity") return "compact";
+  if (key == "sidebarVisible") return "show";
+  if (key == "sidebarWidth") return "196";
+  if (key == "defaultBookmarkDisplay") return "sidebar";
+  if (key == "openBookmarkIn") return "current";
+  if (key == "showBookmarkFavicons") return "on";
+  if (key == "newTabPage") return "blank";
+  if (key == "homeUrl") return "https://example.com";
+  if (key == "askBeforeDownload") return "off";
+  if (key == "defaultZoomLevel") return "0";
+  if (key == "closeWindowWithLastTab") return "off";
+  if (key == "privateSearchEngine") return "default";
+  if (key == "language") return "en";
+  if (key == "newTabBackgroundMode") return "unsplash";
+  if (key == "newTabBackgroundColor") return "#f8fafd";
+  if (key == "newTabBackgroundUrl") return "";
+  return "";
 }
 
 int BrowserDataStore::CountRows(const std::string& table) const {
@@ -413,6 +542,7 @@ void BrowserDataStore::RefreshCaches() {
   RefreshList("history", history_, kMaxHistoryItems);
   RefreshList("bookmarks", bookmarks_, 500);
   RefreshList("downloads", downloads_, kMaxDownloadItems);
+  RefreshList("site_permissions", permissions_, 500);
   RefreshList("logs", logs_, kMaxLogItems);
 }
 
@@ -434,6 +564,8 @@ void BrowserDataStore::RefreshList(const std::string& table, CefRefPtr<CefListVa
                               ? "SELECT title,url,NULL,created_at,NULL,NULL,NULL FROM history ORDER BY id DESC LIMIT ?"
                           : table == "downloads"
                               ? "SELECT NULL,url,NULL,COALESCE(updated_at,created_at),path,state,percent FROM downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC LIMIT ?"
+                          : table == "site_permissions"
+                              ? "SELECT origin,permission,NULL,updated_at,NULL,value,NULL FROM site_permissions ORDER BY updated_at DESC LIMIT ?"
                               : "SELECT NULL,NULL,NULL,created_at,NULL,level,message FROM logs ORDER BY id DESC LIMIT ?";
   sqlite3_stmt* statement = nullptr;
   sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement, nullptr);
@@ -447,6 +579,8 @@ void BrowserDataStore::RefreshList(const std::string& table, CefRefPtr<CefListVa
     item->SetString("createdAt", ColumnText(statement, 3));
     item->SetString("path", ColumnText(statement, 4));
     item->SetString("state", ColumnText(statement, 5));
+    item->SetString("permission", ColumnText(statement, 1));
+    item->SetString("value", ColumnText(statement, 5));
     item->SetInt("percent", sqlite3_column_type(statement, 6) == SQLITE_NULL ? 0 : sqlite3_column_int(statement, 6));
     item->SetString("level", ColumnText(statement, 5));
     item->SetString("message", ColumnText(statement, 6));

@@ -21,6 +21,10 @@ void EventBus::Publish(const Event& event) {
   std::vector<Listener> listeners;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    recentEvents_.push_back(event);
+    if (recentEvents_.size() > 200) {
+      recentEvents_.erase(recentEvents_.begin(), recentEvents_.begin() + static_cast<std::ptrdiff_t>(recentEvents_.size() - 200));
+    }
     auto it = listeners_.find(event.type);
     if (it != listeners_.end()) {
       for (const auto& [_, listener] : it->second) {
@@ -32,6 +36,11 @@ void EventBus::Publish(const Event& event) {
   for (const auto& listener : listeners) {
     listener(event);
   }
+}
+
+std::vector<Event> EventBus::RecentEvents() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return recentEvents_;
 }
 
 }  // namespace fubuki

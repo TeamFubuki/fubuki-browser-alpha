@@ -20,6 +20,9 @@ export default function SidebarActions() {
       <button title="Bookmarks" aria-label="Bookmarks" onClick={() => openInternal("fubuki://bookmarks/")}>
         <span aria-hidden="true">★</span>
       </button>
+      <button title="History" aria-label="History" onClick={() => openInternal("fubuki://history/")}>
+        <span aria-hidden="true">◷</span>
+      </button>
       <button title="Downloads" aria-label="Downloads" onClick={() => openInternal("fubuki://downloads/")}>
         <span aria-hidden="true">↓</span>
       </button>

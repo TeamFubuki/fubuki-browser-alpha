@@ -1,4 +1,5 @@
-import { fubuki } from "../bridge/fubuki";
+import { createSignal, onCleanup, onMount } from "solid-js";
+import { fubuki, page } from "../bridge/fubuki";
 import { browserState, refreshState } from "../stores/browserStore";
 import Omnibox from "./Omnibox";
 
@@ -27,8 +28,22 @@ async function toggleBookmark() {
 }
 
 export default function TopBar() {
+  const [findOpen, setFindOpen] = createSignal(false);
+  const [findText, setFindText] = createSignal("");
+
+  onMount(() => {
+    const showFind = () => setFindOpen(true);
+    window.addEventListener("fubuki:show-find", showFind);
+    onCleanup(() => window.removeEventListener("fubuki:show-find", showFind));
+  });
+
+  const submitFind = (forward = true) => {
+    const query = findText().trim();
+    if (query) void page.find(query, forward);
+  };
+
   return (
-    <header class="top-bar" aria-label="Navigation">
+    <header classList={{ "top-bar": true, private: browserState.isPrivate }} aria-label="Navigation">
       <button class="topbar-button" title="Back" aria-label="Back" disabled={!activeTab()?.canGoBack} onClick={() => void fubuki.invoke("tabs.goBack", { tabId: browserState.activeTabId })}>
         <span aria-hidden="true">←</span>
       </button>
@@ -54,6 +69,29 @@ export default function TopBar() {
       >
         <span aria-hidden="true">{isBookmarked() ? "★" : "☆"}</span>
       </button>
+      {findOpen() && (
+        <form
+          class="find-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitFind(true);
+          }}
+        >
+          <input value={findText()} placeholder="Find" aria-label="Find in page" onInput={(event) => setFindText(event.currentTarget.value)} autofocus />
+          <button type="button" title="Previous match" onClick={() => submitFind(false)}>↑</button>
+          <button type="button" title="Next match" onClick={() => submitFind(true)}>↓</button>
+          <button
+            type="button"
+            title="Close find"
+            onClick={() => {
+              setFindOpen(false);
+              void page.stopFinding();
+            }}
+          >
+            ×
+          </button>
+        </form>
+      )}
     </header>
   );
 }

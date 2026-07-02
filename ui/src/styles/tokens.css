@@ -9,6 +9,7 @@
   --sidebar-bg: #eceff3;
   --topbar-bg: #f8f9fb;
   --content-bg: #ffffff;
+  --surface: #ffffff;
   --text: #17191d;
   --muted: #656d78;
   --line: rgb(24 32 44 / 0.14);
@@ -27,6 +28,7 @@
   --sidebar-bg: #202329;
   --topbar-bg: #1b1e23;
   --content-bg: #111318;
+  --surface: #202329;
   --text: #f4f6f8;
   --muted: #a3abb6;
   --line: rgb(255 255 255 / 0.13);

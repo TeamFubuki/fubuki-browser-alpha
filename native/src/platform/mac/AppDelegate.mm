@@ -46,6 +46,7 @@ bool DispatchBrowserMenuCommand(const std::string& commandId);
 @end
 
 void FubukiInstallBasicMenu();
+NSMenu* FubukiCreateDockMenu();
 
 namespace fubuki {
 
@@ -62,6 +63,10 @@ void InitializeMacApplication() {
 
 @implementation FubukiAppDelegate
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
-  return YES;
+  return NO;
+}
+
+- (NSMenu*)applicationDockMenu:(NSApplication*)sender {
+  return FubukiCreateDockMenu();
 }
 @end

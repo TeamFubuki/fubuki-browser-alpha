@@ -1,5 +1,8 @@
 #include "cef/FubukiCefApp.h"
 
+#include <cstdlib>
+#include <filesystem>
+
 #include "cef/FubukiSchemeHandler.h"
 #include "include/cef_scheme.h"
 #include "include/wrapper/cef_helpers.h"
@@ -58,10 +61,14 @@ void FubukiCefApp::OnContextInitialized() {
   CefRegisterSchemeHandlerFactory("fubuki", "bookmarks", new FubukiSchemeHandlerFactory(uiDistPath_));
   CefRegisterSchemeHandlerFactory("fubuki", "downloads", new FubukiSchemeHandlerFactory(uiDistPath_));
   CefRegisterSchemeHandlerFactory("fubuki", "history", new FubukiSchemeHandlerFactory(uiDistPath_));
+  CefRegisterSchemeHandlerFactory("fubuki", "debug", new FubukiSchemeHandlerFactory(uiDistPath_));
 
-  tabManager_ = std::make_unique<TabManager>(eventBus_);
-  browserWindow_ = std::make_unique<BrowserWindow>(eventBus_, *tabManager_);
-  browserWindow_->Show();
+  const char* home = std::getenv("HOME");
+  const auto profilePath = home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
+                                : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
+  browserApp_ = std::make_unique<BrowserAppController>(profilePath);
+  SetBrowserAppController(browserApp_.get());
+  browserApp_->Start();
 }
 
 void FubukiCefApp::OnWebKitInitialized() {

@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { fubuki } from "./bridge/fubuki";
+import { commands, fubuki, page, tabs } from "./bridge/fubuki";
 import BrowserShell from "./components/BrowserShell";
+import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from "./sidebarSizing";
 import { bindNativeEvents, browserState, refreshState } from "./stores/browserStore";
 
 function activeTab() {
@@ -23,8 +24,10 @@ export default function App() {
     const appearance = browserState.settings.appearance || browserState.settings.theme || "system";
     document.documentElement.dataset.theme = appearance === "dark" || (appearance === "system" && systemDark()) ? "dark" : "light";
     document.documentElement.dataset.sidebar = browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
-    const width = Math.min(220, Math.max(180, Number(browserState.settings.sidebarWidth) || 196));
-    document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    if (document.documentElement.dataset.sidebarResizing !== "true") {
+      const width = clampSidebarWidth(Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH);
+      document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    }
   });
 
   onMount(() => {
@@ -67,8 +70,43 @@ export default function App() {
         event.preventDefault();
         return;
       }
+      if (key === "n" && event.shiftKey) {
+        void commands.execute("windows.createPrivate");
+        event.preventDefault();
+        return;
+      }
+      if (key === "n") {
+        void commands.execute("windows.create");
+        event.preventDefault();
+        return;
+      }
+      if (key === "t" && event.shiftKey) {
+        void tabs.reopenClosed();
+        event.preventDefault();
+        return;
+      }
       if (key === "t") {
-        void fubuki.invoke("tabs.create", { active: true });
+        void tabs.create();
+        event.preventDefault();
+        return;
+      }
+      if (key === "f") {
+        window.dispatchEvent(new CustomEvent("fubuki:show-find"));
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "+" || event.key === "=") {
+        void page.zoomIn();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "-") {
+        void page.zoomOut();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "0") {
+        void page.zoomReset();
         event.preventDefault();
         return;
       }
@@ -88,7 +126,10 @@ export default function App() {
         return;
       }
       if (!tab) return;
-      if (key === "w") {
+      if (key === "w" && event.shiftKey) {
+        void commands.execute("windows.close");
+        event.preventDefault();
+      } else if (key === "w") {
         void fubuki.invoke("tabs.close", { tabId: tab.id });
         event.preventDefault();
       } else if (key === "r") {

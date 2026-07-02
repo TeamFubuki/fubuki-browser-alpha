@@ -43,7 +43,10 @@ bool StartsWith(const std::string& value, const std::string& prefix) {
 
 bool IsTrustedSettingsActionSource(const std::string& url) {
   return url == "fubuki://settings" || StartsWith(url, "fubuki://settings/") ||
-         url == "fubuki://bookmarks" || StartsWith(url, "fubuki://bookmarks/");
+         url == "fubuki://bookmarks" || StartsWith(url, "fubuki://bookmarks/") ||
+         url == "fubuki://history" || StartsWith(url, "fubuki://history/") ||
+         url == "fubuki://downloads" || StartsWith(url, "fubuki://downloads/") ||
+         url == "fubuki://debug" || StartsWith(url, "fubuki://debug/");
 }
 
 }  // namespace
@@ -242,7 +245,7 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>,
     return false;
   }
 
-  if (window_) {
+  if (window_ && !window_->IsPrivate()) {
     window_->Store().Log("info",
                          "Permission denied for " + requesting_origin.ToString() + " (" +
                              std::to_string(requested_permissions) + ")");

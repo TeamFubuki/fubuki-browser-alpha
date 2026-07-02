@@ -79,33 +79,46 @@ open "build/Fubuki Browser Alpha.app"
 
 If your generator uses configuration subdirectories, the app may be at `build/Release/Fubuki Browser Alpha.app`.
 
-## MVP Features
+## Implemented Essentials
 
-- Native macOS CEF app window
+- Native macOS CEF app windows with independent tab managers per window
 - Separate CEF browser for `fubuki://app/` UI and separate CEF browsers for web tab contents
-- Initial `https://example.com` tab
-- Tab create, activate, close, and last-tab replacement
-- Back, forward, reload, stop, and omnibox navigation
+- New window, private window, close window, and move tab to a new window
+- Startup behavior setting: new tab, restore previous session, or home page
+- Session restore for normal windows, tabs, active tabs, pinned state, window frame, and sidebar state
+- Private windows use an off-the-record CEF request context and skip normal history, downloads history, logs, and session writes
+- Tab create, activate, close, pin/unpin, duplicate, reopen closed, close other tabs, close tabs to the right, drag reorder, tab search, and last-tab replacement
+- Back, forward, reload, stop, home, and omnibox navigation
 - URL normalization for full URLs, host names such as `github.com`, and search queries
-- Page title and favicon updates
+- Page title, favicon, loading, error, zoom, and basic security state updates
+- Page find, zoom in/out/reset, print, view source, and DevTools actions
 - Persistent CEF profile for cookies, LocalStorage, and IndexedDB
-- Download handling with saved download records
-- Local history, bookmarks, settings, and debug log JSON files
-- Built-in history, bookmarks, downloads, settings, and logs UI
+- Download handling with progress records, open, reveal in Finder, remove, and clear list actions
+- SQLite-backed local history, bookmarks, downloads, settings, permissions, and debug logs
+- Built-in history, bookmarks, downloads, settings, new tab, and debug internal pages
+- History search, grouping by date, individual deletion, and clear last hour/today/all time
+- Settings sections for General, Appearance, Tabs, Windows, Search, Privacy, Downloads, Shortcuts, Developer, and Experimental
 - Error page for failed navigations
 - Versioned JSON bridge exposed only to `fubuki://app/`
-- Command Registry with tab commands and `app.openDevTools`
-- Event Bus for tab and navigation events
-- `fubuki://newtab/` internal new-tab page
+- Command registry for browser actions plus `commands.list` for UI/future plugin API discovery
+- Event bus for window, tab, navigation, bookmark, history, download, setting, and permission changes
+- `fubuki://debug/` with bridge version, profile path, windows/tabs, commands, recent events, and logs
 
 ## Keyboard Shortcuts
 
 - `Cmd+L`: focus the URL/search bar
-- `Cmd+R`: reload
-- `Cmd+[` / `Cmd+]`: back / forward
+- `Cmd+N`: new window
+- `Cmd+Shift+N`: new private window
 - `Cmd+T`: new tab
 - `Cmd+W`: close tab
+- `Cmd+Shift+W`: close window
+- `Cmd+Shift+T`: reopen closed tab
+- `Cmd+R`: reload
+- `Cmd+F`: find in page
+- `Cmd+[` / `Cmd+]`: back / forward
 - `Cmd+D`: bookmark active tab
+- `Cmd+,`: settings
+- `Cmd+Plus` / `Cmd+Minus` / `Cmd+0`: zoom in / zoom out / reset zoom
 
 ## Profile Data
 
@@ -115,13 +128,13 @@ Runtime profile data is stored under:
 ~/Library/Application Support/Fubuki Browser Alpha/
 ```
 
-This includes the CEF profile for cookies, LocalStorage, IndexedDB, cache data, plus JSON files for history, bookmarks, downloads, settings, and debug logs.
+This includes the CEF profile for cookies, LocalStorage, IndexedDB, cache data, plus `fubuki.sqlite3` for history, bookmarks, downloads, settings, permissions, session snapshots, and debug logs.
 
 ## Known Limitations
 
 - CEF binaries, codesigning, notarization, and update packaging are not included.
-- Browser layout uses native child views and a fixed-height web UI toolbar for the MVP.
-- Session restore is not implemented.
-- Password manager and session restore are not implemented.
+- Browser layout uses native child views and a compact web UI toolbar/sidebar.
+- Password manager and sync are not implemented.
 - Chrome extension compatibility is not implemented.
-- The bridge API is intentionally small and rejects unknown methods.
+- Cache/site-data clearing depends on CEF request-context support and is intentionally conservative.
+- Bookmark folders and browser-compatible import/export are not complete yet.
