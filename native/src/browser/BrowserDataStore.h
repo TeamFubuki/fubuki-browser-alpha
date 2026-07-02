@@ -20,6 +20,7 @@ class BrowserDataStore {
   bool RemoveBookmark(const std::string& url);
   bool RemoveHistory(const std::string& url);
   bool RemoveDownload(const std::string& url, const std::string& path);
+  bool HasDownloadPath(const std::string& path) const;
   bool ClearBookmarks();
   bool ClearHistory();
   bool ClearHistoryRange(const std::string& range);

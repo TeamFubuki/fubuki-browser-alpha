@@ -23,7 +23,7 @@ export default function App() {
     const appearance = browserState.settings.appearance || browserState.settings.theme || "system";
     document.documentElement.dataset.theme = appearance === "dark" || (appearance === "system" && systemDark()) ? "dark" : "light";
     document.documentElement.dataset.sidebar = browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
-    const width = Math.min(220, Math.max(180, Number(browserState.settings.sidebarWidth) || 196));
+    const width = Math.min(280, Math.max(168, Number(browserState.settings.sidebarWidth) || 196));
     document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
   });
 

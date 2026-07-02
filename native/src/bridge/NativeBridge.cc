@@ -188,6 +188,9 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (method == "settings.reset") {
     return BoolValue(window_.ResetSetting(params->GetString("key")));
   }
+  if (method == "ui.setSidebarWidth") {
+    return BoolValue(window_.SetLiveSidebarWidth(params->GetDouble("width")));
+  }
   if (method == "permissions.set") {
     return BoolValue(window_.SetPermission(params->GetString("origin"), params->GetString("permission"), params->GetString("value")));
   }

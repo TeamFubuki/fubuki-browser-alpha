@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
-import { commands, fubuki, page } from "../bridge/fubuki";
+import { fubuki, page } from "../bridge/fubuki";
 import { browserState, refreshState } from "../stores/browserStore";
 import Omnibox from "./Omnibox";
 
@@ -37,15 +37,6 @@ export default function TopBar() {
     onCleanup(() => window.removeEventListener("fubuki:show-find", showFind));
   });
 
-  const security = () => {
-    const url = activeTab()?.url ?? "";
-    if (activeTab()?.errorText) return { label: "Error", icon: "!" };
-    if (url.startsWith("fubuki://")) return { label: "Internal page", icon: "F" };
-    if (url.startsWith("https://")) return { label: "Secure HTTPS", icon: "✓" };
-    if (url.startsWith("http://")) return { label: "Not secure HTTP", icon: "i" };
-    return { label: "Page", icon: "·" };
-  };
-
   const submitFind = (forward = true) => {
     const query = findText().trim();
     if (query) void page.find(query, forward);
@@ -68,12 +59,6 @@ export default function TopBar() {
       >
         <span aria-hidden="true">{activeTab()?.isLoading ? "×" : "↻"}</span>
       </button>
-      <button class="topbar-button" title="Home" aria-label="Home" onClick={() => void commands.execute("tabs.home")}>
-        <span aria-hidden="true">⌂</span>
-      </button>
-      <button class="topbar-button security" title={security().label} aria-label={security().label}>
-        <span aria-hidden="true">{security().icon}</span>
-      </button>
       <Omnibox />
       <button
         classList={{ "topbar-button": true, bookmarked: isBookmarked() }}
@@ -83,15 +68,6 @@ export default function TopBar() {
         onClick={() => void toggleBookmark()}
       >
         <span aria-hidden="true">{isBookmarked() ? "★" : "☆"}</span>
-      </button>
-      <button class="topbar-button" title="Zoom out" aria-label="Zoom out" onClick={() => void page.zoomOut()}>
-        <span aria-hidden="true">−</span>
-      </button>
-      <button class="topbar-button" title="Zoom in" aria-label="Zoom in" onClick={() => void page.zoomIn()}>
-        <span aria-hidden="true">+</span>
-      </button>
-      <button class="topbar-button" title="DevTools" aria-label="DevTools" onClick={() => void commands.execute("app.openDevTools")}>
-        <span aria-hidden="true">⌁</span>
       </button>
       {findOpen() && (
         <form

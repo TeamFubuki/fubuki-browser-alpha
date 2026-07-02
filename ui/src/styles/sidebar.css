@@ -1,16 +1,22 @@
 .sidebar {
   -webkit-app-region: drag;
+  position: relative;
   grid-area: sidebar;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 34px 32px 28px minmax(0, 1fr) 24px auto;
+  grid-template-rows: 34px 32px minmax(0, 1fr) auto;
   gap: 8px;
   padding: 8px;
   padding-top: 10px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--line);
   pointer-events: auto;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.sidebar.resizing {
+  user-select: none;
 }
 
 :root[data-sidebar="hide"] .sidebar {
@@ -23,7 +29,6 @@
 
 .new-tab-button,
 .sidebar-actions button {
-  width: var(--button-size);
   height: var(--button-size);
   display: grid;
   place-items: center;
@@ -31,15 +36,18 @@
   background: transparent;
   color: var(--text);
   font-size: 16px;
+  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease, opacity 0.14s ease;
 }
 
 .new-tab-button:hover,
 .sidebar-actions button:hover {
   background: var(--hover);
+  transform: translateY(-1px);
 }
 
 .new-tab-button {
-  justify-self: start;
+  width: 100%;
+  justify-self: stretch;
 }
 
 .sidebar-actions {
@@ -50,4 +58,34 @@
   gap: 6px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+  align-self: end;
+}
+
+.sidebar-actions button {
+  width: var(--button-size);
+}
+
+.sidebar-resize-handle {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 2px;
+  bottom: 8px;
+  width: 1px;
+  background: transparent;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar.resizing .sidebar-resize-handle::after {
+  background: color-mix(in srgb, var(--accent) 55%, var(--line));
 }

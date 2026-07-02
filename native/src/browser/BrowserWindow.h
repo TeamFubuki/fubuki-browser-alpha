@@ -72,6 +72,7 @@ class BrowserWindow {
   bool SetSetting(const std::string& key, const std::string& value);
   bool ResetSetting(const std::string& key);
   bool SetPermission(const std::string& origin, const std::string& permission, const std::string& value);
+  bool SetLiveSidebarWidth(double width);
   bool SetUiOverlayActive(bool active, double overlayWidth = 392.0, double overlayHeight = 560.0);
   bool HandleSettingsUrl(const std::string& tabId, const std::string& url);
   bool HandleNewTabSearchUrl(const std::string& tabId, const std::string& url);
@@ -138,6 +139,7 @@ class BrowserWindow {
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
   std::vector<ClosedTab> closedTabs_;
+  double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
   std::string windowId_;
   NSWindow* window_ = nullptr;

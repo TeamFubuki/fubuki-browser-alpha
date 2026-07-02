@@ -179,7 +179,7 @@ void SetBrowserAppController(BrowserAppController* controller) {
 bool DispatchBrowserMenuCommand(const std::string& commandId) {
   BrowserAppController* app = GetBrowserAppController();
   BrowserWindow* window = app ? app->ActiveWindow() : nullptr;
-  if (!app || !window) {
+  if (!app) {
     return false;
   }
   if (commandId == "windows.create") {
@@ -193,6 +193,14 @@ bool DispatchBrowserMenuCommand(const std::string& commandId) {
   }
   if (commandId == "windows.reopenClosed") {
     return app->ReopenClosedWindow();
+  }
+  if (!window && (commandId == "tabs.create" || commandId == "app.openDownloads" ||
+                  commandId == "app.openHistory" || commandId == "app.openBookmarks" ||
+                  commandId == "app.openSettings")) {
+    window = app->NewWindow(false, nullptr);
+  }
+  if (!window) {
+    return false;
   }
   auto result = window->ExecuteCommand(commandId, CefDictionaryValue::Create());
   if (!result || result->GetType() == VTYPE_NULL) {

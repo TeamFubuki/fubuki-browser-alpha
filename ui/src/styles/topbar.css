@@ -5,12 +5,13 @@
   min-width: 0;
   height: var(--topbar-height);
   display: grid;
-  grid-template-columns: repeat(5, var(--button-size)) minmax(160px, 1fr) repeat(4, var(--button-size));
+  grid-template-columns: repeat(3, var(--button-size)) minmax(160px, 1fr) var(--button-size);
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
   background: var(--topbar-bg);
   pointer-events: auto;
+  transition: background-color 0.16s ease;
 }
 
 .top-bar.private {
@@ -26,10 +27,12 @@
   background: transparent;
   color: var(--text);
   font-size: 14px;
+  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease, opacity 0.14s ease;
 }
 
 .topbar-button:hover {
   background: var(--hover);
+  transform: translateY(-1px);
 }
 
 .topbar-button:disabled {
@@ -39,11 +42,6 @@
 
 .topbar-button.bookmarked {
   color: var(--accent);
-}
-
-.topbar-button.security {
-  font-size: 11px;
-  font-weight: 700;
 }
 
 .omnibox {
@@ -62,6 +60,7 @@
   color: var(--text);
   font-size: 13px;
   outline: none;
+  transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
 }
 
 .omnibox-input:focus {
@@ -85,6 +84,7 @@
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.14);
+  transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
 .find-bar input {
@@ -104,8 +104,25 @@
   border-radius: 5px;
   background: transparent;
   color: var(--text);
+  transition: background-color 0.14s ease, transform 0.14s ease;
 }
 
 .find-bar button:hover {
   background: var(--hover);
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .top-bar,
+  .topbar-button,
+  .omnibox-input,
+  .find-bar,
+  .find-bar button {
+    transition: none;
+  }
+
+  .topbar-button:hover,
+  .find-bar button:hover {
+    transform: none;
+  }
 }

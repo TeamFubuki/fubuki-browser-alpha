@@ -114,3 +114,17 @@ void FubukiInstallBasicMenu() {
 
   [NSApp setMainMenu:mainMenu];
 }
+
+NSMenu* FubukiCreateDockMenu() {
+  NSMenu* dockMenu = [[NSMenu alloc] initWithTitle:@"Fubuki"];
+  AddCommandItem(dockMenu, @"New Window", @"windows.create", @"");
+  AddCommandItem(dockMenu, @"New Private Window", @"windows.createPrivate", @"");
+  AddCommandItem(dockMenu, @"New Tab", @"tabs.create", @"");
+  [dockMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(dockMenu, @"Downloads", @"app.openDownloads", @"");
+  AddCommandItem(dockMenu, @"History", @"app.openHistory", @"");
+  AddCommandItem(dockMenu, @"Bookmarks", @"app.openBookmarks", @"");
+  [dockMenu addItem:[NSMenuItem separatorItem]];
+  AddCommandItem(dockMenu, @"Settings", @"app.openSettings", @"");
+  return dockMenu;
+}

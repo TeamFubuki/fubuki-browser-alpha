@@ -146,6 +146,18 @@ bool BrowserDataStore::RemoveDownload(const std::string& url, const std::string&
   return ok;
 }
 
+bool BrowserDataStore::HasDownloadPath(const std::string& path) const {
+  if (path.empty()) {
+    return false;
+  }
+  sqlite3_stmt* statement = nullptr;
+  sqlite3_prepare_v2(db_, "SELECT 1 FROM downloads WHERE path=? LIMIT 1", -1, &statement, nullptr);
+  BindText(statement, 1, path);
+  const bool ok = sqlite3_step(statement) == SQLITE_ROW;
+  sqlite3_finalize(statement);
+  return ok;
+}
+
 bool BrowserDataStore::ClearBookmarks() {
   Execute("DELETE FROM bookmarks");
   RefreshList("bookmarks", bookmarks_, 500);

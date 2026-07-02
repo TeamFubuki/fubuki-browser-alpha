@@ -270,6 +270,17 @@ void UpdateUiHostClip(NSView* view, bool overlayActive, CGFloat sidebarWidth, CG
   CGPathRelease(path);
 }
 
+bool IsSafeSettingsReturnPage(const std::string& returnPage) {
+  if (returnPage.empty()) {
+    return true;
+  }
+  if (returnPage.rfind("set", 0) == 0 || returnPage.rfind("/set", 0) == 0 ||
+      returnPage.rfind("fubuki://settings/set", 0) == 0) {
+    return false;
+  }
+  return returnPage.rfind("fubuki://", 0) == 0 || returnPage.find("://") == std::string::npos;
+}
+
 std::string QueryParam(const std::string& url, const std::string& key) {
   const size_t queryStart = url.find('?');
   if (queryStart == std::string::npos) {
@@ -324,7 +335,9 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager, 
       windowId_(std::move(windowId)),
       privateWindow_(privateWindow) {
   gActiveBrowserWindow = this;
-  dataStore_->Log("info", privateWindow_ ? "Private BrowserWindow initialized" : "BrowserWindow initialized");
+  if (!privateWindow_) {
+    dataStore_->Log("info", "BrowserWindow initialized");
+  }
   if (privateWindow_) {
     CefRequestContextSettings settings;
     privateRequestContext_ = CefRequestContext::CreateContext(settings, nullptr);
@@ -809,7 +822,7 @@ bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& pa
 }
 
 bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
-  if (path.empty()) {
+  if (path.empty() || !dataStore_->HasDownloadPath(path) || !std::filesystem::exists(path)) {
     return false;
   }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
@@ -817,7 +830,7 @@ bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
 }
 
 bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
-  if (path.empty()) {
+  if (path.empty() || !dataStore_->HasDownloadPath(path) || !std::filesystem::exists(path)) {
     return false;
   }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
@@ -837,14 +850,28 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     ok = dataStore_->ClearLogs();
   } else if (target == "cookies" || target == "cache" || target == "siteData") {
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
-    if (target == "cookies" && cookieManager) {
+    CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
+    if ((target == "cookies" || target == "siteData") && !cookieManager) {
+      return false;
+    }
+    if ((target == "cache" || target == "siteData") && !context) {
+      return false;
+    }
+    if (target == "cookies" || target == "siteData") {
       cookieManager->DeleteCookies("", "", nullptr);
     }
-    if (target == "cache") {
-      CefRequestContext::GetGlobalContext()->ClearHttpCache(nullptr);
+    if (target == "cache" || target == "siteData") {
+      context->ClearHttpCache(nullptr);
     }
     ok = true;
   } else if (target == "all") {
+    CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
+    CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
+    if (!cookieManager || !context) {
+      return false;
+    }
+    cookieManager->DeleteCookies("", "", nullptr);
+    context->ClearHttpCache(nullptr);
     ok = dataStore_->ClearBookmarks() && dataStore_->ClearHistory() && dataStore_->ClearDownloads() && dataStore_->ClearLogs();
   }
   if (ok) {
@@ -875,11 +902,24 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       key != "defaultZoomLevel" && key != "closeWindowWithLastTab" && key != "privateSearchEngine") {
     return false;
   }
-  dataStore_->SetSetting(key, value);
+  std::string savedValue = value;
+  if (key == "sidebarWidth") {
+    try {
+      savedValue = std::to_string(static_cast<int>(std::clamp(std::stod(value), 168.0, 280.0)));
+    } catch (...) {
+      savedValue = "196";
+    }
+  }
+  dataStore_->SetSetting(key, savedValue);
+  if (key == "sidebarWidth") {
+    liveSidebarWidth_ = 0.0;
+  }
   if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
     UpdateContentFrame();
   }
-  dataStore_->Log("info", "Setting updated: " + key);
+  if (!privateWindow_) {
+    dataStore_->Log("info", "Setting updated: " + key);
+  }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   if (!privateWindow_) {
     app_.PersistSession();
@@ -896,12 +936,13 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
 }
 
 bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
-  const bool ok = dataStore_->SetPermission(origin, permission, value);
-  if (ok) {
-    eventBus_.Publish({EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin + ":" + permission});
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  }
-  return ok;
+  return false;
+}
+
+bool BrowserWindow::SetLiveSidebarWidth(double width) {
+  liveSidebarWidth_ = std::clamp(width, 168.0, 280.0);
+  UpdateContentFrame();
+  return true;
 }
 
 bool BrowserWindow::SetUiOverlayActive(bool active, double overlayWidth, double overlayHeight) {
@@ -959,10 +1000,11 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = SetSetting(key, value);
   }
   if (ok && tabManager_.GetTab(tabId)) {
-    if (returnPage.rfind("fubuki://", 0) == 0) {
-      Navigate(tabId, returnPage);
+    const std::string safeReturnPage = IsSafeSettingsReturnPage(returnPage) ? returnPage : "";
+    if (safeReturnPage.rfind("fubuki://", 0) == 0) {
+      Navigate(tabId, safeReturnPage);
     } else {
-      Navigate(tabId, returnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + returnPage);
+      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + safeReturnPage);
     }
   }
   return ok;
@@ -1499,14 +1541,21 @@ void BrowserWindow::UpdateContentFrame() {
   const bool sidebarVisible = sidebarState != "hide";
   double sidebarWidth = sidebarState == "collapsed" ? 54.0 : sidebarVisible ? kSidebarWidth : 0.0;
   if (sidebarVisible && sidebarState != "collapsed") {
-    const std::string widthValue = settings->GetString("sidebarWidth");
-    if (!widthValue.empty()) {
-      try {
-        sidebarWidth = std::clamp(std::stod(widthValue), 180.0, 220.0);
-      } catch (...) {
-        sidebarWidth = kSidebarWidth;
+    if (liveSidebarWidth_ > 0.0) {
+      sidebarWidth = liveSidebarWidth_;
+    } else {
+      const std::string widthValue = settings->GetString("sidebarWidth");
+      if (!widthValue.empty()) {
+        try {
+          sidebarWidth = std::clamp(std::stod(widthValue), 168.0, 280.0);
+        } catch (...) {
+          sidebarWidth = kSidebarWidth;
+        }
       }
     }
+  }
+  if (!sidebarVisible || sidebarState == "collapsed") {
+    liveSidebarWidth_ = 0.0;
   }
   const CGFloat navHeight = kNavHeight;
   NSRect bounds = [uiHostView_ bounds];

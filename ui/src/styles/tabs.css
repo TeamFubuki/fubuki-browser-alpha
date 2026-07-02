@@ -1,5 +1,20 @@
+.tab-stack {
+  -webkit-app-region: no-drag;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  gap: 8px;
+}
+
+.tab-stack:has(.pinned-tab-list) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .vertical-tab-list {
   -webkit-app-region: no-drag;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -9,6 +24,10 @@
   overflow-x: hidden;
   padding-right: 2px;
   overscroll-behavior: contain;
+}
+
+.tab-stack:has(.pinned-tab-list) .vertical-tab-list {
+  grid-row: 3;
 }
 
 .tab-search {
@@ -22,6 +41,60 @@
   background: var(--content-bg);
   color: var(--text);
   font-size: 12px;
+  transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.tab-search-toggle {
+  -webkit-app-region: no-drag;
+  width: 100%;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
+}
+
+.tab-search-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.pinned-tab-list {
+  -webkit-app-region: no-drag;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 28px);
+  gap: 4px;
+  min-width: 0;
+}
+
+.pinned-tab {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  transition: background-color 0.14s ease, transform 0.14s ease;
+}
+
+.pinned-tab:hover,
+.pinned-tab.active {
+  background: var(--active);
+}
+
+.pinned-tab:hover {
+  transform: translateY(-1px);
+}
+
+.pinned-tab-activate {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: transparent;
 }
 
 .vertical-tab-list::-webkit-scrollbar {
@@ -36,17 +109,20 @@
 }
 
 .vertical-tab {
+  position: relative;
   height: var(--tab-height);
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px 22px 24px;
+  grid-template-columns: minmax(0, 1fr) 24px;
   align-items: center;
   border-radius: 7px;
   color: var(--muted);
+  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
 .vertical-tab:hover {
   background: var(--hover);
+  transform: translateY(-1px);
 }
 
 .vertical-tab.active {
@@ -58,7 +134,7 @@
   min-width: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: 10px 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
   padding: 0 6px 0 8px;
@@ -66,16 +142,6 @@
   background: transparent;
   color: inherit;
   text-align: left;
-}
-
-.vertical-tab:not(.pinned) .pin-mark {
-  display: none;
-}
-
-.pin-mark {
-  width: 10px;
-  color: var(--accent);
-  font-size: 7px;
 }
 
 .tab-title {
@@ -91,7 +157,6 @@
   font-weight: 650;
 }
 
-.tab-action,
 .tab-close {
   width: 22px;
   height: 22px;
@@ -101,47 +166,21 @@
   background: transparent;
   color: var(--muted);
   font-size: 12px;
-  opacity: 0.75;
-}
-
-.tab-action {
-  font-size: 11px;
   opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
-.vertical-tab:hover .tab-action,
-.vertical-tab.active .tab-action {
+.vertical-tab:hover .tab-close,
+.vertical-tab:focus-within .tab-close,
+.vertical-tab.active .tab-close {
   opacity: 0.75;
 }
 
-.tab-action:hover,
 .tab-close:hover {
   opacity: 1;
   background: var(--hover);
   color: var(--text);
-}
-
-.tab-bulk-actions {
-  -webkit-app-region: no-drag;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-}
-
-.tab-bulk-actions button {
-  height: 24px;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-}
-
-.tab-bulk-actions button:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.tab-bulk-actions button:disabled {
-  opacity: 0.35;
+  transform: scale(1.04);
 }
 
 .tab-icon {
@@ -176,6 +215,23 @@
   border-top-color: var(--accent);
   border-radius: 999px;
   animation: tab-spin 0.85s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-search,
+  .tab-search-toggle,
+  .pinned-tab,
+  .vertical-tab,
+  .tab-close {
+    transition: none;
+  }
+
+  .tab-search-toggle:hover,
+  .pinned-tab:hover,
+  .vertical-tab:hover,
+  .tab-close:hover {
+    transform: none;
+  }
 }
 
 @keyframes tab-spin {

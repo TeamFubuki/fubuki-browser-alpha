@@ -1,5 +1,5 @@
 import { createSignal, For, Show } from "solid-js";
-import { fubuki, tabs, type Tab } from "../bridge/fubuki";
+import { fubuki, type Tab } from "../bridge/fubuki";
 import { browserState } from "../stores/browserStore";
 
 function titleFor(tab: Tab) {
@@ -18,15 +18,50 @@ function Favicon(props: { tab: Tab }) {
 
 export default function VerticalTabList() {
   const [query, setQuery] = createSignal("");
+  const [searchExpanded, setSearchExpanded] = createSignal(false);
   const filteredTabs = () => {
     const q = query().trim().toLowerCase();
-    if (!q) return browserState.tabs;
-    return browserState.tabs.filter((tab) => `${tab.title} ${tab.url}`.toLowerCase().includes(q));
+    const normalTabs = browserState.tabs.filter((tab) => !tab.isPinned);
+    if (!q) return normalTabs;
+    return normalTabs.filter((tab) => `${tab.title} ${tab.url}`.toLowerCase().includes(q));
   };
+  const pinnedTabs = () => browserState.tabs.filter((tab) => tab.isPinned);
+  const showSearch = () => searchExpanded() || browserState.tabs.length >= 8 || query().trim().length > 0;
 
   return (
-    <>
-      <input class="tab-search" value={query()} placeholder="Search tabs" aria-label="Search tabs" onInput={(event) => setQuery(event.currentTarget.value)} />
+    <section class="tab-stack" aria-label="Tabs">
+      <Show
+        when={showSearch()}
+        fallback={
+          <button class="tab-search-toggle" title="Search tabs" aria-label="Search tabs" onClick={() => setSearchExpanded(true)}>
+            <span aria-hidden="true">⌕</span>
+          </button>
+        }
+      >
+        <input
+          class="tab-search"
+          value={query()}
+          placeholder="Search tabs"
+          aria-label="Search tabs"
+          onInput={(event) => setQuery(event.currentTarget.value)}
+          onBlur={() => {
+            if (!query().trim()) setSearchExpanded(false);
+          }}
+        />
+      </Show>
+      <Show when={pinnedTabs().length > 0}>
+        <div class="pinned-tab-list" role="tablist" aria-label="Pinned tabs">
+          <For each={pinnedTabs()}>
+            {(tab) => (
+              <div classList={{ "pinned-tab": true, active: tab.isActive }} title={titleFor(tab)} role="tab" aria-selected={tab.isActive}>
+                <button class="pinned-tab-activate" onClick={() => void fubuki.invoke("tabs.activate", { tabId: tab.id })}>
+                  <Favicon tab={tab} />
+                </button>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
       <div class="vertical-tab-list" role="tablist" aria-label="Open tabs">
         <For each={filteredTabs()}>
           {(tab, index) => (
@@ -45,31 +80,8 @@ export default function VerticalTabList() {
             }}
           >
             <button class="tab-activate" onClick={() => void fubuki.invoke("tabs.activate", { tabId: tab.id })}>
-              <span class="pin-mark" aria-hidden="true">{tab.isPinned ? "●" : ""}</span>
               <Favicon tab={tab} />
               <span class="tab-title">{titleFor(tab)}</span>
-            </button>
-            <button
-              class="tab-action"
-              title={tab.isPinned ? "Unpin tab" : "Pin tab"}
-              aria-label={tab.isPinned ? "Unpin tab" : "Pin tab"}
-              onClick={(event) => {
-                event.stopPropagation();
-                void tabs.pin(tab.id, !tab.isPinned);
-              }}
-            >
-              <span aria-hidden="true">{tab.isPinned ? "⌾" : "⌽"}</span>
-            </button>
-            <button
-              class="tab-action"
-              title="Duplicate tab"
-              aria-label={`Duplicate ${titleFor(tab)}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                void tabs.duplicate(tab.id);
-              }}
-            >
-              <span aria-hidden="true">⧉</span>
             </button>
             <button
               class="tab-close"
@@ -86,12 +98,6 @@ export default function VerticalTabList() {
         )}
       </For>
       </div>
-      <div class="tab-bulk-actions">
-        <button title="Reopen closed tab" onClick={() => void tabs.reopenClosed()}>↩</button>
-        <button title="Close other tabs" disabled={!browserState.activeTabId} onClick={() => void tabs.closeOther(browserState.activeTabId)}>◐</button>
-        <button title="Close tabs to the right" disabled={!browserState.activeTabId} onClick={() => void tabs.closeToRight(browserState.activeTabId)}>▸</button>
-        <button title="Move tab to new window" disabled={!browserState.activeTabId} onClick={() => void tabs.moveToNewWindow(browserState.activeTabId)}>⇱</button>
-      </div>
-    </>
+    </section>
   );
 }
