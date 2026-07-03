@@ -42,6 +42,10 @@ export default function App() {
   });
 
   onMount(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const onColorSchemeChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mediaQuery.addEventListener("change", onColorSchemeChange);
+
     const disposeNativeEvents = bindNativeEvents();
 
     const toggleBookmark = async () => {
@@ -160,6 +164,7 @@ export default function App() {
     window.addEventListener("fubuki:toggle-sidebar", toggleSidebar);
 
     onCleanup(() => {
+      mediaQuery.removeEventListener("change", onColorSchemeChange);
       disposeNativeEvents();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("fubuki:toggle-active-bookmark", onToggleActiveBookmark);

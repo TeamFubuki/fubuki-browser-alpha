@@ -62,13 +62,13 @@ bool IsFubukiInternalUrl(const std::string& url) {
 
 std::string BrowserAppearance(BrowserWindow* window) {
   if (!window) {
-    return "light";
+    return "system";
   }
   const std::string appearance = window->Store().Settings()->GetString("appearance");
   if (appearance == "light" || appearance == "dark") {
     return appearance;
   }
-  return window->Store().Settings()->GetString("theme") == "dark" ? "dark" : "light";
+  return "system";
 }
 
 }  // namespace
@@ -236,7 +236,12 @@ void FubukiClient::OnLoadError(CefRefPtr<CefBrowser>,
         ".actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}button,a{border:1px solid rgb(22 28 36/.14);border-radius:7px;background:#fff;color:#15171a;"
         "font:inherit;font-weight:620;padding:7px 12px;text-decoration:none;transition:background .16s ease,transform .16s ease}button:hover,a:hover{background:rgb(22 28 36/.055);transform:translateY(-1px)}"
         "html[data-appearance=dark] code,html[data-appearance=dark] button,html[data-appearance=dark] a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}"
-        "@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style>"
+        "@media(prefers-color-scheme:dark){html[data-appearance=system] body{background:#14161a;color:#f4f6f8;color-scheme:dark}html[data-appearance=system] p{color:#a7b0bd}html[data-appearance=system] code,html[data-appearance=system] button,html[data-appearance=system] a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}}"
+        "@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}"
+        "html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}"
+        "html[data-appearance=dark] p{color:#a7b0bd}"
+        "html[data-appearance=dark] code,html[data-appearance=dark] button,html[data-appearance=dark] a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}"
+        "</style>"
         "<main><h1>Page load failed</h1><p>" +
         HtmlEscape(message) + "</p><p>Check the URL, reload the page, or go back.</p><p><code>" + HtmlEscape(failed) +
         "</code></p><div class=\"actions\"><a href=\"" + HtmlEscape(failed) +
