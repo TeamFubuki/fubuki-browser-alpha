@@ -10,6 +10,7 @@
 
 #include "browser/BrowserAppController.h"
 #include "cef/FubukiClient.h"
+#include "cef/FubukiSchemeHandler.h"
 #include "include/cef_cookie.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
@@ -91,14 +92,20 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 - (instancetype)initWithFrame:(NSRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
-    draggableRects_ = [NSMutableArray array];
-    blockedRects_ = [NSMutableArray array];
+    draggableRects_ = [[NSMutableArray alloc] init];
+    blockedRects_ = [[NSMutableArray alloc] init];
     contentHeight_ = frame.size.height;
     self.sidebarWidth = kDefaultSidebarWidth;
     self.navHeight = 48.0;
     [self setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   }
   return self;
+}
+
+- (void)dealloc {
+  [draggableRects_ release];
+  [blockedRects_ release];
+  [super dealloc];
 }
 
 - (BOOL)isOpaque {
@@ -315,11 +322,19 @@ std::string QueryParam(const std::string& url, const std::string& key) {
   return "";
 }
 
+void RegisterFubukiSchemeHandlers(CefRefPtr<CefRequestContext> context) {
+  if (!context) {
+    return;
+  }
+  for (const char* host : {"app", "newtab", "settings", "bookmarks", "downloads", "history", "debug"}) {
+    context->RegisterSchemeHandlerFactory("fubuki", host, new FubukiSchemeHandlerFactory(FUBUKI_UI_DIST));
+  }
+}
+
 }  // namespace
 
 BrowserWindow* gActiveBrowserWindow = nullptr;
 std::map<NSWindow*, BrowserWindow*> gBrowserWindowsByNativeWindow;
-NSMutableArray<NSWindow*>* gDevToolsWindows = nil;
 FubukiWindowDelegate* gWindowDelegate = nil;
 
 BrowserWindow* GetActiveBrowserWindow() {
@@ -346,6 +361,7 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager, 
   if (privateWindow_) {
     CefRequestContextSettings settings;
     privateRequestContext_ = CefRequestContext::CreateContext(settings, nullptr);
+    RegisterFubukiSchemeHandlers(privateRequestContext_);
   }
   RegisterCommands();
   WireEvents();
@@ -417,6 +433,18 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
     app_.PersistSession();
   }
   return true;
+}
+
+std::string BrowserWindow::CreatePendingPopupTab(const std::string& url, bool active) {
+  Tab& tab = tabManager_.CreateTab(url.empty() ? "about:blank" : url, active);
+  tab.isPendingPopup = true;
+  tabManager_.UpdateTab(tab.id, tab);
+  ResizeViews();
+  SetActiveContentView();
+  if (!privateWindow_) {
+    app_.PersistSession();
+  }
+  return tab.id;
 }
 
 bool BrowserWindow::ActivateTab(const std::string& tabId) {
@@ -542,7 +570,7 @@ bool BrowserWindow::MoveTabToNewWindow(const std::string& tabId) {
   item->SetBool("active", true);
   tabs->SetDictionary(0, item);
   windowState->SetList("tabs", tabs);
-  app_.NewWindow(privateWindow_, windowState);
+  app_.RequestNewWindow(privateWindow_, windowState);
   CloseTab(tabId);
   return true;
 }
@@ -692,10 +720,10 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return FocusOmnibox();
   }
   if (commandDown && character == 'N') {
-    return GetBrowserAppController() ? GetBrowserAppController()->NewPrivateWindow() : false;
+    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewPrivateWindow() : false;
   }
   if (commandDown && character == 'n') {
-    return GetBrowserAppController() ? GetBrowserAppController()->NewWindow(false, nullptr) != nullptr : false;
+    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewWindow(false, nullptr) : false;
   }
   if (commandDown && character == ',') {
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
@@ -763,26 +791,18 @@ bool BrowserWindow::OpenDevTools() {
   if (!browser) {
     return false;
   }
-  NSWindow* devToolsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(160, 160, 1000, 720)
-                                                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
-                                                          backing:NSBackingStoreBuffered
-                                                            defer:NO];
-  [devToolsWindow setTitle:@"Fubuki DevTools"];
-  if (!gDevToolsWindows) {
-    gDevToolsWindows = [NSMutableArray array];
+
+  CefRefPtr<CefBrowserHost> host = browser->GetHost();
+  if (!host) {
+    return false;
   }
-  [gDevToolsWindows addObject:devToolsWindow];
-  [devToolsWindow setReleasedWhenClosed:NO];
-  NSView* devToolsView = [[NSView alloc] initWithFrame:[[devToolsWindow contentView] bounds]];
-  [devToolsView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-  [devToolsWindow setContentView:devToolsView];
 
   CefWindowInfo info;
-  info.SetAsChild(devToolsView, CefRect(0, 0, 1000, 720));
+  CefString(&info.window_name).FromString("Fubuki DevTools");
+  info.bounds = CefRect(160, 160, 1000, 720);
+  info.hidden = false;
   CefBrowserSettings settings;
-  browser->GetHost()->ShowDevTools(info, new FubukiClient(nullptr, "", false), settings, CefPoint());
-  [devToolsWindow makeKeyAndOrderFront:nil];
+  host->ShowDevTools(info, nullptr, settings, CefPoint());
   return true;
 }
 
@@ -1071,6 +1091,9 @@ void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& titl
 
 void BrowserWindow::OnTabUrl(const std::string& tabId, const std::string& url) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
+    if (tab->isPendingPopup && !url.empty() && url != "about:blank") {
+      tab->isPendingPopup = false;
+    }
     UpdateTabPatch(tabId, tab->title, url, tab->isLoading, tab->canGoBack, tab->canGoForward);
   }
 }
@@ -1118,6 +1141,18 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
   }
 }
 
+void BrowserWindow::ExpirePendingPopupTab(const std::string& tabId) {
+  if (Tab* tab = tabManager_.GetTab(tabId); tab && tab->isPendingPopup) {
+    Tab patch = *tab;
+    patch.isPendingPopup = false;
+    tabManager_.UpdateTab(tabId, patch);
+  }
+}
+
+CefWindowInfo BrowserWindow::PopupWindowInfo() const {
+  return ChildWindowInfo(contentHostView_);
+}
+
 void BrowserWindow::OnDownloadStarted(const std::string& url, const std::string& path) {
   if (privateWindow_) {
     return;
@@ -1144,6 +1179,9 @@ void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string&
 
 void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions) {
   if (!dragRegionView_ || !uiHostView_) {
+    return;
+  }
+  if (![dragRegionView_ isKindOfClass:[FubukiDragRegionView class]]) {
     return;
   }
   [(FubukiDragRegionView*)dragRegionView_ setDraggableRegions:regions contentHeight:[uiHostView_ bounds].size.height];
@@ -1372,12 +1410,12 @@ void BrowserWindow::RegisterCommands() {
   });
   commands_.Register("windows.create", "New Window", "Windows", "Cmd+N", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
-    value->SetBool(app_.NewWindow(false, nullptr) != nullptr);
+    value->SetBool(app_.RequestNewWindow(false, nullptr));
     return value;
   });
   commands_.Register("windows.createPrivate", "New Private Window", "Windows", "Cmd+Shift+N", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
-    value->SetBool(app_.NewPrivateWindow());
+    value->SetBool(app_.RequestNewPrivateWindow());
     return value;
   });
   commands_.Register("windows.close", "Close Window", "Windows", "Cmd+Shift+W", [this](CefRefPtr<CefDictionaryValue>) {
@@ -1430,6 +1468,12 @@ void BrowserWindow::RegisterCommands() {
     auto value = CefValue::Create();
     Tab* tab = tabManager_.GetActiveTab();
     value->SetBool(tab ? Navigate(tab->id, "fubuki://debug/") : CreateTab("fubuki://debug/", true));
+    return value;
+  });
+  commands_.Register("app.toggleSidebar", "Toggle Sidebar", "UI", "Cmd+B", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
+    value->SetBool(SetSetting("sidebarVisible", current == "hide" ? "show" : "hide"));
     return value;
   });
   commands_.Register("app.openDevTools", "Developer Tools", "Developer", "Cmd+Option+I", [this](CefRefPtr<CefDictionaryValue>) {

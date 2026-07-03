@@ -148,6 +148,7 @@ void TabManager::UpdateTab(const std::string& tabId, const Tab& patch) {
   tab->canGoBack = patch.canGoBack;
   tab->canGoForward = patch.canGoForward;
   tab->isPinned = patch.isPinned;
+  tab->isPendingPopup = patch.isPendingPopup;
   eventBus_.Publish({EventType::TabUpdated, "tabs.updated", *tab, "", tabId, ""});
 }
 

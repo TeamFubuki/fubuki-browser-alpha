@@ -18,22 +18,35 @@ function navigateInternal(url: string) {
 }
 
 export default function App() {
-  const [systemDark, setSystemDark] = createSignal(window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
+  const [systemDark, setSystemDark] = createSignal(
+    window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
+  );
 
   createEffect(() => {
-    const appearance = browserState.settings.appearance || browserState.settings.theme || "system";
-    document.documentElement.dataset.theme = appearance === "dark" || (appearance === "system" && systemDark()) ? "dark" : "light";
-    document.documentElement.dataset.sidebar = browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
+    const appearance = browserState.settings.appearance || "system";
+
+    document.documentElement.dataset.theme =
+      appearance === "dark" || (appearance === "system" && systemDark())
+        ? "dark"
+        : "light";
+
+    document.documentElement.dataset.sidebar =
+      browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
+
     if (document.documentElement.dataset.sidebarResizing !== "true") {
-      const width = clampSidebarWidth(Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH);
+      const width = clampSidebarWidth(
+        Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH
+      );
       document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
     }
   });
 
   onMount(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const onColorSchemeChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mediaQuery.addEventListener("change", onColorSchemeChange);
+
     const disposeNativeEvents = bindNativeEvents();
-    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-    const onSchemeChange = () => setSystemDark(media?.matches ?? false);
 
     const toggleBookmark = async () => {
       const tab = activeTab();
@@ -149,14 +162,13 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("fubuki:toggle-active-bookmark", onToggleActiveBookmark);
     window.addEventListener("fubuki:toggle-sidebar", toggleSidebar);
-    media?.addEventListener("change", onSchemeChange);
 
     onCleanup(() => {
+      mediaQuery.removeEventListener("change", onColorSchemeChange);
       disposeNativeEvents();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("fubuki:toggle-active-bookmark", onToggleActiveBookmark);
       window.removeEventListener("fubuki:toggle-sidebar", toggleSidebar);
-      media?.removeEventListener("change", onSchemeChange);
     });
   });
 

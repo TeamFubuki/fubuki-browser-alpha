@@ -22,6 +22,8 @@ class BrowserAppController {
   void Start();
   BrowserWindow* NewWindow(bool privateWindow = false, CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool NewPrivateWindow();
+  bool RequestNewWindow(bool privateWindow = false, CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+  bool RequestNewPrivateWindow();
   bool CloseActiveWindow();
   bool ReopenClosedWindow();
   void NotifyWindowFocused(BrowserWindow* window);

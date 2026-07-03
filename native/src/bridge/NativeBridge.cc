@@ -123,10 +123,10 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
     return BoolValue(window_.GoHome());
   }
   if (method == "windows.create") {
-    return BoolValue(window_.App().NewWindow(false, nullptr) != nullptr);
+    return BoolValue(window_.App().RequestNewWindow(false, nullptr));
   }
   if (method == "windows.createPrivate") {
-    return BoolValue(window_.App().NewPrivateWindow());
+    return BoolValue(window_.App().RequestNewPrivateWindow());
   }
   if (method == "windows.close") {
     return BoolValue(window_.CloseWindow());

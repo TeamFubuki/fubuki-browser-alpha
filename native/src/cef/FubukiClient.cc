@@ -1,7 +1,10 @@
 #include "cef/FubukiClient.h"
 
+#include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
+#include "include/base/cef_callback.h"
 #include "include/cef_parser.h"
+#include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 
 #include <sstream>
@@ -49,6 +52,25 @@ bool IsTrustedSettingsActionSource(const std::string& url) {
          url == "fubuki://debug" || StartsWith(url, "fubuki://debug/");
 }
 
+bool IsBlankPopupUrl(const std::string& url) {
+  return url.empty() || url == "about:blank";
+}
+
+bool IsFubukiInternalUrl(const std::string& url) {
+  return StartsWith(url, "fubuki://");
+}
+
+std::string BrowserAppearance(BrowserWindow* window) {
+  if (!window) {
+    return "system";
+  }
+  const std::string appearance = window->Store().Settings()->GetString("appearance");
+  if (appearance == "light" || appearance == "dark") {
+    return appearance;
+  }
+  return "system";
+}
+
 }  // namespace
 
 FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
@@ -83,6 +105,86 @@ void FubukiClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   } else {
     window_->OnTabBrowserCreated(tabId_, browser);
   }
+}
+
+bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>,
+                                 CefRefPtr<CefFrame> frame,
+                                 int,
+                                 const CefString& target_url,
+                                 const CefString&,
+                                 WindowOpenDisposition,
+                                 bool user_gesture,
+                                 const CefPopupFeatures&,
+                                 CefWindowInfo& windowInfo,
+                                 CefRefPtr<CefClient>& client,
+                                 CefBrowserSettings& settings,
+                                 CefRefPtr<CefDictionaryValue>&,
+                                 bool* no_javascript_access) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window_ || isUi_) {
+    return true;
+  }
+  const std::string url = target_url.ToString();
+  const std::string sourceUrl = frame ? frame->GetURL().ToString() : "";
+  if (!user_gesture || IsFubukiInternalUrl(sourceUrl)) {
+    if (!window_->IsPrivate()) {
+      window_->Store().Log("info", "Blocked popup from " + (sourceUrl.empty() ? "unknown source" : sourceUrl));
+    }
+    return true;
+  }
+  if (IsBlankPopupUrl(url)) {
+    const std::string popupTabId = window_->CreatePendingPopupTab("about:blank", true);
+    if (popupTabId.empty()) {
+      return true;
+    }
+    if (!window_->IsPrivate()) {
+      window_->Store().Log("info", "Opened blank popup as pending tab: " + popupTabId);
+    }
+    windowInfo = window_->PopupWindowInfo();
+    client = new FubukiClient(window_, popupTabId, false);
+    settings.background_color = CefColorSetARGB(255, 255, 255, 255);
+    if (no_javascript_access) {
+      *no_javascript_access = false;
+    }
+    const std::string windowId = window_->WindowId();
+    CefPostDelayedTask(TID_UI, base::BindOnce(
+                                   [](std::string windowId, std::string tabId) {
+                                     BrowserAppController* app = GetBrowserAppController();
+                                     if (!app) {
+                                       return;
+                                     }
+                                     for (auto* window : app->Windows()) {
+                                       if (window && window->WindowId() == windowId) {
+                                         window->ExpirePendingPopupTab(tabId);
+                                         return;
+                                       }
+                                     }
+                                   },
+                                   windowId,
+                                   popupTabId),
+                       15000);
+    return false;
+  }
+  if (!window_->IsPrivate()) {
+    window_->Store().Log("info", "Opened popup in new tab: " + url);
+  }
+  const std::string windowId = window_->WindowId();
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](std::string windowId, std::string url) {
+                            BrowserAppController* app = GetBrowserAppController();
+                            if (!app) {
+                              return;
+                            }
+                            for (auto* window : app->Windows()) {
+                              if (window && window->WindowId() == windowId) {
+                                window->CreateTab(url, true);
+                                return;
+                              }
+                            }
+                          },
+                          windowId,
+                          url));
+  return true;
 }
 
 bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
@@ -120,18 +222,30 @@ void FubukiClient::OnLoadError(CefRefPtr<CefBrowser>,
   if (!isUi_ && window_ && frame->IsMain() && errorCode != ERR_ABORTED) {
     const std::string message = errorText.ToString();
     const std::string failed = failedUrl.ToString();
+    const std::string appearance = BrowserAppearance(window_);
     window_->OnNavigationFailed(tabId_, message);
     const std::string html =
-        "<!doctype html><meta charset=\"utf-8\"><title>Page load failed</title>"
-        "<style>body{font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:48px;color:#202124}"
-        "main{max-width:760px}h1{font-size:28px;margin:0 0 12px}p{line-height:1.5;color:#4b5563}"
-        "code{background:#f1f3f4;padding:2px 5px;border-radius:4px;word-break:break-all}"
-        ".actions{display:flex;gap:8px;margin-top:20px}button,a{border:1px solid #c6ccd4;border-radius:6px;background:#fff;color:#1f2328;"
-        "font:inherit;padding:7px 12px;text-decoration:none}</style>"
+        "<!doctype html><html data-appearance=\"" + HtmlEscape(appearance) +
+        "\"><meta charset=\"utf-8\"><title>Page load failed</title>"
+        "<style>*{box-sizing:border-box}@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}"
+        "body{font:15px -apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;margin:0;padding:48px;background:#f5f6f8;color:#15171a}"
+        "html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}"
+        "main{max-width:760px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}h1{font-size:28px;line-height:1.1;margin:0 0 12px;font-weight:720}p{line-height:1.5;color:#66707c}"
+        "html[data-appearance=dark] p{color:#a7b0bd}"
+        "code{display:inline-block;max-width:100%;background:#fff;border:1px solid rgb(22 28 36/.12);padding:3px 6px;border-radius:6px;word-break:break-all}"
+        ".actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}button,a{border:1px solid rgb(22 28 36/.14);border-radius:7px;background:#fff;color:#15171a;"
+        "font:inherit;font-weight:620;padding:7px 12px;text-decoration:none;transition:background .16s ease,transform .16s ease}button:hover,a:hover{background:rgb(22 28 36/.055);transform:translateY(-1px)}"
+        "html[data-appearance=dark] code,html[data-appearance=dark] button,html[data-appearance=dark] a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}"
+        "@media(prefers-color-scheme:dark){html[data-appearance=system] body{background:#14161a;color:#f4f6f8;color-scheme:dark}html[data-appearance=system] p{color:#a7b0bd}html[data-appearance=system] code,html[data-appearance=system] button,html[data-appearance=system] a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}}"
+        "@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}"
+        "html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}"
+        "html[data-appearance=dark] p{color:#a7b0bd}"
+        "html[data-appearance=dark] code,html[data-appearance=dark] button,html[data-appearance=dark] a{background:#1d2025;color:#f4f6f8;border-color:rgb(255 255 255/.12)}"
+        "</style>"
         "<main><h1>Page load failed</h1><p>" +
         HtmlEscape(message) + "</p><p>Check the URL, reload the page, or go back.</p><p><code>" + HtmlEscape(failed) +
         "</code></p><div class=\"actions\"><a href=\"" + HtmlEscape(failed) +
-        "\">Reload</a><button onclick=\"history.back()\">Back</button><a href=\"fubuki://newtab/\">New tab</a></div></main>";
+        "\">Reload</a><button onclick=\"history.back()\">Back</button><a href=\"fubuki://newtab/\">New tab</a></div></main></html>";
     frame->LoadURL("data:text/html;charset=utf-8," + CefURIEncode(html, false).ToString());
   }
 }

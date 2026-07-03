@@ -18,6 +18,7 @@ struct Tab {
   bool canGoForward = false;
   bool isActive = false;
   bool isPinned = false;
+  bool isPendingPopup = false;
   CefRefPtr<CefBrowser> browser;
 };
 
