@@ -91,14 +91,20 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 - (instancetype)initWithFrame:(NSRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
-    draggableRects_ = [NSMutableArray array];
-    blockedRects_ = [NSMutableArray array];
+    draggableRects_ = [[NSMutableArray alloc] init];
+    blockedRects_ = [[NSMutableArray alloc] init];
     contentHeight_ = frame.size.height;
     self.sidebarWidth = kDefaultSidebarWidth;
     self.navHeight = 48.0;
     [self setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   }
   return self;
+}
+
+- (void)dealloc {
+  [draggableRects_ release];
+  [blockedRects_ release];
+  [super dealloc];
 }
 
 - (BOOL)isOpaque {
@@ -782,7 +788,7 @@ bool BrowserWindow::OpenDevTools() {
                                                             defer:NO];
   [devToolsWindow setTitle:@"Fubuki DevTools"];
   if (!gDevToolsWindows) {
-    gDevToolsWindows = [NSMutableArray array];
+    gDevToolsWindows = [[NSMutableArray alloc] init];
   }
   [gDevToolsWindows addObject:devToolsWindow];
   [devToolsWindow setReleasedWhenClosed:NO];
@@ -1171,6 +1177,9 @@ void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string&
 
 void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions) {
   if (!dragRegionView_ || !uiHostView_) {
+    return;
+  }
+  if (![dragRegionView_ isKindOfClass:[FubukiDragRegionView class]]) {
     return;
   }
   [(FubukiDragRegionView*)dragRegionView_ setDraggableRegions:regions contentHeight:[uiHostView_ bounds].size.height];
