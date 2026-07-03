@@ -335,7 +335,6 @@ void RegisterFubukiSchemeHandlers(CefRefPtr<CefRequestContext> context) {
 
 BrowserWindow* gActiveBrowserWindow = nullptr;
 std::map<NSWindow*, BrowserWindow*> gBrowserWindowsByNativeWindow;
-NSMutableArray<NSWindow*>* gDevToolsWindows = nil;
 FubukiWindowDelegate* gWindowDelegate = nil;
 
 BrowserWindow* GetActiveBrowserWindow() {
@@ -792,26 +791,18 @@ bool BrowserWindow::OpenDevTools() {
   if (!browser) {
     return false;
   }
-  NSWindow* devToolsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(160, 160, 1000, 720)
-                                                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
-                                                          backing:NSBackingStoreBuffered
-                                                            defer:NO];
-  [devToolsWindow setTitle:@"Fubuki DevTools"];
-  if (!gDevToolsWindows) {
-    gDevToolsWindows = [[NSMutableArray alloc] init];
+
+  CefRefPtr<CefBrowserHost> host = browser->GetHost();
+  if (!host) {
+    return false;
   }
-  [gDevToolsWindows addObject:devToolsWindow];
-  [devToolsWindow setReleasedWhenClosed:NO];
-  NSView* devToolsView = [[NSView alloc] initWithFrame:[[devToolsWindow contentView] bounds]];
-  [devToolsView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-  [devToolsWindow setContentView:devToolsView];
 
   CefWindowInfo info;
-  info.SetAsChild(devToolsView, CefRect(0, 0, 1000, 720));
+  CefString(&info.window_name).FromString("Fubuki DevTools");
+  info.bounds = CefRect(160, 160, 1000, 720);
+  info.hidden = false;
   CefBrowserSettings settings;
-  browser->GetHost()->ShowDevTools(info, new FubukiClient(nullptr, "", false), settings, CefPoint());
-  [devToolsWindow makeKeyAndOrderFront:nil];
+  host->ShowDevTools(info, nullptr, settings, CefPoint());
   return true;
 }
 
