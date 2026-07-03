@@ -4,7 +4,7 @@ CEF_ROOT ?= $(CURDIR)/third_party/cef
 NATIVE_BUILD_DIR ?= $(CURDIR)/native/build
 BUILD_TYPE ?= Release
 
-.PHONY: help all bootstrap cef ui configure native build run clean distclean
+.PHONY: help all bootstrap cef ui configure native build run test test-ui test-native clean distclean
 
 help:
 	@echo "Fubuki Browser Alpha"
@@ -17,6 +17,9 @@ help:
 	@echo "  make native      Build native app"
 	@echo "  make build       Build UI and native app"
 	@echo "  make run         Build and run the app"
+	@echo "  make test        Run all tests (UI + native)"
+	@echo "  make test-ui     Run Vitest (UI)"
+	@echo "  make test-native Build & run GoogleTest (native)"
 	@echo "  make clean       Remove build outputs"
 	@echo ""
 	@echo "Variables:"
@@ -50,5 +53,15 @@ run:
 clean:
 	@./scripts/clean.sh
 
+test: test-ui test-native
+
+test-ui:
+	@cd ui && pnpm test
+
+test-native:
+	@cmake -S native/tests -B native/tests/build -DCMAKE_BUILD_TYPE=Debug
+	@cmake --build native/tests/build
+	@cd native/tests/build && ctest --output-on-failure
+
 distclean: clean
-	@rm -rf "$(CEF_ROOT)" "$(CURDIR)/.cache"
+	@rm -rf "$(CEF_ROOT)" "$(CURDIR)/.cache" "$(CURDIR)/native/tests/build"

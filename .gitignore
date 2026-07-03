@@ -3,6 +3,7 @@
 
 # Native build artifacts
 native/build*/
+native/tests/build/
 native/CMakeCache.txt
 native/CMakeFiles/
 native/Makefile
