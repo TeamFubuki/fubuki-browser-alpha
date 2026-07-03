@@ -10,6 +10,7 @@
 
 #include "browser/BrowserAppController.h"
 #include "cef/FubukiClient.h"
+#include "cef/FubukiSchemeHandler.h"
 #include "include/cef_cookie.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
@@ -321,6 +322,15 @@ std::string QueryParam(const std::string& url, const std::string& key) {
   return "";
 }
 
+void RegisterFubukiSchemeHandlers(CefRefPtr<CefRequestContext> context) {
+  if (!context) {
+    return;
+  }
+  for (const char* host : {"app", "newtab", "settings", "bookmarks", "downloads", "history", "debug"}) {
+    context->RegisterSchemeHandlerFactory("fubuki", host, new FubukiSchemeHandlerFactory(FUBUKI_UI_DIST));
+  }
+}
+
 }  // namespace
 
 BrowserWindow* gActiveBrowserWindow = nullptr;
@@ -352,6 +362,7 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager, 
   if (privateWindow_) {
     CefRequestContextSettings settings;
     privateRequestContext_ = CefRequestContext::CreateContext(settings, nullptr);
+    RegisterFubukiSchemeHandlers(privateRequestContext_);
   }
   RegisterCommands();
   WireEvents();
