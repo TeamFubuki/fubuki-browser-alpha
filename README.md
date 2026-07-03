@@ -79,6 +79,13 @@ open "build/Fubuki Browser Alpha.app"
 
 If your generator uses configuration subdirectories, the app may be at `build/Release/Fubuki Browser Alpha.app`.
 
+## Manual Popup Verification
+
+- A normal `<a target="_blank" href="https://example.com">` link opens `https://example.com` in a new Fubuki tab.
+- `window.open("https://example.com")` from a user gesture opens `https://example.com` in a new Fubuki tab.
+- `const popup = window.open("about:blank"); popup.location = "https://example.com";` from a user gesture opens a pending blank Fubuki tab and then navigates that tab.
+- GitHub and Google OAuth-style login popups that initially create `about:blank` continue into the provider login flow instead of being blocked.
+
 ## Implemented Essentials
 
 - Native macOS CEF app windows with independent tab managers per window

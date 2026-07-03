@@ -52,6 +52,14 @@ bool IsTrustedSettingsActionSource(const std::string& url) {
          url == "fubuki://debug" || StartsWith(url, "fubuki://debug/");
 }
 
+bool IsBlankPopupUrl(const std::string& url) {
+  return url.empty() || url == "about:blank";
+}
+
+bool IsFubukiInternalUrl(const std::string& url) {
+  return StartsWith(url, "fubuki://");
+}
+
 std::string BrowserAppearance(BrowserWindow* window) {
   if (!window) {
     return "light";
@@ -100,28 +108,62 @@ void FubukiClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 }
 
 bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>,
-                                 CefRefPtr<CefFrame>,
+                                 CefRefPtr<CefFrame> frame,
                                  int,
                                  const CefString& target_url,
                                  const CefString&,
                                  WindowOpenDisposition,
-                                 bool,
+                                 bool user_gesture,
                                  const CefPopupFeatures&,
-                                 CefWindowInfo&,
-                                 CefRefPtr<CefClient>&,
-                                 CefBrowserSettings&,
+                                 CefWindowInfo& windowInfo,
+                                 CefRefPtr<CefClient>& client,
+                                 CefBrowserSettings& settings,
                                  CefRefPtr<CefDictionaryValue>&,
-                                 bool*) {
+                                 bool* no_javascript_access) {
   CEF_REQUIRE_UI_THREAD();
   if (!window_ || isUi_) {
     return true;
   }
   const std::string url = target_url.ToString();
-  if (url.empty() || url == "about:blank") {
+  const std::string sourceUrl = frame ? frame->GetURL().ToString() : "";
+  if (!user_gesture || IsFubukiInternalUrl(sourceUrl)) {
     if (!window_->IsPrivate()) {
-      window_->Store().Log("info", "Blocked empty popup");
+      window_->Store().Log("info", "Blocked popup from " + (sourceUrl.empty() ? "unknown source" : sourceUrl));
     }
     return true;
+  }
+  if (IsBlankPopupUrl(url)) {
+    const std::string popupTabId = window_->CreatePendingPopupTab("about:blank", true);
+    if (popupTabId.empty()) {
+      return true;
+    }
+    if (!window_->IsPrivate()) {
+      window_->Store().Log("info", "Opened blank popup as pending tab: " + popupTabId);
+    }
+    windowInfo = window_->PopupWindowInfo();
+    client = new FubukiClient(window_, popupTabId, false);
+    settings.background_color = CefColorSetARGB(255, 255, 255, 255);
+    if (no_javascript_access) {
+      *no_javascript_access = false;
+    }
+    const std::string windowId = window_->WindowId();
+    CefPostDelayedTask(TID_UI, base::BindOnce(
+                                   [](std::string windowId, std::string tabId) {
+                                     BrowserAppController* app = GetBrowserAppController();
+                                     if (!app) {
+                                       return;
+                                     }
+                                     for (auto* window : app->Windows()) {
+                                       if (window && window->WindowId() == windowId) {
+                                         window->ExpirePendingPopupTab(tabId);
+                                         return;
+                                       }
+                                     }
+                                   },
+                                   windowId,
+                                   popupTabId),
+                       15000);
+    return false;
   }
   if (!window_->IsPrivate()) {
     window_->Store().Log("info", "Opened popup in new tab: " + url);

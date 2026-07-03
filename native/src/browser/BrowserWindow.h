@@ -34,6 +34,7 @@ class BrowserWindow {
   void Show(CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool CloseWindow();
   bool CreateTab(const std::string& input, bool active);
+  std::string CreatePendingPopupTab(const std::string& url, bool active);
   bool ActivateTab(const std::string& tabId);
   bool CloseTab(const std::string& tabId);
   bool PinTab(const std::string& tabId, bool pinned);
@@ -87,6 +88,8 @@ class BrowserWindow {
   void OnNavigationStarted(const std::string& tabId);
   void OnNavigationFinished(const std::string& tabId);
   void OnNavigationFailed(const std::string& tabId, const std::string& message);
+  void ExpirePendingPopupTab(const std::string& tabId);
+  CefWindowInfo PopupWindowInfo() const;
   void OnDownloadStarted(const std::string& url, const std::string& path);
   void OnDownloadUpdated(const std::string& url, const std::string& path, const std::string& state, int percent);
   void OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions);

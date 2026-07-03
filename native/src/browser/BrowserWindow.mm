@@ -419,6 +419,18 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
   return true;
 }
 
+std::string BrowserWindow::CreatePendingPopupTab(const std::string& url, bool active) {
+  Tab& tab = tabManager_.CreateTab(url.empty() ? "about:blank" : url, active);
+  tab.isPendingPopup = true;
+  tabManager_.UpdateTab(tab.id, tab);
+  ResizeViews();
+  SetActiveContentView();
+  if (!privateWindow_) {
+    app_.PersistSession();
+  }
+  return tab.id;
+}
+
 bool BrowserWindow::ActivateTab(const std::string& tabId) {
   const bool ok = tabManager_.ActivateTab(tabId);
   SetActiveContentView();
@@ -1071,6 +1083,9 @@ void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& titl
 
 void BrowserWindow::OnTabUrl(const std::string& tabId, const std::string& url) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
+    if (tab->isPendingPopup && !url.empty() && url != "about:blank") {
+      tab->isPendingPopup = false;
+    }
     UpdateTabPatch(tabId, tab->title, url, tab->isLoading, tab->canGoBack, tab->canGoForward);
   }
 }
@@ -1116,6 +1131,18 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
     }
     eventBus_.Publish({EventType::NavigationFailed, "navigation.failed", *tab, windowId_, tabId, message});
   }
+}
+
+void BrowserWindow::ExpirePendingPopupTab(const std::string& tabId) {
+  if (Tab* tab = tabManager_.GetTab(tabId); tab && tab->isPendingPopup) {
+    Tab patch = *tab;
+    patch.isPendingPopup = false;
+    tabManager_.UpdateTab(tabId, patch);
+  }
+}
+
+CefWindowInfo BrowserWindow::PopupWindowInfo() const {
+  return ChildWindowInfo(contentHostView_);
 }
 
 void BrowserWindow::OnDownloadStarted(const std::string& url, const std::string& path) {
