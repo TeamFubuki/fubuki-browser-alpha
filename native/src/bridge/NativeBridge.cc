@@ -268,6 +268,7 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   if (it != methods_.end()) {
     return it->second(params);
   }
+  LOG(ERROR) << "[Bridge] Unknown method: " << method;
   return ErrorValue("Unknown bridge method: " + method);
 }
 

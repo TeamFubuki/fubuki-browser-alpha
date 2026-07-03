@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 #include <sqlite3.h>
@@ -120,69 +121,73 @@ std::string BrowserLanguage() {
   return lang && std::string(lang).rfind("ja", 0) == 0 ? "ja" : "en";
 }
 
+static const std::unordered_map<std::string, std::string> kJaLabels = {
+  {"Bookmarks", "ブックマーク"},
+  {"Downloads", "ダウンロード"},
+  {"History", "履歴"},
+  {"Settings", "設定"},
+  {"Debug", "デバッグ"},
+  {"New Tab", "新しいタブ"},
+  {"Search or enter URL", "検索語句またはURLを入力"},
+  {"No bookmarks", "ブックマークはまだありません"},
+  {"No downloads", "ダウンロードはまだありません"},
+  {"No history", "履歴はまだありません"},
+  {"Delete", "削除"},
+  {"Remove", "削除"},
+  {"Open", "開く"},
+  {"Reveal", "Finderで表示"},
+  {"Clear downloads", "ダウンロード履歴を消去"},
+  {"Search history", "履歴を検索"},
+  {"Clear last hour", "直近1時間を消去"},
+  {"Clear today", "今日の履歴を消去"},
+  {"Clear all", "すべて消去"},
+  {"Earlier", "以前"},
+  {"General", "一般"},
+  {"Appearance", "外観"},
+  {"Language", "言語"},
+  {"Tabs", "タブ"},
+  {"Windows", "ウィンドウ"},
+  {"Search", "検索"},
+  {"Privacy", "プライバシー"},
+  {"Developer", "開発"},
+  {"Downloads section", "ダウンロード"},
+  {"Search settings", "設定を検索"},
+  {"System", "システム設定"},
+  {"Light", "ライト"},
+  {"Dark", "ダーク"},
+  {"English", "英語"},
+  {"Japanese", "日本語"},
+  {"New tab", "新しいタブ"},
+  {"Restore previous session", "前回のセッションを復元"},
+  {"Home page", "ホームページ"},
+  {"Home page URL", "ホームページURL"},
+  {"Save", "保存"},
+  {"Reset", "リセット"},
+  {"Show sidebar", "サイドバーを表示"},
+  {"Hide sidebar", "サイドバーを隠す"},
+  {"Sidebar width", "サイドバー幅"},
+  {"Reset sidebar width", "サイドバー幅をリセット"},
+  {"Blank new tab", "空の新規タブ"},
+  {"Home on new tab", "新規タブでホームを開く"},
+  {"Default zoom level", "既定の表示倍率"},
+  {"Ask before download", "保存前に確認"},
+  {"Download automatically", "自動でダウンロード"},
+  {"Download directory", "ダウンロード先"},
+  {"Open DevTools", "DevToolsを開く"},
+  {"Debug page", "デバッグページ"},
+  {"Profile path", "プロファイルパス"},
+  {"Windows and tabs", "ウィンドウとタブ"},
+  {"Registered commands", "登録済みコマンド"},
+  {"Recent events", "最近のイベント"},
+  {"Logs", "ログ"},
+  {"Actions", "操作"},
+};
+
 std::string Label(const std::string& key) {
   const bool ja = BrowserLanguage() == "ja";
   if (!ja) return key;
-  if (key == "Bookmarks") return "ブックマーク";
-  if (key == "Downloads") return "ダウンロード";
-  if (key == "History") return "履歴";
-  if (key == "Settings") return "設定";
-  if (key == "Debug") return "デバッグ";
-  if (key == "New Tab") return "新しいタブ";
-  if (key == "Search or enter URL") return "検索語句またはURLを入力";
-  if (key == "No bookmarks") return "ブックマークはまだありません";
-  if (key == "No downloads") return "ダウンロードはまだありません";
-  if (key == "No history") return "履歴はまだありません";
-  if (key == "Delete") return "削除";
-  if (key == "Remove") return "削除";
-  if (key == "Open") return "開く";
-  if (key == "Reveal") return "Finderで表示";
-  if (key == "Clear downloads") return "ダウンロード履歴を消去";
-  if (key == "Search history") return "履歴を検索";
-  if (key == "Clear last hour") return "直近1時間を消去";
-  if (key == "Clear today") return "今日の履歴を消去";
-  if (key == "Clear all") return "すべて消去";
-  if (key == "Earlier") return "以前";
-  if (key == "General") return "一般";
-  if (key == "Appearance") return "外観";
-  if (key == "Language") return "言語";
-  if (key == "Tabs") return "タブ";
-  if (key == "Windows") return "ウィンドウ";
-  if (key == "Search") return "検索";
-  if (key == "Privacy") return "プライバシー";
-  if (key == "Developer") return "開発";
-  if (key == "Downloads section") return "ダウンロード";
-  if (key == "Search settings") return "設定を検索";
-  if (key == "System") return "システム設定";
-  if (key == "Light") return "ライト";
-  if (key == "Dark") return "ダーク";
-  if (key == "English") return "英語";
-  if (key == "Japanese") return "日本語";
-  if (key == "New tab") return "新しいタブ";
-  if (key == "Restore previous session") return "前回のセッションを復元";
-  if (key == "Home page") return "ホームページ";
-  if (key == "Home page URL") return "ホームページURL";
-  if (key == "Save") return "保存";
-  if (key == "Reset") return "リセット";
-  if (key == "Show sidebar") return "サイドバーを表示";
-  if (key == "Hide sidebar") return "サイドバーを隠す";
-  if (key == "Sidebar width") return "サイドバー幅";
-  if (key == "Reset sidebar width") return "サイドバー幅をリセット";
-  if (key == "Blank new tab") return "空の新規タブ";
-  if (key == "Home on new tab") return "新規タブでホームを開く";
-  if (key == "Default zoom level") return "既定の表示倍率";
-  if (key == "Ask before download") return "保存前に確認";
-  if (key == "Download automatically") return "自動でダウンロード";
-  if (key == "Download directory") return "ダウンロード先";
-  if (key == "Open DevTools") return "DevToolsを開く";
-  if (key == "Debug page") return "デバッグページ";
-  if (key == "Profile path") return "プロファイルパス";
-  if (key == "Windows and tabs") return "ウィンドウとタブ";
-  if (key == "Registered commands") return "登録済みコマンド";
-  if (key == "Recent events") return "最近のイベント";
-  if (key == "Logs") return "ログ";
-  if (key == "Actions") return "操作";
-  return key;
+  const auto it = kJaLabels.find(key);
+  return it != kJaLabels.end() ? it->second : key;
 }
 
 std::vector<Record> QueryRecords(const std::string& table, int limit) {

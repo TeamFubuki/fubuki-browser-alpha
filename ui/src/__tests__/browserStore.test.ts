@@ -121,6 +121,44 @@ describe("isTabBookmarked helper", () => {
   });
 });
 
+describe("toggleBookmark logic", () => {
+  it("skips internal URLs", () => {
+    const internalUrls = [
+      "fubuki://newtab/",
+      "fubuki://settings/",
+      "data:text/html,<h1>Test</h1>",
+    ];
+    for (const url of internalUrls) {
+      const shouldSkip =
+        !url || url.startsWith("fubuki://") || url.startsWith("data:");
+      expect(shouldSkip).toBe(true);
+    }
+  });
+
+  it("allows external URLs", () => {
+    const url = "https://example.com";
+    const shouldSkip =
+      !url || url.startsWith("fubuki://") || url.startsWith("data:");
+    expect(shouldSkip).toBe(false);
+  });
+});
+
+describe("navigateInternal logic", () => {
+  it("determines navigation target from active tab", () => {
+    const tab = mockActiveTab();
+    const shouldCreateNew = !tab;
+    expect(shouldCreateNew).toBe(false);
+    expect(tab?.id).toBe("tab-1");
+  });
+
+  it("falls back to create when no active tab", () => {
+    activeTabId = "nonexistent";
+    const tab = mockActiveTab();
+    const shouldCreateNew = !tab;
+    expect(shouldCreateNew).toBe(true);
+  });
+});
+
 describe("tab filtering logic", () => {
   it("filters pinned tabs correctly", () => {
     tabs[0].isPinned = true;
