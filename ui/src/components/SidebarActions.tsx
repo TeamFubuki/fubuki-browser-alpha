@@ -1,9 +1,5 @@
 import { t } from "../i18n";
-import {
-  browserState,
-  currentLanguage,
-  navigateInternal,
-} from "../stores/browserStore";
+import { currentLanguage, navigateInternal } from "../stores/browserStore";
 
 export default function SidebarActions() {
   const lang = () => currentLanguage();
