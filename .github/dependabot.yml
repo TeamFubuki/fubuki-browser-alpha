@@ -73,7 +73,7 @@ updates:
       - "github-actions"
 
     cooldown:
-      default-days: 1
+      default-days: 7
 
     groups:
       github-actions:
