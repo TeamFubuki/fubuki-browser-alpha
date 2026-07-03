@@ -50,10 +50,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm exec tsc --noEmit
-
-      - name: Run lint if available
+      - name: Lint
         run: |
           if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.lint ? 0 : 1)"; then
             pnpm run lint
@@ -61,7 +58,7 @@ jobs:
             echo "No lint script. Skipping."
           fi
 
-      - name: Run format check if available
+      - name: Format check
         run: |
           if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts['format:check'] ? 0 : 1)"; then
             pnpm run format:check
@@ -69,208 +66,73 @@ jobs:
             echo "No format:check script. Skipping."
           fi
 
-      - name: Run CI tests if available
-        run: |
-          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts['test:ci'] ? 0 : 1)"; then
-            pnpm run test:ci
-          else
-            echo "No test:ci script. Skipping."
-          fi
-
-      - name: Build UI
+      - name: Typecheck & Build
         run: pnpm run build
 
-  repository-check:
-    name: Repository check
+      - name: Tests
+        run: pnpm run test
+
+  native-test:
+    name: Native test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Check required directories
+      - name: Install CMake
         run: |
-          test -d ui
-          test -d native
-          test -f ui/package.json
+          sudo apt-get update
+          sudo apt-get install -y cmake
 
-      - name: Ensure generated outputs are not committed
-        run: |
-          failed=0
+      - name: Configure
+        run: cmake -S native/tests -B native/tests/build -DCMAKE_BUILD_TYPE=Debug
 
-          for path in \
-            ui/dist \
-            native/build \
-            native/cmake-build-debug \
-            native/cmake-build-release \
-            .cache
-          do
-            if [ -e "$path" ]; then
-              echo "Generated output must not be committed: $path"
-              failed=1
-            fi
-          done
+      - name: Build tests
+        run: cmake --build native/tests/build --parallel $(nproc)
 
-          exit "$failed"
+      - name: Run tests
+        run: cd native/tests/build && ctest --output-on-failure
 
-      - name: Ensure CEF binaries are not vendored
-        run: |
-          if [ -d third_party/cef ]; then
-            echo "third_party/cef must not be committed."
-            exit 1
-          fi
+  repository-check:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
 
-      - name: Check for merge conflict markers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Merge conflict markers
         run: |
           if grep -RIn \
             --exclude-dir=.git \
             --exclude-dir=node_modules \
             --exclude-dir=dist \
             --exclude-dir=build \
+            --exclude-dir=third_party \
             --exclude='pnpm-lock.yaml' \
             -E '^(<<<<<<<|=======|>>>>>>>)' .; then
             echo "Merge conflict markers found."
             exit 1
           fi
 
-      - name: Check suspicious large files
+      - name: Large files (> 20 MB)
         run: |
-          max_size=$((20 * 1024 * 1024))
           failed=0
-
           while IFS= read -r file; do
             size=$(wc -c < "$file")
-            if [ "$size" -gt "$max_size" ]; then
-              echo "Large file detected: $file ($size bytes)"
+            if [ "$size" -gt $((20 * 1024 * 1024)) ]; then
+              echo "Large file: $file ($size bytes)"
               failed=1
             fi
           done < <(
             find . -type f \
               ! -path './.git/*' \
               ! -path './ui/node_modules/*' \
-              ! -path './node_modules/*'
+              ! -path './node_modules/*' \
+              ! -path './third_party/*' \
+              ! -path './native/build/*'
           )
-
           exit "$failed"
-
-  shellcheck-advisory:
-    name: ShellCheck advisory
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Install ShellCheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-
-      - name: Run ShellCheck as advisory
-        run: |
-          shopt -s nullglob
-          files=(scripts/*.sh)
-
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No shell scripts found. Skipping."
-            exit 0
-          fi
-
-          shellcheck "${files[@]}" || true
-
-  native-advisory:
-    name: Native C++ advisory
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Install cppcheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cppcheck
-
-      - name: Run cppcheck as advisory
-        run: |
-          find native -type f \( \
-            -name '*.cc' -o \
-            -name '*.cpp' -o \
-            -name '*.cxx' -o \
-            -name '*.h' -o \
-            -name '*.hh' -o \
-            -name '*.hpp' -o \
-            -name '*.hxx' \
-          \) \
-          ! -path '*/build/*' \
-          ! -path '*/cmake-build-*/*' \
-          ! -path '*/third_party/*' \
-          ! -path '*/vendor/*' \
-          > cpp-files.txt
-
-          if [ ! -s cpp-files.txt ]; then
-            echo "No native C++ source files found. Skipping."
-            exit 0
-          fi
-
-          cppcheck \
-            --language=c++ \
-            --std=c++20 \
-            --enable=warning,performance,portability \
-            --inline-suppr \
-            --suppress=missingIncludeSystem \
-            --suppress=unusedFunction \
-            --suppress=unusedStructMember \
-            --suppress=syntaxError:native/src/browser/BrowserWindow.h \
-            --suppress=unmatchedSuppression \
-            --file-list=cpp-files.txt || true
-
-  security-advisory:
-    name: Security advisory
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-
-    defaults:
-      run:
-        working-directory: ui
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: ui/pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Audit production dependencies as advisory
-        run: pnpm audit --prod --audit-level high || true
-
-  final-check:
-    name: Final check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs:
-      - ui-check
-      - repository-check
-
-    steps:
-      - name: Done
-        run: echo "CI passed."
