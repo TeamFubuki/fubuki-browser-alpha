@@ -20,7 +20,8 @@ bool HasScheme(const std::string& value) {
 }
 
 bool LooksLikeHost(const std::string& value) {
-  return value.find(' ') == std::string::npos && value.find('.') != std::string::npos;
+  return value.find(' ') == std::string::npos && value.find('.') != std::string::npos &&
+         std::all_of(value.begin(), value.end(), [](unsigned char c) { return c < 0x80; });
 }
 
 std::string ReplaceAll(std::string value, const std::string& needle, const std::string& replacement) {

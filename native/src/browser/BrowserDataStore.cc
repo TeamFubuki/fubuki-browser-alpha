@@ -73,7 +73,7 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("defaultZoomLevel", "0");
   EnsureDefaultSetting("closeWindowWithLastTab", "off");
   EnsureDefaultSetting("privateSearchEngine", "default");
-  EnsureDefaultSetting("language", "en");
+  EnsureDefaultSetting("language", "system");
   EnsureDefaultSetting("newTabBackgroundMode", "unsplash");
   EnsureDefaultSetting("newTabBackgroundColor", "#f8fafd");
   EnsureDefaultSetting("newTabBackgroundUrl", "");
@@ -420,7 +420,7 @@ std::string BrowserDataStore::DefaultSetting(const std::string& key) const {
   if (key == "defaultZoomLevel") return "0";
   if (key == "closeWindowWithLastTab") return "off";
   if (key == "privateSearchEngine") return "default";
-  if (key == "language") return "en";
+  if (key == "language") return "system";
   if (key == "newTabBackgroundMode") return "unsplash";
   if (key == "newTabBackgroundColor") return "#f8fafd";
   if (key == "newTabBackgroundUrl") return "";

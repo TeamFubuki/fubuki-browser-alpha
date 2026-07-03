@@ -156,6 +156,11 @@ TEST(NormalizeNavigationInputTest, JapaneseTextIsSearchQuery) {
             "https://www.google.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E%E3%83%86%E3%82%B9%E3%83%88");
 }
 
+TEST(NormalizeNavigationInputTest, JapaneseTextWithDotIsSearchQuery) {
+  EXPECT_EQ(NormalizeNavigationInput("日本語.com", "google"),
+            "https://www.google.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E.com");
+}
+
 // ============================================================
 // NormalizeNavigationInput — 検索エンジン切り替え
 // ============================================================

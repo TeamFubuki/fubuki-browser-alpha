@@ -1,4 +1,5 @@
-import { fubuki } from "../bridge/fubuki";
+import { invokeBridge, tabs } from "../bridge/fubuki";
+import { t } from "../i18n";
 import { browserState } from "../stores/browserStore";
 
 function activeTabId() {
@@ -8,25 +9,25 @@ function activeTabId() {
 function openInternal(url: string) {
   const tabId = activeTabId();
   if (tabId) {
-    void fubuki.invoke("tabs.navigate", { tabId, input: url });
+    void tabs.navigate(tabId, url);
   } else {
-    void fubuki.invoke("tabs.create", { url, active: true });
+    void invokeBridge("tabs.create", { url, active: true });
   }
 }
 
 export default function SidebarActions() {
   return (
     <nav class="sidebar-actions" aria-label="Browser pages">
-      <button title="Bookmarks" aria-label="Bookmarks" onClick={() => openInternal("fubuki://bookmarks/")}>
+      <button title={t("common.bookmarks", browserState.settings.language)} aria-label={t("common.bookmarks", browserState.settings.language)} onClick={() => openInternal("fubuki://bookmarks/")}>
         <span aria-hidden="true">★</span>
       </button>
-      <button title="History" aria-label="History" onClick={() => openInternal("fubuki://history/")}>
+      <button title={t("common.history", browserState.settings.language)} aria-label={t("common.history", browserState.settings.language)} onClick={() => openInternal("fubuki://history/")}>
         <span aria-hidden="true">◷</span>
       </button>
-      <button title="Downloads" aria-label="Downloads" onClick={() => openInternal("fubuki://downloads/")}>
+      <button title={t("common.downloads", browserState.settings.language)} aria-label={t("common.downloads", browserState.settings.language)} onClick={() => openInternal("fubuki://downloads/")}>
         <span aria-hidden="true">↓</span>
       </button>
-      <button title="Settings" aria-label="Settings" onClick={() => openInternal("fubuki://settings/")}>
+      <button title={t("common.settings", browserState.settings.language)} aria-label={t("common.settings", browserState.settings.language)} onClick={() => openInternal("fubuki://settings/")}>
         <span aria-hidden="true">⚙</span>
       </button>
     </nav>

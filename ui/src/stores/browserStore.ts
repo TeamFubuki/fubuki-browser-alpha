@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import { fubuki, type BrowserState } from "../bridge/fubuki";
+import { invokeBridge, onBridgeEvent, type BrowserState, type EventMap } from "../bridge/fubuki";
 
 const initialState: BrowserState & { status: string } = {
   bridgeVersion: "1",
@@ -25,7 +25,7 @@ const initialState: BrowserState & { status: string } = {
     sidebarWidth: "196",
     newTabPage: "blank",
     homeUrl: "https://example.com",
-    language: "en",
+    language: "system",
     defaultZoomLevel: "0"
   },
   profilePath: "",
@@ -44,7 +44,7 @@ export async function refreshState(status = "Ready") {
   }
   pendingRefresh = Promise.resolve().then(async () => {
     const statusToApply = pendingStatus;
-    const state = await fubuki.invoke<BrowserState>("app.getState");
+    const state = await invokeBridge("app.getState");
     setBrowserState({ ...state, status: statusToApply });
   }).finally(() => {
     pendingRefresh = undefined;
@@ -53,7 +53,9 @@ export async function refreshState(status = "Ready") {
 }
 
 export function bindNativeEvents() {
-  const refreshEvents = [
+  // These native events currently trigger a coalesced full app-state refresh.
+  // Keep this list typed so new events are deliberate, then narrow individual refreshes later.
+  const refreshEvents: Array<keyof EventMap> = [
     "tabs.created",
     "tabs.updated",
     "tabs.closed",
@@ -74,7 +76,7 @@ export function bindNativeEvents() {
   ];
 
   const disposers = refreshEvents.map((eventName) =>
-    fubuki.on(eventName, () => {
+    onBridgeEvent(eventName, () => {
       void refreshState(eventName);
     })
   );

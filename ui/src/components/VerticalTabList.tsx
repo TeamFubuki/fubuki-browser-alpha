@@ -1,9 +1,10 @@
 import { createSignal, For, Show } from "solid-js";
-import { fubuki, type Tab } from "../bridge/fubuki";
+import { invokeBridge, tabs, type Tab } from "../bridge/fubuki";
+import { t } from "../i18n";
 import { browserState } from "../stores/browserStore";
 
 function titleFor(tab: Tab) {
-  return tab.title || (tab.url === "fubuki://newtab/" ? "New Tab" : tab.url || "New Tab");
+  return tab.title || (tab.url === "fubuki://newtab/" ? t("common.newTab", browserState.settings.language) : tab.url || t("common.newTab", browserState.settings.language));
 }
 
 function Favicon(props: { tab: Tab }) {
@@ -29,11 +30,11 @@ export default function VerticalTabList() {
   const showSearch = () => searchExpanded() || browserState.tabs.length >= 8 || query().trim().length > 0;
 
   return (
-    <section class="tab-stack" aria-label="Tabs">
+    <section class="tab-stack" aria-label={t("common.tabs", browserState.settings.language)}>
       <Show
         when={showSearch()}
         fallback={
-          <button class="tab-search-toggle" title="Search tabs" aria-label="Search tabs" onClick={() => setSearchExpanded(true)}>
+          <button class="tab-search-toggle" title={t("tabs.search", browserState.settings.language)} aria-label={t("tabs.search", browserState.settings.language)} onClick={() => setSearchExpanded(true)}>
             <span aria-hidden="true">⌕</span>
           </button>
         }
@@ -41,8 +42,8 @@ export default function VerticalTabList() {
         <input
           class="tab-search"
           value={query()}
-          placeholder="Search tabs"
-          aria-label="Search tabs"
+          placeholder={t("tabs.search", browserState.settings.language)}
+          aria-label={t("tabs.search", browserState.settings.language)}
           onInput={(event) => setQuery(event.currentTarget.value)}
           onBlur={() => {
             if (!query().trim()) setSearchExpanded(false);
@@ -50,11 +51,11 @@ export default function VerticalTabList() {
         />
       </Show>
       <Show when={pinnedTabs().length > 0}>
-        <div class="pinned-tab-list" role="tablist" aria-label="Pinned tabs">
+        <div class="pinned-tab-list" role="tablist" aria-label={t("tabs.pinned", browserState.settings.language)}>
           <For each={pinnedTabs()}>
             {(tab) => (
               <div classList={{ "pinned-tab": true, active: tab.isActive }} title={titleFor(tab)} role="tab" aria-selected={tab.isActive}>
-                <button class="pinned-tab-activate" onClick={() => void fubuki.invoke("tabs.activate", { tabId: tab.id })}>
+                <button class="pinned-tab-activate" onClick={() => void tabs.activate(tab.id)}>
                   <Favicon tab={tab} />
                 </button>
               </div>
@@ -62,7 +63,7 @@ export default function VerticalTabList() {
           </For>
         </div>
       </Show>
-      <div class="vertical-tab-list" role="tablist" aria-label="Open tabs">
+      <div class="vertical-tab-list" role="tablist" aria-label={t("tabs.open", browserState.settings.language)}>
         <For each={filteredTabs()}>
           {(tab) => (
             <div
@@ -77,20 +78,20 @@ export default function VerticalTabList() {
                 event.preventDefault();
                 const draggedId = event.dataTransfer?.getData("text/plain");
                 const targetIndex = browserState.tabs.findIndex((item) => item.id === tab.id);
-                if (draggedId && targetIndex >= 0) void fubuki.invoke("tabs.move", { tabId: draggedId, toIndex: targetIndex });
+                if (draggedId && targetIndex >= 0) void invokeBridge("tabs.move", { tabId: draggedId, toIndex: targetIndex });
               }}
             >
-              <button class="tab-activate" onClick={() => void fubuki.invoke("tabs.activate", { tabId: tab.id })}>
+              <button class="tab-activate" onClick={() => void tabs.activate(tab.id)}>
                 <Favicon tab={tab} />
                 <span class="tab-title">{titleFor(tab)}</span>
               </button>
               <button
                 class="tab-close"
-                title="Close tab"
-                aria-label={`Close ${titleFor(tab)}`}
+                title={t("action.closeTab", browserState.settings.language)}
+                aria-label={`${t("action.closeTab", browserState.settings.language)}: ${titleFor(tab)}`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void fubuki.invoke("tabs.close", { tabId: tab.id });
+                  void tabs.close(tab.id);
                 }}
               >
                 <span aria-hidden="true">x</span>

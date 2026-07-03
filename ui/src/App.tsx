@@ -1,6 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { commands, fubuki, page, tabs } from "./bridge/fubuki";
+import { commands, invokeBridge, page, tabs } from "./bridge/fubuki";
 import BrowserShell from "./components/BrowserShell";
+import CommandPalette from "./components/commandPalette/CommandPalette";
+import { resolveLanguage } from "./i18n";
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from "./sidebarSizing";
 import { bindNativeEvents, browserState, refreshState } from "./stores/browserStore";
 
@@ -11,13 +13,15 @@ function activeTab() {
 function navigateInternal(url: string) {
   const tab = activeTab();
   if (tab) {
-    void fubuki.invoke("tabs.navigate", { tabId: tab.id, input: url });
+    void tabs.navigate(tab.id, url);
   } else {
-    void fubuki.invoke("tabs.create", { url, active: true });
+    void invokeBridge("tabs.create", { url, active: true });
   }
 }
 
 export default function App() {
+  const [paletteOpen, setPaletteOpen] = createSignal(false);
+  const [quietMode, setQuietMode] = createSignal(false);
   const [systemDark, setSystemDark] = createSignal(
     window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
   );
@@ -31,7 +35,11 @@ export default function App() {
         : "light";
 
     document.documentElement.dataset.sidebar =
-      browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
+      quietMode() || browserState.settings.sidebarVisible === "hide" ? "hide" : "show";
+
+    document.documentElement.dataset.quietMode = quietMode() ? "true" : "false";
+    document.documentElement.lang = resolveLanguage(browserState.settings.language);
+    document.documentElement.dataset.language = browserState.settings.language || "system";
 
     if (document.documentElement.dataset.sidebarResizing !== "true") {
       const width = clampSidebarWidth(
@@ -54,9 +62,9 @@ export default function App() {
 
       const bookmarked = browserState.bookmarks.some((bookmark) => bookmark.url === tab.url);
       if (bookmarked) {
-        await fubuki.invoke("bookmarks.remove", { url: tab.url });
+        await invokeBridge("bookmarks.remove", { url: tab.url });
       } else {
-        await fubuki.invoke("bookmarks.save", {
+        await invokeBridge("bookmarks.save", {
           title: tab.title || tab.url,
           url: tab.url,
           faviconUrl: tab.faviconUrl || ""
@@ -67,7 +75,7 @@ export default function App() {
 
     const toggleSidebar = () => {
       const next = browserState.settings.sidebarVisible === "hide" ? "show" : "hide";
-      void fubuki.invoke("settings.set", { key: "sidebarVisible", value: next }).then(() => refreshState("settings.saved"));
+      void invokeBridge("settings.set", { key: "sidebarVisible", value: next }).then(() => refreshState("settings.saved"));
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -76,6 +84,11 @@ export default function App() {
 
       const tab = activeTab();
       const key = event.key.toLowerCase();
+      if (key === "k") {
+        setPaletteOpen(true);
+        event.preventDefault();
+        return;
+      }
       if (key === "l") {
         const input = document.querySelector<HTMLInputElement>(".omnibox-input");
         input?.focus();
@@ -143,16 +156,16 @@ export default function App() {
         void commands.execute("windows.close");
         event.preventDefault();
       } else if (key === "w") {
-        void fubuki.invoke("tabs.close", { tabId: tab.id });
+        void tabs.close(tab.id);
         event.preventDefault();
       } else if (key === "r") {
-        void fubuki.invoke("tabs.reload", { tabId: tab.id });
+        void invokeBridge("tabs.reload", { tabId: tab.id });
         event.preventDefault();
       } else if (event.key === "[") {
-        void fubuki.invoke("tabs.goBack", { tabId: tab.id });
+        void invokeBridge("tabs.goBack", { tabId: tab.id });
         event.preventDefault();
       } else if (event.key === "]") {
-        void fubuki.invoke("tabs.goForward", { tabId: tab.id });
+        void invokeBridge("tabs.goForward", { tabId: tab.id });
         event.preventDefault();
       }
     };
@@ -172,5 +185,15 @@ export default function App() {
     });
   });
 
-  return <BrowserShell />;
+  return (
+    <>
+      <BrowserShell quietMode={quietMode()} />
+      <CommandPalette
+        open={paletteOpen()}
+        quietMode={quietMode()}
+        onClose={() => setPaletteOpen(false)}
+        onToggleQuietMode={() => setQuietMode((value) => !value)}
+      />
+    </>
+  );
 }

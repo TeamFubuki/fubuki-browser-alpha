@@ -13,12 +13,20 @@
   transition: grid-template-columns 0.16s ease;
 }
 
+.browser-shell.quiet-mode {
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+
 :root[data-sidebar-resizing="true"] .browser-shell {
   transition: none;
 }
 
 :root[data-sidebar="hide"] .browser-shell {
   grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.browser-shell.quiet-mode .top-bar {
+  display: none;
 }
 
 .webview-area {

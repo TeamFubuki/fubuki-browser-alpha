@@ -1,18 +1,13 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
-import { fubuki } from "../bridge/fubuki";
+import { tabs } from "../bridge/fubuki";
+import { t } from "../i18n";
 import { browserState } from "../stores/browserStore";
-
-function activeTab() {
-  return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
-}
-
-function isNonNavigableUrl(url: string | undefined): boolean {
-  return !url || url.startsWith("fubuki://") || url.startsWith("data:");
-}
+import { normalizeOmniboxInput } from "../utils/navigation";
 
 export default function Omnibox() {
   const [draft, setDraft] = createSignal("");
   const [focused, setFocused] = createSignal(false);
+  const [isComposing, setIsComposing] = createSignal(false);
   let lastSyncedTabId = "";
 
   createEffect(() => {
@@ -27,10 +22,11 @@ export default function Omnibox() {
   });
 
   const submit = () => {
-    const tab = activeTab();
-    const input = draft().trim();
+    if (isComposing()) return;
+    const tab = browserState.tabs.find((item) => item.id === browserState.activeTabId);
+    const input = normalizeOmniboxInput(draft()).value;
     if (!tab || !input) return;
-    void fubuki.invoke("tabs.navigate", { tabId: tab.id, input });
+    void tabs.navigate(tab.id, input);
   };
 
   let inputRef: HTMLInputElement | undefined;
@@ -42,6 +38,7 @@ export default function Omnibox() {
       class="omnibox"
       onSubmit={(event) => {
         event.preventDefault();
+        if (isComposing()) return;
         submit();
       }}
     >
@@ -49,7 +46,8 @@ export default function Omnibox() {
         ref={inputRef}
         class="omnibox-input"
         value={draft()}
-        aria-label="Search or enter URL"
+        placeholder={t("common.searchOrEnterUrl", browserState.settings.language)}
+        aria-label={t("common.searchOrEnterUrl", browserState.settings.language)}
         autocomplete="off"
         autocapitalize="off"
         spellcheck={false}
@@ -59,6 +57,16 @@ export default function Omnibox() {
         }}
         onBlur={() => setFocused(false)}
         onInput={(event) => setDraft(event.currentTarget.value)}
+        onCompositionStart={() => setIsComposing(true)}
+        onCompositionEnd={(event) => {
+          setIsComposing(false);
+          setDraft(event.currentTarget.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.isComposing || isComposing())) {
+            event.preventDefault();
+          }
+        }}
       />
     </form>
   );
