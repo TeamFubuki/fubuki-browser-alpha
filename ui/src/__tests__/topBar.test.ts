@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 
 // TopBar のロジックを分離してテストする
 // activeTab, isTabBookmarked の動作を検証
@@ -117,13 +117,5 @@ describe("TopBar bookmark button", () => {
     });
     const tab = getActiveTab();
     expect(isBookmarked(tab?.url)).toBe(true);
-  });
-});
-
-describe("TopBar find bar", () => {
-  it("find bar is hidden by default", () => {
-    // findOpen is a signal, default is false
-    const findOpen = false;
-    expect(findOpen).toBe(false);
   });
 });

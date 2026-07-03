@@ -12,6 +12,7 @@ import { t } from "../../i18n";
 import {
   activeTabId,
   browserState,
+  currentLanguage,
   refreshState,
 } from "../../stores/browserStore";
 import { filterCommands, type PaletteCommand } from "./commands";
@@ -37,8 +38,7 @@ const allowedCommandIds = new Set([
   "app.openDevTools",
 ]);
 
-function localizeCommand(command: BrowserCommand) {
-  const lang = browserState.settings.language;
+function localizeCommand(command: BrowserCommand, lang: string) {
   switch (command.id) {
     case "tabs.create":
       return t("common.newTab", lang);
@@ -73,11 +73,12 @@ export default function CommandPalette(props: Props) {
   let inputRef: HTMLInputElement | undefined;
 
   const paletteCommands = createMemo<PaletteCommand[]>(() => {
+    const lang = currentLanguage();
     const native = browserState.commands
       .filter((command) => allowedCommandIds.has(command.id))
       .map((command) => ({
         ...command,
-        title: localizeCommand(command),
+        title: localizeCommand(command, lang),
         keywords: command.id.replaceAll(".", " "),
         run: async () => {
           if (command.id === "tabs.close") {
@@ -97,7 +98,7 @@ export default function CommandPalette(props: Props) {
     return [
       {
         id: "ui.toggleQuietMode",
-        title: `${t("commandPalette.toggleQuietMode", browserState.settings.language)}${props.quietMode ? " ✓" : ""}`,
+        title: `${t("commandPalette.toggleQuietMode", lang)}${props.quietMode ? " ✓" : ""}`,
         category: "UI",
         shortcut: "",
         keywords: "quiet focus minimal zen",
@@ -165,21 +166,15 @@ export default function CommandPalette(props: Props) {
           class="command-palette"
           role="dialog"
           aria-modal="true"
-          aria-label={t("commandPalette.title", browserState.settings.language)}
+          aria-label={t("commandPalette.title", currentLanguage())}
           onMouseDown={(event) => event.stopPropagation()}
         >
           <input
             ref={inputRef}
             class="command-palette-input"
             value={query()}
-            placeholder={t(
-              "commandPalette.placeholder",
-              browserState.settings.language
-            )}
-            aria-label={t(
-              "commandPalette.placeholder",
-              browserState.settings.language
-            )}
+            placeholder={t("commandPalette.placeholder", currentLanguage())}
+            aria-label={t("commandPalette.placeholder", currentLanguage())}
             autocomplete="off"
             onInput={(event) => {
               setQuery(event.currentTarget.value);
@@ -191,7 +186,7 @@ export default function CommandPalette(props: Props) {
               when={filtered().length > 0}
               fallback={
                 <p class="command-palette-empty">
-                  {t("commandPalette.empty", browserState.settings.language)}
+                  {t("commandPalette.empty", currentLanguage())}
                 </p>
               }
             >

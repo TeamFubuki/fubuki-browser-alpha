@@ -1,10 +1,9 @@
 import { createSignal, For, Show } from "solid-js";
 import { invokeBridge, tabs, type Tab } from "../bridge/fubuki";
 import { t } from "../i18n";
-import { browserState } from "../stores/browserStore";
+import { browserState, currentLanguage } from "../stores/browserStore";
 
-function titleFor(tab: Tab) {
-  const lang = browserState.settings.language;
+function titleFor(tab: Tab, lang: string) {
   return (
     tab.title ||
     (tab.url === "fubuki://newtab/"
@@ -42,17 +41,15 @@ export default function VerticalTabList() {
     browserState.tabs.length >= 8 ||
     query().trim().length > 0;
 
-  const lang = browserState.settings.language;
-
   return (
-    <section class="tab-stack" aria-label={t("common.tabs", lang)}>
+    <section class="tab-stack" aria-label={t("common.tabs", currentLanguage())}>
       <Show
         when={showSearch()}
         fallback={
           <button
             class="tab-search-toggle"
-            title={t("tabs.search", lang)}
-            aria-label={t("tabs.search", lang)}
+            title={t("tabs.search", currentLanguage())}
+            aria-label={t("tabs.search", currentLanguage())}
             onClick={() => setSearchExpanded(true)}
           >
             <span aria-hidden="true">⌕</span>
@@ -62,8 +59,8 @@ export default function VerticalTabList() {
         <input
           class="tab-search"
           value={query()}
-          placeholder={t("tabs.search", lang)}
-          aria-label={t("tabs.search", lang)}
+          placeholder={t("tabs.search", currentLanguage())}
+          aria-label={t("tabs.search", currentLanguage())}
           onInput={(event) => setQuery(event.currentTarget.value)}
           onBlur={() => {
             if (!query().trim()) setSearchExpanded(false);
@@ -71,16 +68,23 @@ export default function VerticalTabList() {
         />
       </Show>
       <Show when={pinnedTabs().length > 0}>
-        <div class="pinned-tab-list" role="tablist" aria-label={t("tabs.pinned", lang)}>
+        <div
+          class="pinned-tab-list"
+          role="tablist"
+          aria-label={t("tabs.pinned", currentLanguage())}
+        >
           <For each={pinnedTabs()}>
             {(tab) => (
               <div
                 classList={{ "pinned-tab": true, active: tab.isActive }}
-                title={titleFor(tab)}
+                title={titleFor(tab, currentLanguage())}
                 role="tab"
                 aria-selected={tab.isActive}
               >
-                <button class="pinned-tab-activate" onClick={() => void tabs.activate(tab.id)}>
+                <button
+                  class="pinned-tab-activate"
+                  onClick={() => void tabs.activate(tab.id)}
+                >
                   <Favicon tab={tab} />
                 </button>
               </div>
@@ -88,7 +92,11 @@ export default function VerticalTabList() {
           </For>
         </div>
       </Show>
-      <div class="vertical-tab-list" role="tablist" aria-label={t("tabs.open", lang)}>
+      <div
+        class="vertical-tab-list"
+        role="tablist"
+        aria-label={t("tabs.open", currentLanguage())}
+      >
         <For each={filteredTabs()}>
           {(tab) => (
             <div
@@ -98,7 +106,7 @@ export default function VerticalTabList() {
                 pinned: tab.isPinned,
                 "drag-over": dragOverId() === tab.id,
               }}
-              title={titleFor(tab)}
+              title={titleFor(tab, currentLanguage())}
               role="tab"
               aria-selected={tab.isActive}
               draggable
@@ -128,14 +136,17 @@ export default function VerticalTabList() {
                   });
               }}
             >
-              <button class="tab-activate" onClick={() => void tabs.activate(tab.id)}>
+              <button
+                class="tab-activate"
+                onClick={() => void tabs.activate(tab.id)}
+              >
                 <Favicon tab={tab} />
-                <span class="tab-title">{titleFor(tab)}</span>
+                <span class="tab-title">{titleFor(tab, currentLanguage())}</span>
               </button>
               <button
                 class="tab-close"
-                title={t("action.closeTab", lang)}
-                aria-label={`${t("action.closeTab", lang)}: ${titleFor(tab)}`}
+                title={t("action.closeTab", currentLanguage())}
+                aria-label={`${t("action.closeTab", currentLanguage())}: ${titleFor(tab, currentLanguage())}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   void tabs.close(tab.id);

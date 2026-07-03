@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { commands, invokeBridge, tabs } from "./bridge/fubuki";
+import { commands, invokeBridge } from "./bridge/fubuki";
 import BrowserShell from "./components/BrowserShell";
 import CommandPalette from "./components/commandPalette/CommandPalette";
 import { resolveLanguage } from "./i18n";
@@ -8,44 +8,11 @@ import {
   activeTab,
   bindNativeEvents,
   browserState,
+  navigateInternal,
   refreshState,
+  toggleBookmark,
+  toggleSidebar,
 } from "./stores/browserStore";
-
-function navigateInternal(url: string) {
-  const tab = activeTab();
-  if (tab) {
-    void tabs.navigate(tab.id, url);
-  } else {
-    void invokeBridge("tabs.create", { url, active: true });
-  }
-}
-
-function toggleBookmark() {
-  const tab = activeTab();
-  if (!tab?.url || tab.url.startsWith("fubuki://") || tab.url.startsWith("data:"))
-    return;
-  const bookmarked = browserState.bookmarks.some(
-    (bookmark) => bookmark.url === tab.url
-  );
-  if (bookmarked) {
-    void invokeBridge("bookmarks.remove", { url: tab.url });
-  } else {
-    void invokeBridge("bookmarks.save", {
-      title: tab.title || tab.url,
-      url: tab.url,
-      faviconUrl: tab.faviconUrl || "",
-    });
-  }
-  void refreshState("bookmarks.changed");
-}
-
-function toggleSidebar() {
-  const next =
-    browserState.settings.sidebarVisible === "hide" ? "show" : "hide";
-  void invokeBridge("settings.set", { key: "sidebarVisible", value: next }).then(
-    () => refreshState("settings.saved")
-  );
-}
 
 function onKeyDown(event: KeyboardEvent) {
   const command = event.metaKey || event.ctrlKey;
@@ -76,12 +43,12 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (key === "t" && event.shiftKey) {
-    void tabs.reopenClosed();
+    void commands.execute("tabs.reopenClosed");
     event.preventDefault();
     return;
   }
   if (key === "t") {
-    void tabs.create();
+    void commands.execute("tabs.create");
     event.preventDefault();
     return;
   }
@@ -116,7 +83,7 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (key === "d") {
-    toggleBookmark();
+    void toggleBookmark();
     event.preventDefault();
     return;
   }
@@ -125,7 +92,7 @@ function onKeyDown(event: KeyboardEvent) {
     void commands.execute("windows.close");
     event.preventDefault();
   } else if (key === "w") {
-    void tabs.close(tab.id);
+    void commands.execute("tabs.close", { tabId: tab.id });
     event.preventDefault();
   } else if (key === "r") {
     void invokeBridge("tabs.reload", { tabId: tab.id });
@@ -187,11 +154,14 @@ export default function App() {
 
     const onOpenPalette = () => setPaletteOpen(true);
     const onToggleSidebar = () => toggleSidebar();
-    const onToggleActiveBookmark = () => toggleBookmark();
+    const onToggleActiveBookmark = () => void toggleBookmark();
 
     window.addEventListener("fubuki:open-palette", onOpenPalette);
     window.addEventListener("fubuki:toggle-sidebar", onToggleSidebar);
-    window.addEventListener("fubuki:toggle-active-bookmark", onToggleActiveBookmark);
+    window.addEventListener(
+      "fubuki:toggle-active-bookmark",
+      onToggleActiveBookmark
+    );
     window.addEventListener("keydown", onKeyDown);
 
     onCleanup(() => {
@@ -199,7 +169,10 @@ export default function App() {
       disposeNativeEvents();
       window.removeEventListener("fubuki:open-palette", onOpenPalette);
       window.removeEventListener("fubuki:toggle-sidebar", onToggleSidebar);
-      window.removeEventListener("fubuki:toggle-active-bookmark", onToggleActiveBookmark);
+      window.removeEventListener(
+        "fubuki:toggle-active-bookmark",
+        onToggleActiveBookmark
+      );
       window.removeEventListener("keydown", onKeyDown);
     });
   });

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-// browserStore のロジックを分離してテストする
+// browserStore の関数を直接インポートするのではなく、
+// 同じロジックを検証するためのヘルパーをテストする。
+// 実際の store は window.cefQuery に依存するため、
+// ここでは純粋なロジックのみを検証する。
 
 type Tab = {
   id: string;

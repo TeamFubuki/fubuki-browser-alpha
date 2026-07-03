@@ -3,9 +3,7 @@ import {
   invokeBridge,
   onBridgeEvent,
   type BrowserState,
-  type BookmarkRecord,
   type EventMap,
-  type Settings,
   type Tab,
 } from "../bridge/fubuki";
 
@@ -43,22 +41,21 @@ const initialState: BrowserState & { status: string } = {
 export const [browserState, setBrowserState] = createStore(initialState);
 
 let pendingRefresh: Promise<void> | undefined;
-let pendingStatus = "Ready";
 let refreshCounter = 0;
+let lastStatus = "Ready";
 
 export async function refreshState(status = "Ready") {
-  pendingStatus = status;
+  lastStatus = status;
   if (pendingRefresh) {
     return pendingRefresh;
   }
-  const currentCounter = ++refreshCounter;
-  pendingRefresh = Promise.resolve()
-    .then(async () => {
-      const statusToApply = pendingStatus;
-      const state = await invokeBridge("app.getState");
-      // Only apply if no newer refresh was requested
-      if (currentCounter === refreshCounter) {
-        setBrowserState({ ...state, status: statusToApply });
+  const myCounter = ++refreshCounter;
+  const statusAtStart = lastStatus;
+  pendingRefresh = invokeBridge("app.getState")
+    .then((state) => {
+      // Only apply if no newer refresh has started
+      if (myCounter === refreshCounter) {
+        setBrowserState({ ...state, status: statusAtStart });
       }
     })
     .finally(() => {
@@ -80,9 +77,44 @@ export function activeTabId(): string {
   return browserState.activeTabId;
 }
 
+export function currentLanguage(): string {
+  return browserState.settings.language;
+}
+
+export async function toggleBookmark(): Promise<void> {
+  const tab = activeTab();
+  if (!tab?.url || tab.url.startsWith("fubuki://") || tab.url.startsWith("data:"))
+    return;
+  if (isTabBookmarked(tab.url)) {
+    await invokeBridge("bookmarks.remove", { url: tab.url });
+  } else {
+    await invokeBridge("bookmarks.save", {
+      title: tab.title || tab.url,
+      url: tab.url,
+      faviconUrl: tab.faviconUrl || "",
+    });
+  }
+  await refreshState("bookmarks.changed");
+}
+
+export function toggleSidebar(): void {
+  const next =
+    browserState.settings.sidebarVisible === "hide" ? "show" : "hide";
+  void invokeBridge("settings.set", { key: "sidebarVisible", value: next }).then(
+    () => refreshState("settings.saved")
+  );
+}
+
+export function navigateInternal(url: string): void {
+  const tab = activeTab();
+  if (tab) {
+    void invokeBridge("tabs.navigate", { tabId: tab.id, input: url });
+  } else {
+    void invokeBridge("tabs.create", { url, active: true });
+  }
+}
+
 export function bindNativeEvents() {
-  // These native events currently trigger a coalesced full app-state refresh.
-  // Keep this list typed so new events are deliberate, then narrow individual refreshes later.
   const refreshEvents: Array<keyof EventMap> = [
     "tabs.created",
     "tabs.updated",

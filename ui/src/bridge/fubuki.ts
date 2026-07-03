@@ -62,9 +62,6 @@ export type EventRecord = {
   message: string;
 };
 
-/** @deprecated Use specific record types instead */
-export type BrowserRecord = HistoryRecord | BookmarkRecord | DownloadRecord | PermissionRecord | LogRecord | EventRecord;
-
 export type BrowserCommand = {
   id: string;
   title: string;
