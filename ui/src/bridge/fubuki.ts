@@ -12,19 +12,58 @@ export type Tab = {
   isPinned: boolean;
 };
 
-export type BrowserRecord = {
-  title?: string;
-  url?: string;
-  faviconUrl?: string;
-  path?: string;
-  state?: string;
-  percent?: number;
-  level?: string;
-  message?: string;
-  permission?: string;
-  value?: string;
+export type TabSnapshot = {
+  title: string;
+  url: string;
+  faviconUrl: string;
+  pinned: boolean;
+  active: boolean;
+};
+
+export type HistoryRecord = {
+  title: string;
+  url: string;
+  faviconUrl: string;
   createdAt: string;
 };
+
+export type BookmarkRecord = {
+  title: string;
+  url: string;
+  faviconUrl: string;
+  createdAt: string;
+};
+
+export type DownloadRecord = {
+  url: string;
+  path: string;
+  state: string;
+  percent: number;
+  createdAt: string;
+};
+
+export type PermissionRecord = {
+  origin: string;
+  permission: string;
+  value: string;
+  createdAt: string;
+};
+
+export type LogRecord = {
+  level: string;
+  message: string;
+  createdAt: string;
+};
+
+export type EventRecord = {
+  name: string;
+  windowId: string;
+  tabId: string;
+  message: string;
+};
+
+/** @deprecated Use specific record types instead */
+export type BrowserRecord = HistoryRecord | BookmarkRecord | DownloadRecord | PermissionRecord | LogRecord | EventRecord;
 
 export type BrowserCommand = {
   id: string;
@@ -37,13 +76,21 @@ export type WindowSnapshot = {
   id: string;
   private?: boolean;
   activeTabId: string;
-  tabs: Array<{
-    title: string;
-    url: string;
-    faviconUrl: string;
-    pinned: boolean;
-    active: boolean;
-  }>;
+  tabs: TabSnapshot[];
+};
+
+export type Settings = {
+  homepage: string;
+  searchEngine: string;
+  customSearchUrl: string;
+  theme: string;
+  appearance: "system" | "light" | "dark";
+  sidebarVisible: "show" | "hide";
+  sidebarWidth: string;
+  newTabPage: "blank" | "home";
+  homeUrl: string;
+  language: string;
+  defaultZoomLevel: string;
 };
 
 export type BrowserState = {
@@ -53,26 +100,14 @@ export type BrowserState = {
   activeTabId: string;
   tabs: Tab[];
   windows: WindowSnapshot[];
-  history: BrowserRecord[];
-  bookmarks: BrowserRecord[];
-  downloads: BrowserRecord[];
-  permissions: BrowserRecord[];
-  logs: BrowserRecord[];
+  history: HistoryRecord[];
+  bookmarks: BookmarkRecord[];
+  downloads: DownloadRecord[];
+  permissions: PermissionRecord[];
+  logs: LogRecord[];
   commands: BrowserCommand[];
-  recentEvents: BrowserRecord[];
-  settings: {
-    homepage: string;
-    searchEngine: string;
-    customSearchUrl: string;
-    theme: string;
-    appearance: "system" | "light" | "dark" | string;
-    sidebarVisible: "show" | "hide" | string;
-    sidebarWidth: string;
-    newTabPage: "blank" | "home" | string;
-    homeUrl: string;
-    language: string;
-    [key: string]: string;
-  };
+  recentEvents: EventRecord[];
+  settings: Settings;
   profilePath: string;
 };
 
@@ -135,23 +170,23 @@ export type BridgeMethodMap = {
 };
 
 export type EventMap = {
-  "tabs.created": unknown;
-  "tabs.updated": unknown;
-  "tabs.closed": unknown;
-  "tabs.activated": unknown;
-  "navigation.started": unknown;
-  "navigation.finished": unknown;
-  "navigation.failed": unknown;
-  "downloads.updated": unknown;
-  "download.changed": unknown;
-  "bookmark.changed": unknown;
-  "history.changed": unknown;
-  "setting.changed": unknown;
-  "permission.changed": unknown;
-  "window.created": unknown;
-  "window.closed": unknown;
-  "window.focused": unknown;
-  "app.stateChanged": unknown;
+  "tabs.created": void;
+  "tabs.updated": void;
+  "tabs.closed": void;
+  "tabs.activated": void;
+  "navigation.started": { tabId: string; url: string };
+  "navigation.finished": { tabId: string; url: string };
+  "navigation.failed": { tabId: string; url: string; errorText: string };
+  "downloads.updated": void;
+  "download.changed": DownloadRecord;
+  "bookmark.changed": void;
+  "history.changed": void;
+  "setting.changed": { key: string; value: string };
+  "permission.changed": void;
+  "window.created": void;
+  "window.closed": void;
+  "window.focused": void;
+  "app.stateChanged": void;
 };
 
 export const fubukiLogoSvg = `<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -1,7 +1,19 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { commands, page, tabs, type BrowserCommand } from "../../bridge/fubuki";
 import { t } from "../../i18n";
-import { browserState, refreshState } from "../../stores/browserStore";
+import {
+  activeTabId,
+  browserState,
+  refreshState,
+} from "../../stores/browserStore";
 import { filterCommands, type PaletteCommand } from "./commands";
 
 type Props = {
@@ -22,37 +34,34 @@ const allowedCommandIds = new Set([
   "app.toggleSidebar",
   "page.zoomReset",
   "app.openDebug",
-  "app.openDevTools"
+  "app.openDevTools",
 ]);
 
-function activeTabId() {
-  return browserState.activeTabId;
-}
-
 function localizeCommand(command: BrowserCommand) {
+  const lang = browserState.settings.language;
   switch (command.id) {
     case "tabs.create":
-      return t("common.newTab", browserState.settings.language);
+      return t("common.newTab", lang);
     case "tabs.close":
-      return t("action.closeTab", browserState.settings.language);
+      return t("action.closeTab", lang);
     case "tabs.reopenClosed":
-      return browserState.settings.language === "ja" ? "閉じたタブを再度開く" : command.title;
+      return lang === "ja" ? "閉じたタブを再度開く" : command.title;
     case "app.openSettings":
-      return t("common.settings", browserState.settings.language);
+      return t("common.settings", lang);
     case "app.openHistory":
-      return t("common.history", browserState.settings.language);
+      return t("common.history", lang);
     case "app.openBookmarks":
-      return t("common.bookmarks", browserState.settings.language);
+      return t("common.bookmarks", lang);
     case "app.openDownloads":
-      return t("common.downloads", browserState.settings.language);
+      return t("common.downloads", lang);
     case "app.toggleSidebar":
-      return t("common.toggleSidebar", browserState.settings.language);
+      return t("common.toggleSidebar", lang);
     case "page.zoomReset":
-      return browserState.settings.language === "ja" ? "表示倍率をリセット" : command.title;
+      return lang === "ja" ? "表示倍率をリセット" : command.title;
     case "app.openDebug":
-      return t("common.debug", browserState.settings.language);
+      return t("common.debug", lang);
     case "app.openDevTools":
-      return browserState.settings.language === "ja" ? "DevToolsを開く" : command.title;
+      return lang === "ja" ? "DevToolsを開く" : command.title;
     default:
       return command.title;
   }
@@ -72,8 +81,8 @@ export default function CommandPalette(props: Props) {
         keywords: command.id.replaceAll(".", " "),
         run: async () => {
           if (command.id === "tabs.close") {
-            const tabId = activeTabId();
-            if (tabId) await tabs.close(tabId);
+            const id = activeTabId();
+            if (id) await tabs.close(id);
             return;
           }
           if (command.id === "page.zoomReset") {
@@ -82,7 +91,7 @@ export default function CommandPalette(props: Props) {
           }
           await commands.execute(command.id);
           await refreshState(command.id);
-        }
+        },
       }));
 
     return [
@@ -92,9 +101,9 @@ export default function CommandPalette(props: Props) {
         category: "UI",
         shortcut: "",
         keywords: "quiet focus minimal zen",
-        run: props.onToggleQuietMode
+        run: props.onToggleQuietMode,
       },
-      ...native
+      ...native,
     ];
   });
 
@@ -144,8 +153,10 @@ export default function CommandPalette(props: Props) {
     }
   };
 
-  window.addEventListener("keydown", onKeyDown);
-  onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  onMount(() => {
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   return (
     <Show when={props.open}>
@@ -161,8 +172,14 @@ export default function CommandPalette(props: Props) {
             ref={inputRef}
             class="command-palette-input"
             value={query()}
-            placeholder={t("commandPalette.placeholder", browserState.settings.language)}
-            aria-label={t("commandPalette.placeholder", browserState.settings.language)}
+            placeholder={t(
+              "commandPalette.placeholder",
+              browserState.settings.language
+            )}
+            aria-label={t(
+              "commandPalette.placeholder",
+              browserState.settings.language
+            )}
             autocomplete="off"
             onInput={(event) => {
               setQuery(event.currentTarget.value);
@@ -170,11 +187,21 @@ export default function CommandPalette(props: Props) {
             }}
           />
           <div class="command-palette-list" role="listbox">
-            <Show when={filtered().length > 0} fallback={<p class="command-palette-empty">{t("commandPalette.empty", browserState.settings.language)}</p>}>
+            <Show
+              when={filtered().length > 0}
+              fallback={
+                <p class="command-palette-empty">
+                  {t("commandPalette.empty", browserState.settings.language)}
+                </p>
+              }
+            >
               <For each={filtered()}>
                 {(command, index) => (
                   <button
-                    classList={{ "command-palette-row": true, selected: index() === selectedIndex() }}
+                    classList={{
+                      "command-palette-row": true,
+                      selected: index() === selectedIndex(),
+                    }}
                     role="option"
                     aria-selected={index() === selectedIndex()}
                     onMouseEnter={() => setSelectedIndex(index())}
@@ -182,7 +209,9 @@ export default function CommandPalette(props: Props) {
                   >
                     <span>
                       <span class="command-palette-title">{command.title}</span>
-                      <span class="command-palette-category">{command.category}</span>
+                      <span class="command-palette-category">
+                        {command.category}
+                      </span>
                     </span>
                     <Show when={command.shortcut}>
                       <kbd>{command.shortcut}</kbd>

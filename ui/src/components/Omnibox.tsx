@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { tabs } from "../bridge/fubuki";
 import { t } from "../i18n";
 import { browserState } from "../stores/browserStore";
@@ -30,8 +30,6 @@ export default function Omnibox() {
   };
 
   let inputRef: HTMLInputElement | undefined;
-
-  onCleanup(() => {});
 
   return (
     <form
