@@ -8,6 +8,16 @@ export default defineConfig({
   build: {
     target: "es2022",
     outDir: "dist",
-    emptyOutDir: true
-  }
+    emptyOutDir: true,
+    cssMinify: "lightningcss",
+    cssCodeSplit: false,
+    modulePreload: {
+      polyfill: false,
+    },
+  },
+  esbuild: {
+    target: "es2022",
+    legalComments: "none",
+    drop: ["console", "debugger"],
+  },
 });

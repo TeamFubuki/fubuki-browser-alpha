@@ -6,6 +6,7 @@
   grid-template-rows: auto minmax(0, 1fr);
   align-content: start;
   gap: 7px;
+  contain: layout style;
 }
 
 .tab-stack:has(.pinned-tab-list) {
@@ -24,6 +25,8 @@
   overflow-x: hidden;
   padding-right: 2px;
   overscroll-behavior: contain;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 400px;
 }
 
 .tab-stack:has(.pinned-tab-list) .vertical-tab-list {
@@ -41,10 +44,10 @@
   background: var(--content-bg);
   color: var(--text);
   font-size: 12px;
+  contain: layout style;
   transition:
     border-color 0.14s ease,
-    background-color 0.14s ease,
-    box-shadow 0.14s ease;
+    background-color 0.14s ease;
 }
 
 .tab-search-toggle {
@@ -58,14 +61,12 @@
   color: var(--muted);
   transition:
     background-color 0.14s ease,
-    color 0.14s ease,
-    transform 0.14s ease;
+    color 0.14s ease;
 }
 
 .tab-search-toggle:hover {
   background: var(--hover);
   color: var(--text);
-  transform: translateY(-1px);
 }
 
 .pinned-tab-list {
@@ -82,9 +83,9 @@
   width: 28px;
   height: 28px;
   border-radius: 7px;
+  contain: layout style;
   transition:
-    background-color 0.14s ease,
-    transform 0.14s ease;
+    background-color 0.14s ease;
 }
 
 .pinned-tab:hover,
@@ -93,7 +94,7 @@
 }
 
 .pinned-tab:hover {
-  transform: translateY(-1px);
+  background: var(--hover);
 }
 
 .pinned-tab-activate {
@@ -125,15 +126,14 @@
   align-items: center;
   border-radius: 7px;
   color: var(--muted);
+  contain: layout style;
   transition:
     background-color 0.14s ease,
-    color 0.14s ease,
-    transform 0.14s ease;
+    color 0.14s ease;
 }
 
 .vertical-tab:hover {
   background: var(--hover);
-  transform: translateY(-1px);
 }
 
 .vertical-tab.active {
@@ -184,8 +184,7 @@
   transition:
     opacity 0.12s ease,
     background-color 0.14s ease,
-    color 0.14s ease,
-    transform 0.14s ease;
+    color 0.14s ease;
 }
 
 .vertical-tab:hover .tab-close,
@@ -198,7 +197,6 @@
   opacity: 1;
   background: var(--hover);
   color: var(--text);
-  transform: scale(1.04);
 }
 
 .tab-icon {
@@ -242,13 +240,6 @@
   .vertical-tab,
   .tab-close {
     transition: none;
-  }
-
-  .tab-search-toggle:hover,
-  .pinned-tab:hover,
-  .vertical-tab:hover,
-  .tab-close:hover {
-    transform: none;
   }
 }
 

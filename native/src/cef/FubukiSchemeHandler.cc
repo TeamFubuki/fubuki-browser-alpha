@@ -810,9 +810,66 @@ bool FubukiSchemeHandler::Read(void *data_out, int bytes_to_read,
 
 void FubukiSchemeHandler::Cancel() {}
 
+std::string ExtractQueryParam(const std::string &url,
+                              const std::string &key) {
+  const size_t qpos = url.find('?');
+  if (qpos == std::string::npos) return "";
+  const std::string query = url.substr(qpos + 1);
+  const std::string needle = key + "=";
+  size_t start = 0;
+  while (start < query.size()) {
+    const size_t pos = query.find(needle, start);
+    if (pos == std::string::npos) return "";
+    if (pos == 0 || query[pos - 1] == '&') {
+      const size_t valueStart = pos + needle.size();
+      const size_t ampersand = query.find('&', valueStart);
+      return query.substr(valueStart,
+                          ampersand == std::string::npos
+                              ? std::string::npos
+                              : ampersand - valueStart);
+    }
+    start = pos + 1;
+  }
+  return "";
+}
+
+std::string SearchRedirectUrl(const std::string &query) {
+  if (query.empty()) return "";
+  const std::string engine = Setting("searchEngine", "google");
+  const std::string customUrl =
+      Setting("customSearchUrl", "https://www.google.com/search?q={query}");
+  std::string encoded = CefURIEncode(query, false).ToString();
+  if (engine == "duckduckgo")
+    return "https://duckduckgo.com/?q=" + encoded;
+  if (engine == "bing")
+    return "https://www.bing.com/search?q=" + encoded;
+  if (engine == "custom") {
+    std::string url = customUrl;
+    const size_t pos = url.find("{query}");
+    if (pos != std::string::npos) url.replace(pos, 7, encoded);
+    return url;
+  }
+  return "https://www.google.com/search?q=" + encoded;
+}
+
 bool FubukiSchemeHandler::LoadRequest(const std::string &url) {
   offset_ = 0;
   auto &cache = PageCache::Instance();
+
+  // Handle new tab search: fubuki://newtab/search?q=...
+  if (url.rfind("fubuki://newtab/search", 0) == 0) {
+    const std::string query = ExtractQueryParam(url, "q");
+    const std::string redirect = SearchRedirectUrl(query);
+    if (!redirect.empty()) {
+      // Use meta refresh for safe redirect (avoids JS injection)
+      const std::string html =
+          "<!doctype html><meta http-equiv=\"refresh\" content=\"0;url=" +
+          redirect + "\">";
+      LoadText(html, "text/html", 200);
+      return true;
+    }
+    // Empty query — just show new tab
+  }
 
   if (url.rfind("fubuki://newtab/", 0) == 0) {
     std::string html;

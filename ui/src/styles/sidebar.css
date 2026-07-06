@@ -27,6 +27,7 @@
 
 .sidebar-drag-area {
   -webkit-app-region: drag;
+  contain: layout;
 }
 
 .new-tab-button,
@@ -48,7 +49,6 @@
 .new-tab-button:hover,
 .sidebar-actions button:hover {
   background: var(--hover);
-  transform: translateY(-1px);
 }
 
 .new-tab-button:disabled,
@@ -71,6 +71,7 @@
   padding-top: 7px;
   border-top: 1px solid var(--line);
   align-self: end;
+  contain: layout style;
 }
 
 .sidebar-actions button {

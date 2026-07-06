@@ -39,6 +39,10 @@ export type FrostAppState = {
   activeWindowId: string | null;
   windows: FrostWindowState[];
   tabs: FrostTabState[];
+  history?: HistoryRecord[];
+  bookmarks?: BookmarkRecord[];
+  downloads?: DownloadRecord[];
+  permissions?: PermissionRecord[];
   settings?: Partial<Settings>;
 };
 
@@ -193,7 +197,16 @@ export type BridgeMethodMap = {
     params: { url?: string; active?: boolean };
     result: boolean;
   };
-  'tabs.list': { params: Record<string, never>; result: FrostTabState[] | Tab[] };
+  'tabs.pin': { params: { tabId: string; pinned: boolean }; result: boolean };
+  'tabs.duplicate': { params: { tabId: string }; result: boolean };
+  'tabs.reopenClosed': { params: Record<string, never>; result: boolean };
+  'tabs.closeOther': { params: { tabId: string }; result: boolean };
+  'tabs.closeToRight': { params: { tabId: string }; result: boolean };
+  'tabs.moveToNewWindow': { params: { tabId: string }; result: boolean };
+  'tabs.list': {
+    params: Record<string, never>;
+    result: FrostTabState[] | Tab[];
+  };
   'tabs.navigate': {
     params: { tabId: string; input: string };
     result: boolean;
@@ -210,7 +223,9 @@ export type BridgeMethodMap = {
     result: FrostWindowState[] | WindowSnapshot[];
   };
   'windows.create': { params: Record<string, never>; result: boolean };
+  'windows.createPrivate': { params: Record<string, never>; result: boolean };
   'windows.close': { params: { windowId?: string }; result: boolean };
+  'windows.reopenClosed': { params: Record<string, never>; result: boolean };
   'bookmarks.save': {
     params: { title: string; url: string; faviconUrl: string };
     result: boolean;
@@ -232,6 +247,12 @@ export type BridgeMethodMap = {
   'downloads.reveal': { params: { path: string }; result: boolean };
   'settings.get': { params: { key: string }; result: string | null };
   'settings.set': { params: { key: string; value: string }; result: boolean };
+  'settings.reset': { params: { key: string }; result: boolean };
+  'ui.setSidebarWidth': { params: { width: number }; result: boolean };
+  'ui.setOverlayActive': {
+    params: { active: boolean; width?: number; height?: number };
+    result: boolean;
+  };
 };
 
 export type EventMap = {
@@ -309,7 +330,12 @@ async function invoke<T = unknown>(
 
   return new Promise<T>((resolve, reject) => {
     window.cefQuery?.({
-      request: JSON.stringify({ version: 0, bridgeVersion: '1', method, params }),
+      request: JSON.stringify({
+        version: 0,
+        bridgeVersion: '1',
+        method,
+        params,
+      }),
       onSuccess: (response) => resolve(JSON.parse(response) as T),
       onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });
@@ -344,10 +370,26 @@ export function invokeBridge<K extends keyof BridgeMethodMap>(
   );
 }
 
-function isFrostAppState(
+export function isFrostAppState(
   value: FrostAppState | BrowserState,
 ): value is FrostAppState {
   return 'protocolVersion' in value && 'activeWindowId' in value;
+}
+
+function defaultSettings(): Settings {
+  return {
+    homepage: 'https://example.com',
+    searchEngine: 'google',
+    customSearchUrl: 'https://www.google.com/search?q={query}',
+    theme: 'light',
+    appearance: 'system',
+    sidebarVisible: 'show',
+    sidebarWidth: '196',
+    newTabPage: 'blank',
+    homeUrl: 'https://example.com',
+    language: 'system',
+    defaultZoomLevel: '0',
+  };
 }
 
 export function fromFrostTab(tab: FrostTabState): Tab {
@@ -397,17 +439,97 @@ export function normalizeAppState(
   const activeWindow = snapshot.windows.find(
     (windowState) => windowState.id === snapshot.activeWindowId,
   );
-  const activeTab = snapshot.tabs.find((tab) => tab.isActive);
+  const tabById = new Map(snapshot.tabs.map((tab) => [tab.id, tab]));
+  const currentWindowTabs = activeWindow
+    ? activeWindow.tabIds
+        .map((tabId) => tabById.get(tabId))
+        .filter((tab): tab is FrostTabState => Boolean(tab))
+    : snapshot.tabs;
+  const activeTab =
+    currentWindowTabs.find((tab) => tab.id === activeWindow?.activeTabId) ??
+    currentWindowTabs.find((tab) => tab.isActive);
 
   return {
     bridgeVersion: `frost-${snapshot.protocolVersion}`,
     windowId: activeWindow?.id ?? '',
     isPrivate: activeWindow?.isPrivate ?? false,
     activeTabId: activeWindow?.activeTabId ?? activeTab?.id ?? '',
-    tabs: snapshot.tabs.map(fromFrostTab),
+    tabs: currentWindowTabs.map((tab) => ({
+      ...fromFrostTab(tab),
+      isActive: tab.id === (activeWindow?.activeTabId ?? activeTab?.id ?? ''),
+    })),
     windows: snapshot.windows.map((windowState) =>
       fromFrostWindow(windowState, snapshot.tabs),
     ),
+    history: snapshot.history ?? [],
+    bookmarks: snapshot.bookmarks ?? [],
+    downloads: snapshot.downloads ?? [],
+    permissions: snapshot.permissions ?? [],
+    logs: [],
+    commands: [],
+    recentEvents: [],
+    settings: { ...defaultSettings(), ...snapshot.settings },
+    profilePath: '',
+  };
+}
+
+function developmentState(): BrowserState {
+  return {
+    bridgeVersion: 'dev',
+    windowId: 'dev-window',
+    isPrivate: false,
+    activeTabId: 'dev-tab-1',
+    tabs: [
+      {
+        id: 'dev-tab-1',
+        title: 'Fubuki Start',
+        url: 'fubuki://newtab/',
+        faviconUrl: '',
+        errorText: '',
+        zoomLevel: 0,
+        isLoading: false,
+        canGoBack: false,
+        canGoForward: false,
+        isActive: true,
+        isPinned: false,
+      },
+      {
+        id: 'dev-tab-2',
+        title: 'Architecture',
+        url: 'fubuki://settings/',
+        faviconUrl: '',
+        errorText: '',
+        zoomLevel: 0,
+        isLoading: false,
+        canGoBack: true,
+        canGoForward: false,
+        isActive: false,
+        isPinned: true,
+      },
+    ],
+    windows: [
+      {
+        id: 'dev-window',
+        private: false,
+        activeTabId: 'dev-tab-1',
+        tabs: [
+          {
+            title: 'Fubuki Start',
+            url: 'fubuki://newtab/',
+            faviconUrl: '',
+            pinned: false,
+            active: true,
+          },
+          {
+            title: 'Architecture',
+            url: 'fubuki://settings/',
+            faviconUrl: '',
+            pinned: true,
+            active: false,
+          },
+        ],
+      },
+    ],
     history: [],
     bookmarks: [],
     downloads: [],
@@ -415,27 +537,26 @@ export function normalizeAppState(
     logs: [],
     commands: [],
     recentEvents: [],
-    settings: {
-      homepage: 'https://example.com',
-      searchEngine: 'google',
-      customSearchUrl: 'https://www.google.com/search?q={query}',
-      theme: 'light',
-      appearance: 'system',
-      sidebarVisible: 'show',
-      sidebarWidth: '196',
-      newTabPage: 'blank',
-      homeUrl: 'https://example.com',
-      language: 'system',
-      defaultZoomLevel: '0',
-      ...snapshot.settings,
-    },
+    settings: defaultSettings(),
     profilePath: '',
   };
 }
 
 export async function getBrowserState(): Promise<BrowserState> {
+  if (!window.cefQuery) {
+    return developmentState();
+  }
   try {
-    return normalizeAppState(await invokeBridge('app.snapshot'));
+    const snapshot = await invokeBridge('app.snapshot');
+    const state = normalizeAppState(snapshot);
+    if (isFrostAppState(snapshot)) {
+      // Fetch commands in parallel, not sequentially
+      const commandsPromise = invokeBridge('commands.list').catch(
+        () => [] as BrowserCommand[],
+      );
+      return { ...state, commands: await commandsPromise };
+    }
+    return state;
   } catch {
     return invokeBridge('app.getState');
   }
@@ -458,22 +579,25 @@ export const commands = {
 
 export const tabs = {
   create: (url = 'fubuki://newtab/') =>
-    commands.execute<boolean>('tabs.create', { url }),
+    invokeBridge('tabs.create', { url, active: true }),
   navigate: (tabId: string, input: string) =>
     invokeBridge('tabs.navigate', { tabId, input }),
   activate: (tabId: string) => invokeBridge('tabs.activate', { tabId }),
-  close: (tabId: string) => commands.execute<boolean>('tabs.close', { tabId }),
+  close: (tabId: string) => invokeBridge('tabs.close', { tabId }),
+  reload: (tabId: string) => invokeBridge('tabs.reload', { tabId }),
+  stop: (tabId: string) => invokeBridge('tabs.stop', { tabId }),
+  goBack: (tabId: string) => invokeBridge('tabs.goBack', { tabId }),
+  goForward: (tabId: string) => invokeBridge('tabs.goForward', { tabId }),
+  move: (tabId: string, toIndex: number) =>
+    invokeBridge('tabs.move', { tabId, toIndex }),
   pin: (tabId: string, pinned: boolean) =>
-    commands.execute<boolean>(pinned ? 'tabs.pin' : 'tabs.unpin', { tabId }),
-  duplicate: (tabId: string) =>
-    commands.execute<boolean>('tabs.duplicate', { tabId }),
-  reopenClosed: () => commands.execute<boolean>('tabs.reopenClosed'),
-  closeOther: (tabId: string) =>
-    commands.execute<boolean>('tabs.closeOther', { tabId }),
-  closeToRight: (tabId: string) =>
-    commands.execute<boolean>('tabs.closeToRight', { tabId }),
+    invokeBridge('tabs.pin', { tabId, pinned }),
+  duplicate: (tabId: string) => invokeBridge('tabs.duplicate', { tabId }),
+  reopenClosed: () => invokeBridge('tabs.reopenClosed'),
+  closeOther: (tabId: string) => invokeBridge('tabs.closeOther', { tabId }),
+  closeToRight: (tabId: string) => invokeBridge('tabs.closeToRight', { tabId }),
   moveToNewWindow: (tabId: string) =>
-    commands.execute<boolean>('tabs.moveToNewWindow', { tabId }),
+    invokeBridge('tabs.moveToNewWindow', { tabId }),
 };
 
 export const page = {
