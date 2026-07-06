@@ -6,10 +6,13 @@
 namespace fubuki {
 
 class FubukiRenderApp : public CefApp, public CefRenderProcessHandler {
- public:
-  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+public:
+  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
+    return this;
+  }
 
-  void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+  void
+  OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
   void OnWebKitInitialized() override;
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefFrame> frame,
@@ -22,7 +25,7 @@ class FubukiRenderApp : public CefApp, public CefRenderProcessHandler {
                                 CefProcessId source_process,
                                 CefRefPtr<CefProcessMessage> message) override;
 
- private:
+private:
   CefRefPtr<CefMessageRouterRendererSide> rendererRouter_;
 
   IMPLEMENT_REFCOUNTING(FubukiRenderApp);

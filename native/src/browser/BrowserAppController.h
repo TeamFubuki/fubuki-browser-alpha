@@ -15,29 +15,40 @@ namespace fubuki {
 class BrowserWindow;
 
 class BrowserAppController {
- public:
+public:
   explicit BrowserAppController(std::filesystem::path profilePath);
   ~BrowserAppController();
 
   void Start();
-  BrowserWindow* NewWindow(bool privateWindow = false, CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+  BrowserWindow *
+  NewWindow(bool privateWindow = false,
+            CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool NewPrivateWindow();
-  bool RequestNewWindow(bool privateWindow = false, CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+  bool RequestNewWindow(bool privateWindow = false,
+                        CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool RequestNewPrivateWindow();
   bool CloseActiveWindow();
   bool ReopenClosedWindow();
-  void NotifyWindowFocused(BrowserWindow* window);
-  void NotifyWindowClosed(BrowserWindow* window);
+  void NotifyWindowFocused(BrowserWindow *window);
+  void NotifyWindowClosed(BrowserWindow *window);
   void PersistSession();
 
-  BrowserWindow* ActiveWindow() const;
-  std::vector<BrowserWindow*> Windows() const;
-  BrowserDataStore& Store() { return store_; }
-  const BrowserDataStore& Store() const { return store_; }
-  EventBus& Events() { return eventBus_; }
-  const EventBus& Events() const { return eventBus_; }
+  BrowserWindow *ActiveWindow() const;
+  std::vector<BrowserWindow *> Windows() const;
+  BrowserDataStore &Store() {
+    return store_;
+  }
+  const BrowserDataStore &Store() const {
+    return store_;
+  }
+  EventBus &Events() {
+    return eventBus_;
+  }
+  const EventBus &Events() const {
+    return eventBus_;
+  }
 
- private:
+private:
   struct WindowContext {
     std::unique_ptr<TabManager> tabManager;
     std::unique_ptr<BrowserWindow> window;
@@ -51,13 +62,13 @@ class BrowserAppController {
   EventBus eventBus_;
   std::vector<std::unique_ptr<WindowContext>> windows_;
   std::vector<CefRefPtr<CefDictionaryValue>> closedWindows_;
-  BrowserWindow* activeWindow_ = nullptr;
+  BrowserWindow *activeWindow_ = nullptr;
   int nextWindowId_ = 1;
   bool restoring_ = false;
 };
 
-BrowserAppController* GetBrowserAppController();
-void SetBrowserAppController(BrowserAppController* controller);
-bool DispatchBrowserMenuCommand(const std::string& commandId);
+BrowserAppController *GetBrowserAppController();
+void SetBrowserAppController(BrowserAppController *controller);
+bool DispatchBrowserMenuCommand(const std::string &commandId);
 
 }  // namespace fubuki

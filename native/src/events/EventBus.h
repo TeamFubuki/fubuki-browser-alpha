@@ -39,15 +39,15 @@ struct Event {
 };
 
 class EventBus {
- public:
-  using Listener = std::function<void(const Event&)>;
+public:
+  using Listener = std::function<void(const Event &)>;
 
   int Subscribe(EventType type, Listener listener);
   void Unsubscribe(EventType type, int token);
-  void Publish(const Event& event);
+  void Publish(const Event &event);
   std::vector<Event> RecentEvents() const;
 
- private:
+private:
   mutable std::mutex mutex_;
   int nextToken_ = 1;
   std::map<EventType, std::map<int, Listener>> listeners_;

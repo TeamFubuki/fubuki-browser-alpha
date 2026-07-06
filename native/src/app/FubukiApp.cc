@@ -11,7 +11,7 @@ namespace fubuki {
 
 void InitializeMacApplication();
 
-int RunFubukiApplication(int argc, char* argv[]) {
+int RunFubukiApplication(int argc, char *argv[]) {
   CefScopedLibraryLoader libraryLoader;
   if (!libraryLoader.LoadInMain()) {
     return 1;
@@ -29,9 +29,11 @@ int RunFubukiApplication(int argc, char* argv[]) {
   settings.no_sandbox = true;
   settings.persist_session_cookies = true;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
-  const char* home = std::getenv("HOME");
-  const auto basePath = home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
-                             : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
+  const char *home = std::getenv("HOME");
+  const auto basePath =
+      home ? std::filesystem::path(home) /
+                 "Library/Application Support/Fubuki Browser Alpha"
+           : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
   std::filesystem::create_directories(basePath);
   const auto cachePath = basePath / "CEFProfile";
   const auto logPath = basePath / "cef.log";

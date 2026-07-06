@@ -19,13 +19,14 @@ constexpr size_t kMaxHistoryItems = 500;
 constexpr size_t kMaxDownloadItems = 20;
 constexpr size_t kMaxLogItems = 300;
 
-std::string ColumnText(sqlite3_stmt* statement, int column) {
-  const unsigned char* text = sqlite3_column_text(statement, column);
-  return text ? reinterpret_cast<const char*>(text) : "";
+std::string ColumnText(sqlite3_stmt *statement, int column) {
+  const unsigned char *text = sqlite3_column_text(statement, column);
+  return text ? reinterpret_cast<const char *>(text) : "";
 }
 
-void BindText(sqlite3_stmt* statement, int index, const std::string& value) {
-  sqlite3_bind_text(statement, index, value.c_str(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
+void BindText(sqlite3_stmt *statement, int index, const std::string &value) {
+  sqlite3_bind_text(statement, index, value.c_str(),
+                    static_cast<int>(value.size()), SQLITE_TRANSIENT);
 }
 
 }  // namespace
@@ -33,12 +34,9 @@ void BindText(sqlite3_stmt* statement, int index, const std::string& value) {
 BrowserDataStore::BrowserDataStore(std::filesystem::path profilePath)
     : profilePath_(std::move(profilePath)),
       databasePath_(profilePath_ / "fubuki.sqlite3"),
-      history_(CefListValue::Create()),
-      bookmarks_(CefListValue::Create()),
-      downloads_(CefListValue::Create()),
-      permissions_(CefListValue::Create()),
-      settings_(CefDictionaryValue::Create()),
-      logs_(CefListValue::Create()) {}
+      history_(CefListValue::Create()), bookmarks_(CefListValue::Create()),
+      downloads_(CefListValue::Create()), permissions_(CefListValue::Create()),
+      settings_(CefDictionaryValue::Create()), logs_(CefListValue::Create()) {}
 
 BrowserDataStore::~BrowserDataStore() {
   if (db_) {
@@ -54,11 +52,14 @@ void BrowserDataStore::Load() {
   MigrateJsonFiles();
   EnsureDefaultSetting("homepage", "https://example.com");
   EnsureDefaultSetting("searchEngine", "google");
-  EnsureDefaultSetting("customSearchUrl", "https://www.google.com/search?q={query}");
+  EnsureDefaultSetting("customSearchUrl",
+                       "https://www.google.com/search?q={query}");
   EnsureDefaultSetting("startupBehavior", "newTab");
   EnsureDefaultSetting("sessionJson", "");
-  const char* home = std::getenv("HOME");
-  EnsureDefaultSetting("downloadDirectory", home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp");
+  const char *home = std::getenv("HOME");
+  EnsureDefaultSetting(
+      "downloadDirectory",
+      home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp");
   EnsureDefaultSetting("theme", "light");
   EnsureDefaultSetting("appearance", "system");
   EnsureDefaultSetting("toolbarDensity", "compact");
@@ -80,29 +81,40 @@ void BrowserDataStore::Load() {
   RefreshCaches();
 }
 
-void BrowserDataStore::AddHistory(const std::string& title, const std::string& url) {
-  if (url.empty() || url.rfind("fubuki://", 0) == 0 || url.rfind("data:", 0) == 0) {
+void BrowserDataStore::AddHistory(const std::string &title,
+                                  const std::string &url) {
+  if (url.empty() || url.rfind("fubuki://", 0) == 0 ||
+      url.rfind("data:", 0) == 0) {
     return;
   }
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT INTO history(title,url,created_at) VALUES(?,?,?)", -1, &statement, nullptr);
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_,
+                     "INSERT INTO history(title,url,created_at) VALUES(?,?,?)",
+                     -1, &statement, nullptr);
   BindText(statement, 1, title.empty() ? url : title);
   BindText(statement, 2, url);
   BindText(statement, 3, NowIsoString());
   sqlite3_step(statement);
   sqlite3_finalize(statement);
-  Execute("DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)");
+  Execute("DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER "
+          "BY id DESC LIMIT 500)");
   RefreshList("history", history_, kMaxHistoryItems);
 }
 
-bool BrowserDataStore::AddBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
-  if (url.empty() || url.rfind("fubuki://", 0) == 0 || url.rfind("data:", 0) == 0) {
+bool BrowserDataStore::AddBookmark(const std::string &title,
+                                   const std::string &url,
+                                   const std::string &faviconUrl) {
+  if (url.empty() || url.rfind("fubuki://", 0) == 0 ||
+      url.rfind("data:", 0) == 0) {
     return false;
   }
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT INTO bookmarks(title,url,favicon_url,created_at) VALUES(?,?,?,?) "
-                          "ON CONFLICT(url) DO UPDATE SET title=excluded.title,favicon_url=excluded.favicon_url",
-                    -1, &statement, nullptr);
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(
+      db_,
+      "INSERT INTO bookmarks(title,url,favicon_url,created_at) VALUES(?,?,?,?) "
+      "ON CONFLICT(url) DO UPDATE SET "
+      "title=excluded.title,favicon_url=excluded.favicon_url",
+      -1, &statement, nullptr);
   BindText(statement, 1, title.empty() ? url : title);
   BindText(statement, 2, url);
   BindText(statement, 3, faviconUrl);
@@ -113,45 +125,55 @@ bool BrowserDataStore::AddBookmark(const std::string& title, const std::string& 
   return ok;
 }
 
-bool BrowserDataStore::RemoveBookmark(const std::string& url) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "DELETE FROM bookmarks WHERE url=?", -1, &statement, nullptr);
+bool BrowserDataStore::RemoveBookmark(const std::string &url) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM bookmarks WHERE url=?", -1, &statement,
+                     nullptr);
   BindText(statement, 1, url);
-  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  const bool ok =
+      sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
   sqlite3_finalize(statement);
   RefreshList("bookmarks", bookmarks_, 500);
   return ok;
 }
 
-bool BrowserDataStore::RemoveHistory(const std::string& url) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE url=?", -1, &statement, nullptr);
+bool BrowserDataStore::RemoveHistory(const std::string &url) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE url=?", -1, &statement,
+                     nullptr);
   BindText(statement, 1, url);
-  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  const bool ok =
+      sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
   sqlite3_finalize(statement);
   RefreshList("history", history_, kMaxHistoryItems);
   return ok;
 }
 
-bool BrowserDataStore::RemoveDownload(const std::string& url, const std::string& path) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "DELETE FROM downloads WHERE (url=? AND ?<>'') OR (path=? AND ?<>'')", -1, &statement, nullptr);
+bool BrowserDataStore::RemoveDownload(const std::string &url,
+                                      const std::string &path) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(
+      db_,
+      "DELETE FROM downloads WHERE (url=? AND ?<>'') OR (path=? AND ?<>'')", -1,
+      &statement, nullptr);
   BindText(statement, 1, url);
   BindText(statement, 2, url);
   BindText(statement, 3, path);
   BindText(statement, 4, path);
-  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  const bool ok =
+      sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
   sqlite3_finalize(statement);
   RefreshList("downloads", downloads_, kMaxDownloadItems);
   return ok;
 }
 
-bool BrowserDataStore::HasDownloadPath(const std::string& path) const {
+bool BrowserDataStore::HasDownloadPath(const std::string &path) const {
   if (path.empty()) {
     return false;
   }
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "SELECT 1 FROM downloads WHERE path=? LIMIT 1", -1, &statement, nullptr);
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_, "SELECT 1 FROM downloads WHERE path=? LIMIT 1", -1,
+                     &statement, nullptr);
   BindText(statement, 1, path);
   const bool ok = sqlite3_step(statement) == SQLITE_ROW;
   sqlite3_finalize(statement);
@@ -170,7 +192,7 @@ bool BrowserDataStore::ClearHistory() {
   return true;
 }
 
-bool BrowserDataStore::ClearHistoryRange(const std::string& range) {
+bool BrowserDataStore::ClearHistoryRange(const std::string &range) {
   if (range == "all") {
     return ClearHistory();
   }
@@ -197,8 +219,9 @@ bool BrowserDataStore::ClearHistoryRange(const std::string& range) {
   out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S%z");
   const std::string cutoffText = out.str();
 
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE created_at >= ?", -1, &statement, nullptr);
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM history WHERE created_at >= ?", -1,
+                     &statement, nullptr);
   BindText(statement, 1, cutoffText);
   const bool ok = sqlite3_step(statement) == SQLITE_DONE;
   sqlite3_finalize(statement);
@@ -218,22 +241,26 @@ bool BrowserDataStore::ClearLogs() {
   return true;
 }
 
-bool BrowserDataStore::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
+bool BrowserDataStore::SetPermission(const std::string &origin,
+                                     const std::string &permission,
+                                     const std::string &value) {
   if (origin.empty() || permission.empty() ||
-      (permission != "notifications" && permission != "camera" && permission != "microphone" &&
-       permission != "location" && permission != "popups")) {
+      (permission != "notifications" && permission != "camera" &&
+       permission != "microphone" && permission != "location" &&
+       permission != "popups")) {
     return false;
   }
   if (value != "ask" && value != "allow" && value != "deny") {
     return false;
   }
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_,
-                    "INSERT INTO site_permissions(origin,permission,value,updated_at) VALUES(?,?,?,?) "
-                    "ON CONFLICT(origin,permission) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
-                    -1,
-                    &statement,
-                    nullptr);
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(
+      db_,
+      "INSERT INTO site_permissions(origin,permission,value,updated_at) "
+      "VALUES(?,?,?,?) "
+      "ON CONFLICT(origin,permission) DO UPDATE SET "
+      "value=excluded.value,updated_at=excluded.updated_at",
+      -1, &statement, nullptr);
   BindText(statement, 1, origin);
   BindText(statement, 2, permission);
   BindText(statement, 3, value);
@@ -244,30 +271,37 @@ bool BrowserDataStore::SetPermission(const std::string& origin, const std::strin
   return ok;
 }
 
-bool BrowserDataStore::RemovePermission(const std::string& origin, const std::string& permission) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "DELETE FROM site_permissions WHERE origin=? AND permission=?", -1, &statement, nullptr);
+bool BrowserDataStore::RemovePermission(const std::string &origin,
+                                        const std::string &permission) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(
+      db_, "DELETE FROM site_permissions WHERE origin=? AND permission=?", -1,
+      &statement, nullptr);
   BindText(statement, 1, origin);
   BindText(statement, 2, permission);
-  const bool ok = sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
+  const bool ok =
+      sqlite3_step(statement) == SQLITE_DONE && sqlite3_changes(db_) > 0;
   sqlite3_finalize(statement);
   RefreshList("site_permissions", permissions_, 500);
   return ok;
 }
 
-void BrowserDataStore::AddDownload(const std::string& url, const std::string& path, const std::string& state) {
+void BrowserDataStore::AddDownload(const std::string &url,
+                                   const std::string &path,
+                                   const std::string &state) {
   UpdateDownload(url, path, state, 0);
 }
 
-void BrowserDataStore::UpdateDownload(const std::string& url, const std::string& path, const std::string& state, int percent) {
+void BrowserDataStore::UpdateDownload(const std::string &url,
+                                      const std::string &path,
+                                      const std::string &state, int percent) {
   const std::string now = NowIsoString();
-  sqlite3_stmt* statement = nullptr;
+  sqlite3_stmt *statement = nullptr;
   sqlite3_prepare_v2(db_,
-                    "UPDATE downloads SET state=?,percent=?,updated_at=? "
-                    "WHERE COALESCE(url,'')=COALESCE(?, '') AND COALESCE(path,'')=COALESCE(?, '')",
-                    -1,
-                    &statement,
-                    nullptr);
+                     "UPDATE downloads SET state=?,percent=?,updated_at=? "
+                     "WHERE COALESCE(url,'')=COALESCE(?, '') AND "
+                     "COALESCE(path,'')=COALESCE(?, '')",
+                     -1, &statement, nullptr);
   BindText(statement, 1, state);
   sqlite3_bind_int(statement, 2, percent);
   BindText(statement, 3, now);
@@ -278,7 +312,11 @@ void BrowserDataStore::UpdateDownload(const std::string& url, const std::string&
   sqlite3_finalize(statement);
 
   if (!updated) {
-    sqlite3_prepare_v2(db_, "INSERT INTO downloads(url,path,state,percent,created_at,updated_at) VALUES(?,?,?,?,?,?)", -1, &statement, nullptr);
+    sqlite3_prepare_v2(
+        db_,
+        "INSERT INTO downloads(url,path,state,percent,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?)",
+        -1, &statement, nullptr);
     BindText(statement, 1, url);
     BindText(statement, 2, path);
     BindText(statement, 3, state);
@@ -290,36 +328,45 @@ void BrowserDataStore::UpdateDownload(const std::string& url, const std::string&
   }
 
   if (state == "completed" && !path.empty()) {
-    sqlite3_prepare_v2(db_,
-                      "DELETE FROM downloads WHERE COALESCE(path,'')=COALESCE(?, '') "
-                      "AND id NOT IN (SELECT MAX(id) FROM downloads WHERE COALESCE(path,'')=COALESCE(?, ''))",
-                      -1,
-                      &statement,
-                      nullptr);
+    sqlite3_prepare_v2(
+        db_,
+        "DELETE FROM downloads WHERE COALESCE(path,'')=COALESCE(?, '') "
+        "AND id NOT IN (SELECT MAX(id) FROM downloads WHERE "
+        "COALESCE(path,'')=COALESCE(?, ''))",
+        -1, &statement, nullptr);
     BindText(statement, 1, path);
     BindText(statement, 2, path);
     sqlite3_step(statement);
     sqlite3_finalize(statement);
   }
-  Execute("DELETE FROM downloads WHERE id NOT IN (SELECT id FROM downloads ORDER BY id DESC LIMIT 200)");
+  Execute("DELETE FROM downloads WHERE id NOT IN (SELECT id FROM downloads "
+          "ORDER BY id DESC LIMIT 200)");
   RefreshList("downloads", downloads_, kMaxDownloadItems);
 }
 
-void BrowserDataStore::Log(const std::string& level, const std::string& message) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT INTO logs(level,message,created_at) VALUES(?,?,?)", -1, &statement, nullptr);
+void BrowserDataStore::Log(const std::string &level,
+                           const std::string &message) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_,
+                     "INSERT INTO logs(level,message,created_at) VALUES(?,?,?)",
+                     -1, &statement, nullptr);
   BindText(statement, 1, level);
   BindText(statement, 2, message);
   BindText(statement, 3, NowIsoString());
   sqlite3_step(statement);
   sqlite3_finalize(statement);
-  Execute("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 300)");
+  Execute("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id "
+          "DESC LIMIT 300)");
   RefreshList("logs", logs_, kMaxLogItems);
 }
 
-void BrowserDataStore::SetSetting(const std::string& key, const std::string& value) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", -1, &statement, nullptr);
+void BrowserDataStore::SetSetting(const std::string &key,
+                                  const std::string &value) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_,
+                     "INSERT INTO settings(key,value) VALUES(?,?) ON "
+                     "CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     -1, &statement, nullptr);
   BindText(statement, 1, key);
   BindText(statement, 2, value);
   sqlite3_step(statement);
@@ -327,7 +374,7 @@ void BrowserDataStore::SetSetting(const std::string& key, const std::string& val
   RefreshSettings();
 }
 
-void BrowserDataStore::ResetSetting(const std::string& key) {
+void BrowserDataStore::ResetSetting(const std::string &key) {
   const std::string value = DefaultSetting(key);
   if (!value.empty() || key == "sessionJson") {
     SetSetting(key, value);
@@ -351,8 +398,8 @@ void BrowserDataStore::OpenDatabase() {
   Execute("PRAGMA synchronous=NORMAL");
 }
 
-void BrowserDataStore::Execute(const std::string& sql) const {
-  char* error = nullptr;
+void BrowserDataStore::Execute(const std::string &sql) const {
+  char *error = nullptr;
   sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &error);
   if (error) {
     sqlite3_free(error);
@@ -360,16 +407,25 @@ void BrowserDataStore::Execute(const std::string& sql) const {
 }
 
 void BrowserDataStore::EnsureSchema() {
-  Execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  Execute("CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, favicon_url TEXT, created_at TEXT NOT NULL)");
-  Execute("CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL)");
-  Execute("CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, path TEXT, state TEXT, percent INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT)");
+  Execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
+          "TEXT NOT NULL)");
+  Execute("CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
+          "AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, "
+          "favicon_url TEXT, created_at TEXT NOT NULL)");
+  Execute("CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
+          "AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, created_at "
+          "TEXT NOT NULL)");
+  Execute("CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
+          "AUTOINCREMENT, url TEXT, path TEXT, state TEXT, percent INTEGER "
+          "DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT)");
   {
     bool hasUpdatedAtIndex = false;
-    sqlite3_stmt* pragmaStmt = nullptr;
-    if (sqlite3_prepare_v2(db_, "PRAGMA table_info(downloads)", -1, &pragmaStmt, nullptr) == SQLITE_OK) {
+    sqlite3_stmt *pragmaStmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "PRAGMA table_info(downloads)", -1, &pragmaStmt,
+                           nullptr) == SQLITE_OK) {
       while (sqlite3_step(pragmaStmt) == SQLITE_ROW) {
-        const char* colName = reinterpret_cast<const char*>(sqlite3_column_text(pragmaStmt, 1));
+        const char *colName =
+            reinterpret_cast<const char *>(sqlite3_column_text(pragmaStmt, 1));
         if (colName && std::string(colName) == "updated_at") {
           hasUpdatedAtIndex = true;
           break;
@@ -381,54 +437,85 @@ void BrowserDataStore::EnsureSchema() {
       Execute("ALTER TABLE downloads ADD COLUMN updated_at TEXT");
     }
   }
-  Execute("UPDATE downloads SET updated_at=created_at WHERE updated_at IS NULL OR updated_at=''");
-  Execute("DELETE FROM downloads WHERE id NOT IN (SELECT MAX(id) FROM downloads GROUP BY COALESCE(url,''), COALESCE(path,''))");
-  Execute("CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT, created_at TEXT NOT NULL)");
-  Execute("CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT NULL, permission TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(origin, permission))");
+  Execute("UPDATE downloads SET updated_at=created_at WHERE updated_at IS NULL "
+          "OR updated_at=''");
+  Execute("DELETE FROM downloads WHERE id NOT IN (SELECT MAX(id) FROM "
+          "downloads GROUP BY COALESCE(url,''), COALESCE(path,''))");
+  Execute("CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
+          "AUTOINCREMENT, level TEXT, message TEXT, created_at TEXT NOT NULL)");
+  Execute("CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT NULL, "
+          "permission TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT "
+          "NULL, PRIMARY KEY(origin, permission))");
 }
 
-void BrowserDataStore::EnsureDefaultSetting(const std::string& key, const std::string& value) {
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", -1, &statement, nullptr);
+void BrowserDataStore::EnsureDefaultSetting(const std::string &key,
+                                            const std::string &value) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_,
+                     "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",
+                     -1, &statement, nullptr);
   BindText(statement, 1, key);
   BindText(statement, 2, value);
   sqlite3_step(statement);
   sqlite3_finalize(statement);
 }
 
-std::string BrowserDataStore::DefaultSetting(const std::string& key) const {
-  if (key == "homepage") return "https://example.com";
-  if (key == "searchEngine") return "google";
-  if (key == "customSearchUrl") return "https://www.google.com/search?q={query}";
-  if (key == "startupBehavior") return "newTab";
-  if (key == "sessionJson") return "";
+std::string BrowserDataStore::DefaultSetting(const std::string &key) const {
+  if (key == "homepage")
+    return "https://example.com";
+  if (key == "searchEngine")
+    return "google";
+  if (key == "customSearchUrl")
+    return "https://www.google.com/search?q={query}";
+  if (key == "startupBehavior")
+    return "newTab";
+  if (key == "sessionJson")
+    return "";
   if (key == "downloadDirectory") {
-    const char* home = std::getenv("HOME");
+    const char *home = std::getenv("HOME");
     return home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
   }
-  if (key == "theme") return "light";
-  if (key == "appearance") return "system";
-  if (key == "toolbarDensity") return "compact";
-  if (key == "sidebarVisible") return "show";
-  if (key == "sidebarWidth") return "196";
-  if (key == "defaultBookmarkDisplay") return "sidebar";
-  if (key == "openBookmarkIn") return "current";
-  if (key == "showBookmarkFavicons") return "on";
-  if (key == "newTabPage") return "blank";
-  if (key == "homeUrl") return "https://example.com";
-  if (key == "askBeforeDownload") return "off";
-  if (key == "defaultZoomLevel") return "0";
-  if (key == "closeWindowWithLastTab") return "off";
-  if (key == "privateSearchEngine") return "default";
-  if (key == "language") return "en";
-  if (key == "newTabBackgroundMode") return "unsplash";
-  if (key == "newTabBackgroundColor") return "#f8fafd";
-  if (key == "newTabBackgroundUrl") return "";
+  if (key == "theme")
+    return "light";
+  if (key == "appearance")
+    return "system";
+  if (key == "toolbarDensity")
+    return "compact";
+  if (key == "sidebarVisible")
+    return "show";
+  if (key == "sidebarWidth")
+    return "196";
+  if (key == "defaultBookmarkDisplay")
+    return "sidebar";
+  if (key == "openBookmarkIn")
+    return "current";
+  if (key == "showBookmarkFavicons")
+    return "on";
+  if (key == "newTabPage")
+    return "blank";
+  if (key == "homeUrl")
+    return "https://example.com";
+  if (key == "askBeforeDownload")
+    return "off";
+  if (key == "defaultZoomLevel")
+    return "0";
+  if (key == "closeWindowWithLastTab")
+    return "off";
+  if (key == "privateSearchEngine")
+    return "default";
+  if (key == "language")
+    return "en";
+  if (key == "newTabBackgroundMode")
+    return "unsplash";
+  if (key == "newTabBackgroundColor")
+    return "#f8fafd";
+  if (key == "newTabBackgroundUrl")
+    return "";
   return "";
 }
 
-int BrowserDataStore::CountRows(const std::string& table) const {
-  sqlite3_stmt* statement = nullptr;
+int BrowserDataStore::CountRows(const std::string &table) const {
+  sqlite3_stmt *statement = nullptr;
   const std::string sql = "SELECT COUNT(*) FROM " + table;
   sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement, nullptr);
   int count = 0;
@@ -457,7 +544,7 @@ void BrowserDataStore::MigrateJsonFiles() {
   }
 }
 
-void BrowserDataStore::MigrateSettingsJson(const std::filesystem::path& path) {
+void BrowserDataStore::MigrateSettingsJson(const std::filesystem::path &path) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     return;
@@ -471,9 +558,11 @@ void BrowserDataStore::MigrateSettingsJson(const std::filesystem::path& path) {
   auto dict = parsed->GetDictionary();
   CefDictionaryValue::KeyList keys;
   dict->GetKeys(keys);
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", -1, &statement, nullptr);
-  for (const auto& key : keys) {
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_,
+                     "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",
+                     -1, &statement, nullptr);
+  for (const auto &key : keys) {
     if (dict->GetType(key) != VTYPE_STRING) {
       continue;
     }
@@ -485,7 +574,8 @@ void BrowserDataStore::MigrateSettingsJson(const std::filesystem::path& path) {
   sqlite3_finalize(statement);
 }
 
-void BrowserDataStore::MigrateRecordsJson(const std::filesystem::path& path, const std::string& table) {
+void BrowserDataStore::MigrateRecordsJson(const std::filesystem::path &path,
+                                          const std::string &table) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     return;
@@ -497,14 +587,17 @@ void BrowserDataStore::MigrateRecordsJson(const std::filesystem::path& path, con
     return;
   }
   auto list = parsed->GetList();
-  const std::string sql = table == "bookmarks"
-                              ? "INSERT OR IGNORE INTO bookmarks(title,url,favicon_url,created_at) VALUES(?,?,?,?)"
-                          : table == "history"
-                              ? "INSERT INTO history(title,url,created_at) VALUES(?,?,?)"
-                          : table == "downloads"
-                              ? "INSERT INTO downloads(url,path,state,percent,created_at) VALUES(?,?,?,?,?)"
-                              : "INSERT INTO logs(level,message,created_at) VALUES(?,?,?)";
-  sqlite3_stmt* statement = nullptr;
+  const std::string sql =
+      table == "bookmarks"
+          ? "INSERT OR IGNORE INTO bookmarks(title,url,favicon_url,created_at) "
+            "VALUES(?,?,?,?)"
+      : table == "history"
+          ? "INSERT INTO history(title,url,created_at) VALUES(?,?,?)"
+      : table == "downloads"
+          ? "INSERT INTO downloads(url,path,state,percent,created_at) "
+            "VALUES(?,?,?,?,?)"
+          : "INSERT INTO logs(level,message,created_at) VALUES(?,?,?)";
+  sqlite3_stmt *statement = nullptr;
   sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement, nullptr);
   for (size_t i = 0; i < list->GetSize(); ++i) {
     auto item = list->GetDictionary(i);
@@ -548,26 +641,36 @@ void BrowserDataStore::RefreshCaches() {
 
 void BrowserDataStore::RefreshSettings() {
   settings_ = CefDictionaryValue::Create();
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db_, "SELECT key,value FROM settings", -1, &statement, nullptr);
+  sqlite3_stmt *statement = nullptr;
+  sqlite3_prepare_v2(db_, "SELECT key,value FROM settings", -1, &statement,
+                     nullptr);
   while (sqlite3_step(statement) == SQLITE_ROW) {
     settings_->SetString(ColumnText(statement, 0), ColumnText(statement, 1));
   }
   sqlite3_finalize(statement);
 }
 
-void BrowserDataStore::RefreshList(const std::string& table, CefRefPtr<CefListValue> target, size_t limit) {
+void BrowserDataStore::RefreshList(const std::string &table,
+                                   CefRefPtr<CefListValue> target,
+                                   size_t limit) {
   target->Clear();
-  const std::string sql = table == "bookmarks"
-                              ? "SELECT title,url,favicon_url,created_at,NULL,NULL,NULL FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history"
-                              ? "SELECT title,url,NULL,created_at,NULL,NULL,NULL FROM history ORDER BY id DESC LIMIT ?"
-                          : table == "downloads"
-                              ? "SELECT NULL,url,NULL,COALESCE(updated_at,created_at),path,state,percent FROM downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC LIMIT ?"
-                          : table == "site_permissions"
-                              ? "SELECT origin,permission,NULL,updated_at,NULL,value,NULL FROM site_permissions ORDER BY updated_at DESC LIMIT ?"
-                              : "SELECT NULL,NULL,NULL,created_at,NULL,level,message FROM logs ORDER BY id DESC LIMIT ?";
-  sqlite3_stmt* statement = nullptr;
+  const std::string sql =
+      table == "bookmarks"
+          ? "SELECT title,url,favicon_url,created_at,NULL,NULL,NULL FROM "
+            "bookmarks ORDER BY id DESC LIMIT ?"
+      : table == "history" ? "SELECT title,url,NULL,created_at,NULL,NULL,NULL "
+                             "FROM history ORDER BY id DESC LIMIT ?"
+      : table == "downloads"
+          ? "SELECT "
+            "NULL,url,NULL,COALESCE(updated_at,created_at),path,state,percent "
+            "FROM downloads ORDER BY COALESCE(updated_at,created_at) DESC,id "
+            "DESC LIMIT ?"
+      : table == "site_permissions"
+          ? "SELECT origin,permission,NULL,updated_at,NULL,value,NULL FROM "
+            "site_permissions ORDER BY updated_at DESC LIMIT ?"
+          : "SELECT NULL,NULL,NULL,created_at,NULL,level,message FROM logs "
+            "ORDER BY id DESC LIMIT ?";
+  sqlite3_stmt *statement = nullptr;
   sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement, nullptr);
   sqlite3_bind_int(statement, 1, static_cast<int>(limit));
   size_t index = 0;
@@ -581,7 +684,9 @@ void BrowserDataStore::RefreshList(const std::string& table, CefRefPtr<CefListVa
     item->SetString("state", ColumnText(statement, 5));
     item->SetString("permission", ColumnText(statement, 1));
     item->SetString("value", ColumnText(statement, 5));
-    item->SetInt("percent", sqlite3_column_type(statement, 6) == SQLITE_NULL ? 0 : sqlite3_column_int(statement, 6));
+    item->SetInt("percent", sqlite3_column_type(statement, 6) == SQLITE_NULL
+                                ? 0
+                                : sqlite3_column_int(statement, 6));
     item->SetString("level", ColumnText(statement, 5));
     item->SetString("message", ColumnText(statement, 6));
     target->SetDictionary(index++, item);

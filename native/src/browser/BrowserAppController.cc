@@ -12,9 +12,10 @@ namespace fubuki {
 
 namespace {
 
-BrowserAppController* gController = nullptr;
+BrowserAppController *gController = nullptr;
 
-CefRefPtr<CefValue> ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
+CefRefPtr<CefValue>
+ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
   auto value = CefValue::Create();
   value->SetDictionary(dictionary);
   return value;
@@ -32,7 +33,8 @@ BrowserAppController::~BrowserAppController() = default;
 
 void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
-  const std::string startupBehavior = store_.Settings()->GetString("startupBehavior");
+  const std::string startupBehavior =
+      store_.Settings()->GetString("startupBehavior");
   bool restored = false;
   if (startupBehavior == "restore") {
     restoring_ = true;
@@ -50,18 +52,26 @@ void BrowserAppController::Start() {
   }
 }
 
-BrowserWindow* BrowserAppController::NewWindow(bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
+BrowserWindow *
+BrowserAppController::NewWindow(bool privateWindow,
+                                CefRefPtr<CefDictionaryValue> restoreState) {
   CEF_REQUIRE_UI_THREAD();
   auto context = std::make_unique<WindowContext>();
   context->tabManager = std::make_unique<TabManager>(eventBus_);
-  BrowserWindow* raw = nullptr;
+  BrowserWindow *raw = nullptr;
   const std::string windowId = NextWindowId();
-  context->window = std::make_unique<BrowserWindow>(*this, *context->tabManager, windowId, privateWindow);
+  context->window = std::make_unique<BrowserWindow>(*this, *context->tabManager,
+                                                    windowId, privateWindow);
   raw = context->window.get();
   windows_.push_back(std::move(context));
   activeWindow_ = raw;
   raw->Show(restoreState);
-  eventBus_.Publish({EventType::WindowCreated, "window.created", {}, windowId, "", privateWindow ? "private" : "normal"});
+  eventBus_.Publish({EventType::WindowCreated,
+                     "window.created",
+                     {},
+                     windowId,
+                     "",
+                     privateWindow ? "private" : "normal"});
   if (!privateWindow && !restoring_) {
     PersistSession();
   }
@@ -72,16 +82,16 @@ bool BrowserAppController::NewPrivateWindow() {
   return NewWindow(true, nullptr) != nullptr;
 }
 
-bool BrowserAppController::RequestNewWindow(bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
+bool BrowserAppController::RequestNewWindow(
+    bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
   CefPostTask(TID_UI, base::BindOnce(
-                          [](BrowserAppController* app, bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
+                          [](BrowserAppController *app, bool privateWindow,
+                             CefRefPtr<CefDictionaryValue> restoreState) {
                             if (app) {
                               app->NewWindow(privateWindow, restoreState);
                             }
                           },
-                          this,
-                          privateWindow,
-                          restoreState));
+                          this, privateWindow, restoreState));
   return true;
 }
 
@@ -106,14 +116,19 @@ bool BrowserAppController::ReopenClosedWindow() {
   return true;
 }
 
-void BrowserAppController::NotifyWindowFocused(BrowserWindow* window) {
+void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
   activeWindow_ = window;
   if (window) {
-    eventBus_.Publish({EventType::WindowFocused, "window.focused", {}, window->WindowId(), "", ""});
+    eventBus_.Publish({EventType::WindowFocused,
+                       "window.focused",
+                       {},
+                       window->WindowId(),
+                       "",
+                       ""});
   }
 }
 
-void BrowserAppController::NotifyWindowClosed(BrowserWindow* window) {
+void BrowserAppController::NotifyWindowClosed(BrowserWindow *window) {
   CEF_REQUIRE_UI_THREAD();
   if (!window) {
     return;
@@ -125,14 +140,16 @@ void BrowserAppController::NotifyWindowClosed(BrowserWindow* window) {
       closedWindows_.erase(closedWindows_.begin());
     }
   }
-  auto it = std::find_if(windows_.begin(), windows_.end(), [&](const std::unique_ptr<WindowContext>& context) {
-    return context->window.get() == window;
-  });
+  auto it = std::find_if(windows_.begin(), windows_.end(),
+                         [&](const std::unique_ptr<WindowContext> &context) {
+                           return context->window.get() == window;
+                         });
   if (it != windows_.end()) {
     windows_.erase(it);
   }
   activeWindow_ = windows_.empty() ? nullptr : windows_.back()->window.get();
-  eventBus_.Publish({EventType::WindowClosed, "window.closed", {}, windowId, "", ""});
+  eventBus_.Publish(
+      {EventType::WindowClosed, "window.closed", {}, windowId, "", ""});
   PersistSession();
 }
 
@@ -141,7 +158,7 @@ void BrowserAppController::PersistSession() {
   auto root = CefDictionaryValue::Create();
   auto windows = CefListValue::Create();
   size_t index = 0;
-  for (const auto& context : windows_) {
+  for (const auto &context : windows_) {
     if (!context->window || context->window->IsPrivate()) {
       continue;
     }
@@ -149,16 +166,18 @@ void BrowserAppController::PersistSession() {
   }
   root->SetInt("version", 1);
   root->SetList("windows", windows);
-  store_.SetSetting("sessionJson", CefWriteJSON(ValueFromDictionary(root), JSON_WRITER_DEFAULT).ToString());
+  store_.SetSetting(
+      "sessionJson",
+      CefWriteJSON(ValueFromDictionary(root), JSON_WRITER_DEFAULT).ToString());
 }
 
-BrowserWindow* BrowserAppController::ActiveWindow() const {
+BrowserWindow *BrowserAppController::ActiveWindow() const {
   return activeWindow_;
 }
 
-std::vector<BrowserWindow*> BrowserAppController::Windows() const {
-  std::vector<BrowserWindow*> result;
-  for (const auto& context : windows_) {
+std::vector<BrowserWindow *> BrowserAppController::Windows() const {
+  std::vector<BrowserWindow *> result;
+  for (const auto &context : windows_) {
     if (context->window) {
       result.push_back(context->window.get());
     }
@@ -181,23 +200,24 @@ CefRefPtr<CefListValue> BrowserAppController::RestoredWindows() const {
     return empty;
   }
   auto root = parsed->GetDictionary();
-  if (!root || !root->HasKey("windows") || root->GetType("windows") != VTYPE_LIST) {
+  if (!root || !root->HasKey("windows") ||
+      root->GetType("windows") != VTYPE_LIST) {
     return empty;
   }
   return root->GetList("windows");
 }
 
-BrowserAppController* GetBrowserAppController() {
+BrowserAppController *GetBrowserAppController() {
   return gController;
 }
 
-void SetBrowserAppController(BrowserAppController* controller) {
+void SetBrowserAppController(BrowserAppController *controller) {
   gController = controller;
 }
 
-bool DispatchBrowserMenuCommand(const std::string& commandId) {
-  BrowserAppController* app = GetBrowserAppController();
-  BrowserWindow* window = app ? app->ActiveWindow() : nullptr;
+bool DispatchBrowserMenuCommand(const std::string &commandId) {
+  BrowserAppController *app = GetBrowserAppController();
+  BrowserWindow *window = app ? app->ActiveWindow() : nullptr;
   if (!app) {
     return false;
   }
@@ -213,10 +233,11 @@ bool DispatchBrowserMenuCommand(const std::string& commandId) {
   if (commandId == "windows.reopenClosed") {
     return app->ReopenClosedWindow();
   }
-  if (!window && (commandId == "tabs.create" || commandId == "app.openDownloads" ||
-                  commandId == "app.openHistory" || commandId == "app.openBookmarks" ||
-                  commandId == "app.openSettings" || commandId == "app.openDebug" ||
-                  commandId == "app.toggleSidebar")) {
+  if (!window &&
+      (commandId == "tabs.create" || commandId == "app.openDownloads" ||
+       commandId == "app.openHistory" || commandId == "app.openBookmarks" ||
+       commandId == "app.openSettings" || commandId == "app.openDebug" ||
+       commandId == "app.toggleSidebar")) {
     window = app->NewWindow(false, nullptr);
   }
   if (!window) {

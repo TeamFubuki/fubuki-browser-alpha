@@ -1,0 +1,129 @@
+---
+Checks: >
+  -*,
+  abseil-*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-suspicious-include,
+  cert-*,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-private-ac Members,
+  -cppcoreguidelines-init-variables,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-narrowing-conversions,
+  -cppcoreguidelines-no-constructor,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-cstyle-cast,
+  -cppcoreguidelines-pro-type-member-init,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-special-member-functions,
+  -cppcoreguidelines-virtual-class-destructor,
+  darwin-*,
+  fuchsia-*,
+  google-*,
+  -google-readability-braces-around-statements,
+  -google-readability-todo,
+  -google-runtime-int,
+  hicpp-*,
+  -hicpp-avoid-c-arrays,
+  -hicpp-explicit-conversions,
+  -hicpp-named-parameter,
+  -hicpp-no-array-decay,
+  -hicpp-special-member-functions,
+  -hicpp-use-auto,
+  -hicpp-use-emplace,
+  -hicpp-vararg,
+  linuxkernel-*,
+  llv-*,
+  misc-*,
+  -misc-definitions-in-headers,
+  -misc-misplaced-const,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -misc-unused-using-decls,
+  modernize-*,
+  -modernize-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
+  -modernize-return-braced-init-list,
+  performance-*,
+  -performance-no-int-to-ptr,
+  readability-*,
+  -readability-convert-member-functions-to-static,
+  -readability-else-after-return,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-named-parameter,
+  -readability-qualified-auto,
+  -readability-redundant-member-init,
+  -readability-redundant-smartptr-get,
+  -readability-uppercase-literal-suffix
+
+WarningsAsErrors: >
+  bugprone-dangling-handle,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-string-compare,
+  cert-err58-cpp,
+  concurrency-mt-unsafe,
+  cppcoreguidelines-interfaces-global-init,
+  cppcoreguidelines-slicing,
+  google-explicit-constructor,
+  google-runtime-operator,
+  hicpp-explicit-conversions,
+  misc-new-delete-overloads,
+  misc-non-copyable-objects,
+  misc-throw-by-value-catch-by-reference,
+  misc-unused-using-decls,
+  modernize-use-override,
+  performance-unnecessary-value-param,
+  readability-implicit-bool-conversion,
+  readability-inconsistent-declaration-parameter-name
+
+HeaderFilterRegex: 'src/.*'
+
+FormatStyle: file
+
+CheckOptions:
+  - key: modernize-use-override.OverrideSpelling
+    value: override
+  - key: modernize-use-override.Compiler
+    value: Clang
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '1'
+  - key: readability-implicit-bool-conversion.AllowPointerConditions
+    value: false
+  - key: readability-implicit-bool-conversion.AllowIntegerConditions
+    value: false
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack
+  - key: readability-identifier-naming.MethodCase
+    value: camelBack
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
