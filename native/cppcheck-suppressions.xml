@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <project_name>fubuki-browser-alpha</project_name>
+  <check-level>exhaustive</check-level>
+  <suppress>
+    <id>missingIncludeSystem</id>
+  </suppress>
+</project>

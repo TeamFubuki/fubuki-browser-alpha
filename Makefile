@@ -8,7 +8,7 @@ LLVM_PREFIX ?= $(shell brew --prefix llvm 2>/dev/null || echo "/opt/homebrew/opt
 CLANG_FORMAT := $(LLVM_PREFIX)/bin/clang-format
 CLANG_TIDY := $(LLVM_PREFIX)/bin/clang-tidy
 
-.PHONY: help all bootstrap cef ui rust configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all clean distclean
+.PHONY: help all bootstrap cef ui rust configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all audit audit-deny clean distclean
 
 help:
 	@echo "Fubuki Browser Alpha"
@@ -36,6 +36,8 @@ help:
 	@echo "  make format-native Run Clang-Format (C++)"
 	@echo "  make lint-all     Run all linters (UI + Rust + C++)"
 	@echo "  make format-all   Run all formatters (UI + Rust + C++)"
+	@echo "  make audit        Run cargo-audit (Rust vulnerabilities)"
+	@echo "  make audit-deny   Run cargo-deny (Rust license & advisories)"
 	@echo "  make clean        Remove build outputs"
 	@echo ""
 	@echo "Variables:"
@@ -112,6 +114,8 @@ lint-native:
 	@echo "Running Clang-Tidy on native source..."
 	@if [ ! -d native/build ]; then echo "Run 'make configure' first." >&2; exit 1; fi
 	@find native/src -name '*.cc' -o -name '*.cpp' -o -name '*.h' | xargs $(CLANG_TIDY) -p native/build --quiet 2>/dev/null || true
+	@echo "Running cppcheck on native source..."
+	@find native/src -name '*.cc' -o -name '*.cpp' -o -name '*.h' | xargs cppcheck --enable=all --suppress=missingIncludeSystem --std=c++20 --quiet 2>/dev/null || true
 
 format-native:
 	@echo "Running Clang-Format on native source..."
@@ -120,6 +124,14 @@ format-native:
 lint-all: lint lint-rust lint-native
 
 format-all: format format-rust format-native
+
+audit:
+	@echo "Running cargo-audit..."
+	@cargo audit
+
+audit-deny:
+	@echo "Running cargo-deny..."
+	@cargo deny check
 
 distclean: clean
 	@rm -rf "$(CEF_ROOT)" "$(CURDIR)/.cache" "$(CURDIR)/native/tests/build"
