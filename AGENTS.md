@@ -94,6 +94,7 @@ CEF / macOS Host (C++)
 - **差分イベントで同期**。起動時だけ `app.snapshot` で全状態取得、以後はイベントで差分更新
 - **EngineAdapter trait でホストを切り替える**。CEF に依存するコードは Host 側に閉じる
 - **新機能は Core に追加する**。UI や Host への影響を最小化する
+- **内部ページはキャッシュを使用**。`fubuki://settings/` 等のページはLRUキャッシュで最適化
 
 ### ビルドとテスト
 
@@ -105,10 +106,19 @@ cd ui && pnpm dev
 cd ui && pnpm test
 
 # Rust テスト
-cargo test
+cargo test --workspace
+
+# Rust リント
+cargo clippy --workspace -- -D warnings
+
+# Rust フォーマット
+cargo fmt --all
 
 # ネイティブビルド
 make native
+
+# FrostEngine ビルド
+make rust
 
 # 一括ビルド＆実行
 make bootstrap && make build && make run
