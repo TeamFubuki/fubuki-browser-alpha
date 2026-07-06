@@ -724,6 +724,7 @@ PageCache &PageCache::Instance() {
 }
 
 bool PageCache::Get(const std::string &url, std::string &html) {
+  std::lock_guard<std::mutex> lock(mutex_);
   auto it = cache_.find(url);
   if (it == cache_.end()) {
     return false;
@@ -740,6 +741,7 @@ bool PageCache::Get(const std::string &url, std::string &html) {
 
 void PageCache::Set(const std::string &url, std::string html,
                     std::chrono::seconds ttl) {
+  std::lock_guard<std::mutex> lock(mutex_);
   auto it = cache_.find(url);
   if (it != cache_.end()) {
     order_.erase(it->second.second);
@@ -756,6 +758,7 @@ void PageCache::Set(const std::string &url, std::string html,
 }
 
 void PageCache::Invalidate(const std::string &prefix) {
+  std::lock_guard<std::mutex> lock(mutex_);
   for (auto it = order_.begin(); it != order_.end();) {
     if (it->first.find(prefix) == 0) {
       cache_.erase(it->first);

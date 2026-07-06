@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <list>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -54,6 +55,7 @@ public:
 
 private:
   static constexpr size_t kMaxEntries = 32;
+  mutable std::mutex mutex_;
   std::list<std::pair<std::string, std::string>> order_;
   std::unordered_map<std::string,
                      std::pair<CachedPage, decltype(order_.begin())>>
