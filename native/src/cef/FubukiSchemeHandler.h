@@ -1,6 +1,9 @@
 #pragma once
 
+#include <chrono>
+#include <list>
 #include <string>
+#include <unordered_map>
 
 #include "include/cef_resource_handler.h"
 #include "include/cef_scheme.h"
@@ -33,6 +36,28 @@ private:
   int status_ = 200;
 
   IMPLEMENT_REFCOUNTING(FubukiSchemeHandler);
+};
+
+struct CachedPage {
+  std::string html;
+  std::chrono::steady_clock::time_point expiresAt;
+};
+
+class PageCache {
+public:
+  static PageCache &Instance();
+
+  bool Get(const std::string &url, std::string &html);
+  void Set(const std::string &url, std::string html,
+           std::chrono::seconds ttl = std::chrono::seconds{5});
+  void Invalidate(const std::string &prefix);
+
+private:
+  static constexpr size_t kMaxEntries = 32;
+  std::list<std::pair<std::string, std::string>> order_;
+  std::unordered_map<std::string,
+                     std::pair<CachedPage, decltype(order_.begin())>>
+      cache_;
 };
 
 class FubukiSchemeHandlerFactory : public CefSchemeHandlerFactory {

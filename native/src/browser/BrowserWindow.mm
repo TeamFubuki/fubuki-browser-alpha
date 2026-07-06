@@ -822,6 +822,7 @@ bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& ur
   const bool ok = dataStore_->AddBookmark(title, url, faviconUrl);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
@@ -829,6 +830,7 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
   const bool ok = dataStore_->RemoveBookmark(url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
@@ -836,6 +838,7 @@ bool BrowserWindow::RemoveHistory(const std::string& url) {
   const bool ok = dataStore_->RemoveHistory(url);
   eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  fubuki::PageCache::Instance().Invalidate("fubuki://history");
   return ok;
 }
 
@@ -950,6 +953,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     app_.PersistSession();
   }
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  fubuki::PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
@@ -957,6 +961,7 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
   dataStore_->ResetSetting(key);
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  fubuki::PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
@@ -1162,6 +1167,7 @@ void BrowserWindow::OnDownloadStarted(const std::string& url, const std::string&
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
 void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string& path, const std::string& state, int percent) {
