@@ -29,6 +29,7 @@ public:
                              CefRefPtr<CefDictionaryValue> params);
   void EmitToUi(const std::string &eventName,
                 CefRefPtr<CefDictionaryValue> payload);
+  void SyncFrostFromHost();
   std::string GetStateJson() const;
   CefRefPtr<CefDictionaryValue> TabToDictionary(const Tab &tab) const;
 
@@ -38,7 +39,16 @@ private:
   void RegisterMethods();
 
   CefRefPtr<CefValue> ErrorValue(const std::string &message) const;
+  CefRefPtr<CefValue> FrostResultValue(const std::string &responseJson) const;
+  CefRefPtr<CefValue> FrostInvoke(const std::string &method,
+                                  CefRefPtr<CefDictionaryValue> params);
+  CefRefPtr<CefValue> HostBackedFrostInvoke(
+      const std::string &method, CefRefPtr<CefDictionaryValue> params,
+      const std::function<bool()> &hostOperation);
   CefRefPtr<CefValue> StateValue() const;
+  CefRefPtr<CefValue> FrostStateValue() const;
+  CefRefPtr<CefDictionaryValue> WindowToFrostDictionary(
+      const BrowserWindow &window) const;
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
   BrowserWindow &window_;

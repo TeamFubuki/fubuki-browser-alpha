@@ -37,6 +37,12 @@ impl WindowService {
         true
     }
 
+    pub fn replace_all(&mut self, windows: Vec<WindowState>, active_window_id: Option<String>) {
+        self.windows = windows;
+        self.active_window_id =
+            active_window_id.or_else(|| self.windows.last().map(|w| w.id.clone()));
+    }
+
     pub fn list(&self) -> Vec<WindowState> {
         self.windows.clone()
     }
@@ -68,6 +74,11 @@ impl WindowService {
                 break;
             }
         }
+    }
+
+    pub fn move_tab_to_window(&mut self, tab_id: &str, window_id: &str) {
+        self.detach_tab(tab_id);
+        self.attach_tab(window_id, tab_id);
     }
 
     pub fn set_active_tab(&mut self, tab_id: &str) {

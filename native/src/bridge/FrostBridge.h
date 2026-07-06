@@ -8,6 +8,7 @@ namespace fubuki {
 class FrostBridge {
 public:
   FrostBridge();
+  explicit FrostBridge(const std::string &profilePath);
   ~FrostBridge();
 
   FrostBridge(const FrostBridge &) = delete;

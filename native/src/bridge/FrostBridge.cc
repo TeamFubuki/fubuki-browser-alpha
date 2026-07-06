@@ -4,6 +4,7 @@ namespace {
 
 extern "C" {
 void *frost_engine_new();
+void *frost_engine_new_with_store(const char *path);
 void frost_engine_free(void *handle);
 char *frost_engine_process_json(void *handle, const char *request_json);
 char *frost_engine_poll_event_json(void *handle);
@@ -24,6 +25,10 @@ std::string TakeFrostString(char *value) {
 namespace fubuki {
 
 FrostBridge::FrostBridge() : handle_(frost_engine_new()) {}
+
+FrostBridge::FrostBridge(const std::string &profilePath)
+    : handle_(frost_engine_new_with_store(
+          profilePath.empty() ? nullptr : profilePath.c_str())) {}
 
 FrostBridge::~FrostBridge() {
   if (handle_) {

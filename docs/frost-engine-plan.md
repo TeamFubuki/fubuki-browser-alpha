@@ -113,8 +113,9 @@ Current implementation:
 - `crates/frost-ffi` static library exposes FrostEngine C ABI
 - `native/src/bridge/FrostBridge.*` owns the Rust Core thread bridge
 - CMake builds and links `frost-ffi` into the native host
-- `frost.coreSnapshot` verifies native-to-Rust JSON request/response wiring
-- Existing CEF tab/window side effects remain host-backed during migration so the browser shell stays runnable
+- `NativeBridge` delegates protocol state reads to FrostEngine and unwraps `ProtocolResponse.result` for UI compatibility
+- Host-backed operations still perform CEF/OS side effects in C++, then call `host.syncSnapshot` so FrostEngine owns the UI-visible state
+- `frost.coreSnapshot` remains as a diagnostic endpoint for native-to-Rust JSON request/response wiring
 
 ### Phase 3: イベント接続（2-3 日） - implemented
 
@@ -130,6 +131,7 @@ CEF callback → Rust Core へのイベント通知を接続する。
 Current implementation:
 
 - native `EventBus` emits Frost differential tab events (`tab.created`, `tab.updated`, `tab.closed`, `tab.activated`)
+- native CEF callback events trigger `host.syncSnapshot`, keeping FrostEngine updated when title, URL, loading, and navigation state change
 - UI store applies Frost tab events incrementally
 - legacy refresh events remain for migration compatibility
 

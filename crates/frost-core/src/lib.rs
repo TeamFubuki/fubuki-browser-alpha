@@ -8,10 +8,10 @@ mod window_service;
 use crossbeam_channel::{Receiver, Sender};
 use frost_engine_api::{EngineAdapter, NoopEngineAdapter};
 use frost_protocol::{
-    Event, EventEnvelope, ProtocolRequest, ProtocolResponse, Request, Response, SettingChanged,
-    TabClosed, TabPatch,
+    BrowserCommand, Event, EventEnvelope, ProtocolRequest, ProtocolResponse, Request, Response,
+    SettingChanged, TabClosed, TabPatch,
 };
-use frost_store::{BookmarkRepository, DownloadRepository, HistoryRepository, SettingsRepository};
+use frost_store::{BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository, SettingsRepository};
 use thiserror::Error;
 
 pub use bookmark_service::BookmarkService;
@@ -34,6 +34,8 @@ pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     repository: S,
     tabs: TabService,
     windows: WindowService,
+    closed_tabs: Vec<frost_protocol::TabState>,
+    closed_windows: Vec<ClosedWindow>,
     events: Vec<EventEnvelope>,
     event_tx: Option<Sender<EventEnvelope>>,
 }
@@ -53,7 +55,7 @@ impl Default for BrowserCore<NoopEngineAdapter, InMemoryStore> {
 impl<A, S> BrowserCore<A, S>
 where
     A: EngineAdapter,
-    S: SettingsRepository + BookmarkRepository + HistoryRepository + DownloadRepository,
+    S: SettingsRepository + BookmarkRepository + HistoryRepository + DownloadRepository + PermissionRepository,
 {
     pub fn with_adapter_and_settings(adapter: A, repository: S) -> Self {
         let mut windows = WindowService::new();
@@ -65,6 +67,8 @@ where
             repository,
             tabs,
             windows,
+            closed_tabs: Vec::new(),
+            closed_windows: Vec::new(),
             events: Vec::new(),
             event_tx: None,
         }
@@ -130,6 +134,9 @@ where
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
+                if let Some(tab) = self.tabs.get_tab(&tab_id) {
+                    self.closed_tabs.push(tab);
+                }
                 let closed = self.tabs.close_tab(&tab_id);
                 if closed {
                     self.windows.detach_tab(&tab_id);
@@ -139,6 +146,89 @@ where
                     self.emit(Event::TabClosed(TabClosed { tab_id }));
                 }
                 Ok(Response::Bool(closed))
+            }
+            Request::TabsPin { tab_id, pinned } => {
+                let ok = self.tabs.pin_tab(&tab_id, pinned);
+                if ok {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        is_pinned: Some(pinned),
+                        ..Default::default()
+                    }));
+                }
+                Ok(Response::Bool(ok))
+            }
+            Request::TabsDuplicate { tab_id } => {
+                let Some(tab) = self.tabs.duplicate_tab(&tab_id) else {
+                    return Ok(Response::Bool(false));
+                };
+                self.windows.attach_tab(&tab.window_id, &tab.id);
+                self.emit(Event::TabCreated(tab));
+                Ok(Response::Bool(true))
+            }
+            Request::TabsReopenClosed => {
+                let Some(mut tab) = self.closed_tabs.pop() else {
+                    return Ok(Response::Bool(false));
+                };
+                tab.is_active = true;
+                let window_id = tab.window_id.clone();
+                let created = tab.clone();
+                self.tabs.replace_all({
+                    let mut tabs = self.tabs.list();
+                    tabs.push(tab);
+                    tabs
+                });
+                self.windows.attach_tab(&window_id, &created.id);
+                self.emit(Event::TabCreated(created));
+                Ok(Response::Bool(true))
+            }
+            Request::TabsCloseOther { tab_id } => {
+                let closed = self.tabs.close_other_tabs(&tab_id);
+                for tab in &closed {
+                    self.windows.detach_tab(&tab.id);
+                    self.emit(Event::TabClosed(TabClosed {
+                        tab_id: tab.id.clone(),
+                    }));
+                }
+                self.closed_tabs.extend(closed);
+                Ok(Response::Bool(true))
+            }
+            Request::TabsCloseToRight { tab_id } => {
+                let closed = self.tabs.close_tabs_to_right(&tab_id);
+                for tab in &closed {
+                    self.windows.detach_tab(&tab.id);
+                    self.emit(Event::TabClosed(TabClosed {
+                        tab_id: tab.id.clone(),
+                    }));
+                }
+                self.closed_tabs.extend(closed);
+                Ok(Response::Bool(true))
+            }
+            Request::TabsMove { tab_id, to_index } => {
+                let ok = self.tabs.move_tab(&tab_id, to_index);
+                if ok {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        ..Default::default()
+                    }));
+                }
+                Ok(Response::Bool(ok))
+            }
+            Request::TabsMoveToNewWindow { tab_id } => {
+                if !self.tabs.contains(&tab_id) {
+                    return Ok(Response::Bool(false));
+                }
+                let window_id = self.windows.create_window(false);
+                self.tabs.move_tab_to_window(&tab_id, &window_id);
+                self.windows.move_tab_to_window(&tab_id, &window_id);
+                if let Some(window) = self.windows.get_window(&window_id) {
+                    self.emit(Event::WindowCreated(window));
+                }
+                self.emit(Event::TabUpdated(TabPatch {
+                    tab_id,
+                    ..Default::default()
+                }));
+                Ok(Response::Bool(true))
             }
             Request::TabsNavigate { tab_id, input } => {
                 let changed = self.tabs.navigate(&tab_id, &input);
@@ -156,13 +246,47 @@ where
                 Ok(Response::Bool(changed))
             }
             Request::TabsReload { tab_id } => self.host_tab_action(&tab_id, HostTabAction::Reload),
+            Request::TabsStop { tab_id } => {
+                let ok = self.tabs.stop_tab(&tab_id);
+                if ok {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        is_loading: Some(false),
+                        ..Default::default()
+                    }));
+                }
+                Ok(Response::Bool(ok))
+            }
             Request::TabsGoBack { tab_id } => self.host_tab_action(&tab_id, HostTabAction::GoBack),
             Request::TabsGoForward { tab_id } => {
                 self.host_tab_action(&tab_id, HostTabAction::GoForward)
             }
+            Request::TabsHome => {
+                let Some(tab) = self.tabs.active_tab() else {
+                    return Ok(Response::Bool(false));
+                };
+                let home = SettingsService::get(&self.repository, "homeUrl")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "fubuki://newtab/".into());
+                self.process_inner(Request::TabsNavigate {
+                    tab_id: tab.id,
+                    input: home,
+                })
+            }
             Request::WindowsList => Ok(Response::WindowsList(self.windows.list())),
             Request::WindowsCreate => {
                 let window_id = self.windows.create_window(false);
+                self.adapter
+                    .create_window(&window_id)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Some(window) = self.windows.get_window(&window_id) {
+                    self.emit(Event::WindowCreated(window));
+                }
+                Ok(Response::Bool(true))
+            }
+            Request::WindowsCreatePrivate => {
+                let window_id = self.windows.create_window(true);
                 self.adapter
                     .create_window(&window_id)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
@@ -177,12 +301,55 @@ where
                     .ok_or_else(|| CoreError::Message("No active window".into()))?;
                 let closed = self.windows.close_window(&target);
                 if closed {
+                    // Capture full window state with tabs for reopen.
+                    let window_tabs: Vec<frost_protocol::TabState> = self
+                        .tabs
+                        .list()
+                        .into_iter()
+                        .filter(|t| t.window_id == target)
+                        .collect();
+                    let window_state = self
+                        .windows
+                        .get_window(&target)
+                        .unwrap_or_else(|| frost_protocol::WindowState {
+                            id: target.clone(),
+                            active_tab_id: None,
+                            is_private: false,
+                            tab_ids: window_tabs.iter().map(|t| t.id.clone()).collect(),
+                        });
+                    self.closed_windows.push(ClosedWindow {
+                        window: window_state,
+                        tabs: window_tabs,
+                    });
+                    if self.closed_windows.len() > 10 {
+                        self.closed_windows.remove(0);
+                    }
                     self.adapter
                         .close_window(&target)
                         .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::WindowClosed { window_id: target });
                 }
                 Ok(Response::Bool(closed))
+            }
+            Request::WindowsReopenClosed => {
+                let Some(closed) = self.closed_windows.pop() else {
+                    return Ok(Response::Bool(false));
+                };
+                // Restore tabs first.
+                for tab in &closed.tabs {
+                    self.tabs.upsert_tab(tab.clone());
+                }
+                // Restore window.
+                let mut windows = self.windows.list();
+                windows.push(closed.window.clone());
+                self.windows
+                    .replace_all(windows, Some(closed.window.id.clone()));
+                // Emit events for restored tabs.
+                for tab in &closed.tabs {
+                    self.emit(Event::TabCreated(tab.clone()));
+                }
+                self.emit(Event::WindowCreated(closed.window));
+                Ok(Response::Bool(true))
             }
             Request::SettingsGet { key } => SettingsService::get(&self.repository, &key)
                 .map(Response::Setting)
@@ -191,6 +358,16 @@ where
                 SettingsService::set(&self.repository, &key, &value)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::SettingChanged(SettingChanged { key, value }));
+                Ok(Response::Bool(true))
+            }
+            Request::SettingsReset { key } => {
+                let value = default_setting(&key);
+                SettingsService::set(&self.repository, &key, value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::SettingChanged(SettingChanged {
+                    key,
+                    value: value.into(),
+                }));
                 Ok(Response::Bool(true))
             }
             Request::BookmarksList => BookmarkService::list(&self.repository)
@@ -251,6 +428,93 @@ where
                 }
                 Ok(Response::Bool(ok))
             }
+            Request::DataClear { target } => {
+                let target = target.unwrap_or_else(|| "all".into());
+                if target == "history" || target == "all" {
+                    let _ = HistoryService::clear_range(&self.repository, "all");
+                    self.emit(Event::HistoryChanged { url: None });
+                }
+                if target == "downloads" || target == "all" {
+                    // DownloadRepository intentionally has targeted removal;
+                    // clearing all remains host-backed until a clear trait is added.
+                    self.emit(Event::DownloadChanged {
+                        url: None,
+                        path: None,
+                    });
+                }
+                Ok(Response::Bool(true))
+            }
+            Request::PermissionsSet {
+                origin,
+                permission,
+                value,
+            } => {
+                let _ = self.repository.set_permission(&origin, &permission, &value);
+                self.emit(Event::PermissionChanged { origin, permission });
+                Ok(Response::Bool(true))
+            }
+            Request::CommandsList => Ok(Response::CommandsList(default_commands())),
+            Request::CommandsExecute { id, args: _ } => Ok(Response::Json(serde_json::json!({
+                "handled": false,
+                "id": id
+            }))),
+            Request::UiSetSidebarWidth { width } => {
+                SettingsService::set(
+                    &self.repository,
+                    "sidebarWidth",
+                    &format!("{}", width.round()),
+                )
+                .map_err(|e| CoreError::Message(e.to_string()))?;
+                Ok(Response::Bool(true))
+            }
+            Request::UiSetOverlayActive {
+                active: _,
+                width: _,
+                height: _,
+            } => Ok(Response::Bool(true)),
+            Request::HostSyncSnapshot { state } => {
+                for bookmark in &state.bookmarks {
+                    let _ = self.repository.save_bookmark(
+                        &bookmark.title,
+                        &bookmark.url,
+                        &bookmark.favicon_url,
+                    );
+                }
+                for history in &state.history {
+                    let _ = self.repository.add_history(
+                        &history.title,
+                        &history.url,
+                        &history.favicon_url,
+                    );
+                }
+                for download in &state.downloads {
+                    let _ = self.repository.upsert_download(
+                        &download.url,
+                        &download.path,
+                        &download.state,
+                        download.percent,
+                    );
+                }
+                for permission in &state.permissions {
+                    let _ = self.repository.set_permission(
+                        &permission.origin,
+                        &permission.permission,
+                        &permission.value,
+                    );
+                }
+                if let Some(settings) = state.settings.as_object() {
+                    for (key, value) in settings {
+                        if let Some(value) = value.as_str() {
+                            let _ = self.repository.set_setting(key, value);
+                        }
+                    }
+                }
+                self.tabs.replace_all(state.tabs);
+                self.windows
+                    .replace_all(state.windows, state.active_window_id);
+                self.emit(Event::HostSynced);
+                Ok(Response::Bool(true))
+            }
         }
     }
 
@@ -277,6 +541,8 @@ where
             history: self.repository.list_history().unwrap_or_default(),
             bookmarks: self.repository.list_bookmarks().unwrap_or_default(),
             downloads: self.repository.list_downloads().unwrap_or_default(),
+            permissions: self.repository.list_permissions().unwrap_or_default(),
+            settings: serde_json::json!({}),
         }
     }
 
@@ -292,10 +558,82 @@ where
     }
 }
 
+fn default_setting(key: &str) -> &'static str {
+    match key {
+        "homepage" | "homeUrl" => "https://example.com",
+        "searchEngine" => "google",
+        "customSearchUrl" => "https://www.google.com/search?q={query}",
+        "theme" => "light",
+        "appearance" => "system",
+        "sidebarVisible" => "show",
+        "sidebarWidth" => "196",
+        "newTabPage" => "blank",
+        "language" => "system",
+        "defaultZoomLevel" => "0",
+        _ => "",
+    }
+}
+
+fn default_commands() -> Vec<BrowserCommand> {
+    [
+        ("tabs.create", "New Tab", "Tabs", "Cmd+T"),
+        ("tabs.close", "Close Tab", "Tabs", "Cmd+W"),
+        ("tabs.reopenClosed", "Reopen Closed Tab", "Tabs", ""),
+        ("tabs.duplicate", "Duplicate Tab", "Tabs", ""),
+        ("tabs.pin", "Pin Tab", "Tabs", ""),
+        ("tabs.unpin", "Unpin Tab", "Tabs", ""),
+        ("tabs.closeOther", "Close Other Tabs", "Tabs", ""),
+        ("tabs.closeToRight", "Close Tabs to Right", "Tabs", ""),
+        ("tabs.moveToNewWindow", "Move Tab to New Window", "Tabs", ""),
+        ("tabs.reload", "Reload", "Tabs", "Cmd+R"),
+        ("tabs.stop", "Stop Loading", "Tabs", ""),
+        ("tabs.goBack", "Back", "Navigation", "Cmd+["),
+        ("tabs.goForward", "Forward", "Navigation", "Cmd+]"),
+        ("tabs.home", "Home", "Navigation", ""),
+        ("windows.create", "New Window", "Window", "Cmd+N"),
+        ("windows.createPrivate", "New Private Window", "Window", ""),
+        ("windows.close", "Close Window", "Window", ""),
+        ("windows.reopenClosed", "Reopen Closed Window", "Window", ""),
+        ("app.focusOmnibox", "Focus Omnibox", "App", "Cmd+L"),
+        ("app.openSettings", "Open Settings", "App", ""),
+        ("app.openHistory", "Open History", "App", ""),
+        ("app.openDownloads", "Open Downloads", "App", ""),
+        ("app.openBookmarks", "Open Bookmarks", "App", ""),
+        ("app.openDevTools", "Open DevTools", "Developer", ""),
+        ("page.find", "Find in Page", "Page", "Cmd+F"),
+        ("page.zoomIn", "Zoom In", "Page", "Cmd++"),
+        ("page.zoomOut", "Zoom Out", "Page", "Cmd+-"),
+        ("page.zoomReset", "Actual Size", "Page", "Cmd+0"),
+        ("page.print", "Print", "Page", "Cmd+P"),
+        ("page.viewSource", "View Source", "Developer", ""),
+        (
+            "bookmarks.addActive",
+            "Bookmark Active Tab",
+            "Bookmarks",
+            "Cmd+D",
+        ),
+        ("bookmarks.save", "Save Bookmark", "Bookmarks", ""),
+        ("bookmarks.remove", "Remove Bookmark", "Bookmarks", ""),
+    ]
+    .into_iter()
+    .map(|(id, title, category, shortcut)| BrowserCommand {
+        id: id.into(),
+        title: title.into(),
+        category: category.into(),
+        shortcut: shortcut.into(),
+    })
+    .collect()
+}
+
 enum HostTabAction {
     Reload,
     GoBack,
     GoForward,
+}
+
+struct ClosedWindow {
+    window: frost_protocol::WindowState,
+    tabs: Vec<frost_protocol::TabState>,
 }
 
 #[derive(Default)]
@@ -304,6 +642,7 @@ pub struct InMemoryStore {
     bookmarks: std::cell::RefCell<Vec<frost_protocol::BookmarkRecord>>,
     history: std::cell::RefCell<Vec<frost_protocol::HistoryRecord>>,
     downloads: std::cell::RefCell<Vec<frost_protocol::DownloadRecord>>,
+    permissions: std::cell::RefCell<Vec<frost_protocol::PermissionRecord>>,
 }
 
 impl SettingsRepository for InMemoryStore {
@@ -363,14 +702,14 @@ impl HistoryRepository for InMemoryStore {
         url: &str,
         favicon_url: &str,
     ) -> frost_store::StoreResult<()> {
-        self.history
-            .borrow_mut()
-            .push(frost_protocol::HistoryRecord {
-                title: if title.is_empty() { url } else { title }.to_owned(),
-                url: url.to_owned(),
-                favicon_url: favicon_url.to_owned(),
-                created_at: "memory".into(),
-            });
+        let mut history = self.history.borrow_mut();
+        history.retain(|record| record.url != url);
+        history.push(frost_protocol::HistoryRecord {
+            title: if title.is_empty() { url } else { title }.to_owned(),
+            url: url.to_owned(),
+            favicon_url: favicon_url.to_owned(),
+            created_at: "memory".into(),
+        });
         Ok(())
     }
 
@@ -427,6 +766,36 @@ impl DownloadRepository for InMemoryStore {
             !(url_matches || path_matches)
         });
         Ok(downloads.len() != before)
+    }
+}
+
+impl PermissionRepository for InMemoryStore {
+    fn list_permissions(&self) -> frost_store::StoreResult<Vec<frost_protocol::PermissionRecord>> {
+        Ok(self.permissions.borrow().clone())
+    }
+
+    fn set_permission(
+        &self,
+        origin: &str,
+        permission: &str,
+        value: &str,
+    ) -> frost_store::StoreResult<()> {
+        let mut permissions = self.permissions.borrow_mut();
+        permissions.retain(|p| !(p.origin == origin && p.permission == permission));
+        permissions.push(frost_protocol::PermissionRecord {
+            origin: origin.to_owned(),
+            permission: permission.to_owned(),
+            value: value.to_owned(),
+            created_at: "memory".into(),
+        });
+        Ok(())
+    }
+
+    fn remove_permission(&self, origin: &str, permission: &str) -> frost_store::StoreResult<bool> {
+        let mut permissions = self.permissions.borrow_mut();
+        let before = permissions.len();
+        permissions.retain(|p| !(p.origin == origin && p.permission == permission));
+        Ok(permissions.len() != before)
     }
 }
 

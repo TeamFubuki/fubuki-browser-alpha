@@ -13,6 +13,10 @@ pub struct AppState {
     pub bookmarks: Vec<BookmarkRecord>,
     #[serde(default)]
     pub downloads: Vec<DownloadRecord>,
+    #[serde(default)]
+    pub permissions: Vec<PermissionRecord>,
+    #[serde(default)]
+    pub settings: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,4 +71,22 @@ pub struct DownloadRecord {
     pub state: String,
     pub percent: i64,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRecord {
+    pub origin: String,
+    pub permission: String,
+    pub value: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserCommand {
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub shortcut: String,
 }

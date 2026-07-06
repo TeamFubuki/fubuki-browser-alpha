@@ -10,5 +10,6 @@ crossbeam-channel.workspace = true
 frost-engine-api.workspace = true
 frost-protocol.workspace = true
 frost-store.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

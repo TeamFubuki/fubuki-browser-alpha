@@ -18,6 +18,18 @@ impl TabService {
         self.tabs.clone()
     }
 
+    pub fn replace_all(&mut self, tabs: Vec<TabState>) {
+        self.tabs = tabs;
+    }
+
+    pub fn upsert_tab(&mut self, tab: TabState) {
+        if let Some(existing) = self.tabs.iter_mut().find(|t| t.id == tab.id) {
+            *existing = tab;
+        } else {
+            self.tabs.push(tab);
+        }
+    }
+
     pub fn contains(&self, tab_id: &str) -> bool {
         self.tabs.iter().any(|t| t.id == tab_id)
     }
@@ -81,6 +93,100 @@ impl TabService {
         if was_active && let Some(next) = self.tabs.iter_mut().find(|t| t.window_id == window_id) {
             next.is_active = true;
         }
+        true
+    }
+
+    pub fn remove_tab(&mut self, tab_id: &str) -> Option<TabState> {
+        let index = self.tabs.iter().position(|t| t.id == tab_id)?;
+        Some(self.tabs.remove(index))
+    }
+
+    pub fn get_tab(&self, tab_id: &str) -> Option<TabState> {
+        self.tabs.iter().find(|t| t.id == tab_id).cloned()
+    }
+
+    pub fn active_tab(&self) -> Option<TabState> {
+        self.tabs.iter().find(|t| t.is_active).cloned()
+    }
+
+    pub fn pin_tab(&mut self, tab_id: &str, pinned: bool) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.is_pinned = pinned;
+        true
+    }
+
+    pub fn duplicate_tab(&mut self, tab_id: &str) -> Option<TabState> {
+        let mut tab = self.get_tab(tab_id)?;
+        tab.id = format!("tab-{}", Uuid::new_v4());
+        tab.is_active = false;
+        self.tabs.push(tab.clone());
+        Some(tab)
+    }
+
+    pub fn close_other_tabs(&mut self, tab_id: &str) -> Vec<TabState> {
+        if !self.contains(tab_id) {
+            return Vec::new();
+        }
+        let mut closed = Vec::new();
+        self.tabs.retain(|tab| {
+            let keep = tab.id == tab_id || tab.is_pinned;
+            if !keep {
+                closed.push(tab.clone());
+            }
+            keep
+        });
+        self.activate_tab(tab_id);
+        closed
+    }
+
+    pub fn close_tabs_to_right(&mut self, tab_id: &str) -> Vec<TabState> {
+        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return Vec::new();
+        };
+        let mut closed = Vec::new();
+        self.tabs = self
+            .tabs
+            .drain(..)
+            .enumerate()
+            .filter_map(|(i, tab)| {
+                let keep = i <= index || tab.is_pinned;
+                if keep {
+                    Some(tab)
+                } else {
+                    closed.push(tab);
+                    None
+                }
+            })
+            .collect();
+        closed
+    }
+
+    pub fn move_tab(&mut self, tab_id: &str, to_index: usize) -> bool {
+        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return false;
+        };
+        let tab = self.tabs.remove(index);
+        let to_index = to_index.min(self.tabs.len());
+        self.tabs.insert(to_index, tab);
+        true
+    }
+
+    pub fn move_tab_to_window(&mut self, tab_id: &str, window_id: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.window_id = window_id.to_owned();
+        tab.is_active = true;
+        true
+    }
+
+    pub fn stop_tab(&mut self, tab_id: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.is_loading = false;
         true
     }
 

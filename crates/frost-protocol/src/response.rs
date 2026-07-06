@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::state::{
-    AppState, BookmarkRecord, DownloadRecord, HistoryRecord, TabState, WindowState,
+    AppState, BookmarkRecord, BrowserCommand, DownloadRecord, HistoryRecord, TabState, WindowState,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +24,8 @@ pub enum Response {
     BookmarksList(Vec<BookmarkRecord>),
     HistoryList(Vec<HistoryRecord>),
     DownloadsList(Vec<DownloadRecord>),
+    CommandsList(Vec<BrowserCommand>),
+    Json(serde_json::Value),
     Setting(Option<String>),
     Bool(bool),
     Error(String),

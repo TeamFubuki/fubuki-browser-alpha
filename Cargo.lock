@@ -77,6 +77,7 @@ dependencies = [
  "frost-engine-api",
  "frost-protocol",
  "frost-store",
+ "serde_json",
  "thiserror",
  "uuid",
 ]
@@ -94,7 +95,9 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "frost-core",
+ "frost-engine-api",
  "frost-protocol",
+ "frost-store",
  "serde_json",
 ]
 

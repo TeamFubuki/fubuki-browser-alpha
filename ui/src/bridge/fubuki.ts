@@ -39,6 +39,7 @@ export type FrostAppState = {
   activeWindowId: string | null;
   windows: FrostWindowState[];
   tabs: FrostTabState[];
+  settings?: Partial<Settings>;
 };
 
 export type TabSnapshot = {
@@ -426,6 +427,7 @@ export function normalizeAppState(
       homeUrl: 'https://example.com',
       language: 'system',
       defaultZoomLevel: '0',
+      ...snapshot.settings,
     },
     profilePath: '',
   };

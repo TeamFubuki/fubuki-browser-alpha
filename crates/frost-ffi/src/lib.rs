@@ -4,7 +4,9 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender};
 use frost_core::BrowserCore;
+use frost_engine_api::EngineAdapter;
 use frost_protocol::{EventEnvelope, ProtocolRequest, ProtocolResponse};
+use frost_store::{BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository, SettingsRepository};
 
 pub struct FrostEngineHandle {
     request_tx: Sender<ProtocolRequest>,
@@ -16,15 +18,46 @@ pub struct FrostEngineHandle {
 /// Creates a new FrostEngine instance and returns a handle to it.
 ///
 /// The caller is responsible for freeing the handle with `frost_engine_free`.
+///
+/// # Safety
+///
+/// Returns a valid non-null handle on success.
 #[unsafe(no_mangle)]
-pub extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
+pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
+    unsafe { frost_engine_new_with_store(ptr::null()) }
+}
+
+/// Creates a new FrostEngine instance backed by a SQLite store at `path`.
+///
+/// If `path` is null or empty, falls back to an in-memory store.
+///
+/// # Safety
+///
+/// - `path` must be a valid null-terminated UTF-8 string, or null.
+/// - Returns a valid non-null handle on success.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_new_with_store(path: *const c_char) -> *mut FrostEngineHandle {
     let (request_tx, request_rx) = crossbeam_channel::unbounded();
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
 
-    let mut core = BrowserCore::new();
-    core.set_event_sender(event_tx);
-    let join_handle = std::thread::spawn(move || core.run(request_rx, response_tx));
+    let join_handle = if path.is_null() {
+        spawn_core(BrowserCore::new(), event_tx, request_rx, response_tx)
+    } else {
+        let path = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .unwrap_or_default()
+            .to_owned();
+        match frost_store::SqliteStore::open(path) {
+            Ok(store) => spawn_core(
+                BrowserCore::with_adapter_and_settings(frost_engine_api::NoopEngineAdapter, store),
+                event_tx,
+                request_rx,
+                response_tx,
+            ),
+            Err(_) => spawn_core(BrowserCore::new(), event_tx, request_rx, response_tx),
+        }
+    };
 
     Box::into_raw(Box::new(FrostEngineHandle {
         request_tx,
@@ -32,6 +65,26 @@ pub extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
         event_rx,
         join_handle: Some(join_handle),
     }))
+}
+
+fn spawn_core<A, S>(
+    mut core: BrowserCore<A, S>,
+    event_tx: Sender<EventEnvelope>,
+    request_rx: Receiver<ProtocolRequest>,
+    response_tx: Sender<ProtocolResponse>,
+) -> JoinHandle<()>
+where
+    A: EngineAdapter + Send + 'static,
+    S: SettingsRepository
+        + BookmarkRepository
+        + HistoryRepository
+        + DownloadRepository
+        + PermissionRepository
+        + Send
+        + 'static,
+{
+    core.set_event_sender(event_tx);
+    std::thread::spawn(move || core.run(request_rx, response_tx))
 }
 
 /// # Safety

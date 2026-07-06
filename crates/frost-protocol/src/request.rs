@@ -59,9 +59,14 @@ fn should_drop_empty_params(value: &Value) -> bool {
                 | "tabs.list"
                 | "windows.list"
                 | "windows.create"
+                | "windows.createPrivate"
+                | "windows.reopenClosed"
                 | "bookmarks.list"
                 | "history.list"
                 | "downloads.list"
+                | "commands.list"
+                | "tabs.reopenClosed"
+                | "tabs.home"
         )
 }
 
@@ -82,24 +87,48 @@ pub enum Request {
     TabsActivate { tab_id: String },
     #[serde(rename = "tabs.close", rename_all = "camelCase")]
     TabsClose { tab_id: String },
+    #[serde(rename = "tabs.pin", rename_all = "camelCase")]
+    TabsPin { tab_id: String, pinned: bool },
+    #[serde(rename = "tabs.duplicate", rename_all = "camelCase")]
+    TabsDuplicate { tab_id: String },
+    #[serde(rename = "tabs.reopenClosed")]
+    TabsReopenClosed,
+    #[serde(rename = "tabs.closeOther", rename_all = "camelCase")]
+    TabsCloseOther { tab_id: String },
+    #[serde(rename = "tabs.closeToRight", rename_all = "camelCase")]
+    TabsCloseToRight { tab_id: String },
+    #[serde(rename = "tabs.move", rename_all = "camelCase")]
+    TabsMove { tab_id: String, to_index: usize },
+    #[serde(rename = "tabs.moveToNewWindow", rename_all = "camelCase")]
+    TabsMoveToNewWindow { tab_id: String },
     #[serde(rename = "tabs.navigate", rename_all = "camelCase")]
     TabsNavigate { tab_id: String, input: String },
     #[serde(rename = "tabs.reload", rename_all = "camelCase")]
     TabsReload { tab_id: String },
+    #[serde(rename = "tabs.stop", rename_all = "camelCase")]
+    TabsStop { tab_id: String },
     #[serde(rename = "tabs.goBack", rename_all = "camelCase")]
     TabsGoBack { tab_id: String },
     #[serde(rename = "tabs.goForward", rename_all = "camelCase")]
     TabsGoForward { tab_id: String },
+    #[serde(rename = "tabs.home")]
+    TabsHome,
     #[serde(rename = "windows.list")]
     WindowsList,
     #[serde(rename = "windows.create")]
     WindowsCreate,
+    #[serde(rename = "windows.createPrivate")]
+    WindowsCreatePrivate,
     #[serde(rename = "windows.close", rename_all = "camelCase")]
     WindowsClose { window_id: Option<String> },
+    #[serde(rename = "windows.reopenClosed")]
+    WindowsReopenClosed,
     #[serde(rename = "settings.get", rename_all = "camelCase")]
     SettingsGet { key: String },
     #[serde(rename = "settings.set", rename_all = "camelCase")]
     SettingsSet { key: String, value: String },
+    #[serde(rename = "settings.reset", rename_all = "camelCase")]
+    SettingsReset { key: String },
     #[serde(rename = "bookmarks.list")]
     BookmarksList,
     #[serde(rename = "bookmarks.save", rename_all = "camelCase")]
@@ -123,6 +152,31 @@ pub enum Request {
         url: Option<String>,
         path: Option<String>,
     },
+    #[serde(rename = "data.clear", rename_all = "camelCase")]
+    DataClear { target: Option<String> },
+    #[serde(rename = "permissions.set", rename_all = "camelCase")]
+    PermissionsSet {
+        origin: String,
+        permission: String,
+        value: String,
+    },
+    #[serde(rename = "commands.list")]
+    CommandsList,
+    #[serde(rename = "commands.execute", rename_all = "camelCase")]
+    CommandsExecute {
+        id: String,
+        args: Option<serde_json::Value>,
+    },
+    #[serde(rename = "ui.setSidebarWidth", rename_all = "camelCase")]
+    UiSetSidebarWidth { width: f64 },
+    #[serde(rename = "ui.setOverlayActive", rename_all = "camelCase")]
+    UiSetOverlayActive {
+        active: bool,
+        width: Option<f64>,
+        height: Option<f64>,
+    },
+    #[serde(rename = "host.syncSnapshot", rename_all = "camelCase")]
+    HostSyncSnapshot { state: crate::AppState },
 }
 
 impl ProtocolRequest {

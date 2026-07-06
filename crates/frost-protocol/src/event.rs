@@ -36,6 +36,10 @@ pub enum Event {
         url: Option<String>,
         path: Option<String>,
     },
+    #[serde(rename = "permission.changed")]
+    PermissionChanged { origin: String, permission: String },
+    #[serde(rename = "host.synced")]
+    HostSynced,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

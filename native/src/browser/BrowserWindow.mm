@@ -350,8 +350,8 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager, 
     : app_(app),
       eventBus_(app.Events()),
       tabManager_(tabManager),
-      bridge_(std::make_unique<NativeBridge>(*this)),
       dataStore_(&app.Store()),
+      bridge_(std::make_unique<NativeBridge>(*this)),
       windowId_(std::move(windowId)),
       privateWindow_(privateWindow) {
   gActiveBrowserWindow = this;
@@ -1575,18 +1575,26 @@ void BrowserWindow::WireEvents() {
 
     if (event.type == EventType::TabCreated) {
       bridge_->EmitToUi("tab.created", bridge_->TabToDictionary(event.tab));
+      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabUpdated) {
       auto patch = bridge_->TabToDictionary(event.tab);
       patch->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.updated", patch);
+      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabClosed) {
       auto closed = CefDictionaryValue::Create();
       closed->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.closed", closed);
+      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabActivated) {
       auto activated = CefDictionaryValue::Create();
       activated->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.activated", activated);
+      bridge_->SyncFrostFromHost();
+    } else if (event.type == EventType::NavigationStarted ||
+               event.type == EventType::NavigationFinished ||
+               event.type == EventType::NavigationFailed) {
+      bridge_->SyncFrostFromHost();
     }
   };
   auto subscribe = [this, &emit](EventType type) {

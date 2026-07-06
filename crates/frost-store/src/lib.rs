@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use frost_protocol::{BookmarkRecord, DownloadRecord, HistoryRecord};
+use frost_protocol::{BookmarkRecord, DownloadRecord, HistoryRecord, PermissionRecord};
 use rusqlite::{Connection, params};
 use thiserror::Error;
 
@@ -35,6 +35,12 @@ pub trait DownloadRepository {
     fn list_downloads(&self) -> StoreResult<Vec<DownloadRecord>>;
     fn upsert_download(&self, url: &str, path: &str, state: &str, percent: i64) -> StoreResult<()>;
     fn remove_download(&self, url: Option<&str>, path: Option<&str>) -> StoreResult<bool>;
+}
+
+pub trait PermissionRepository {
+    fn list_permissions(&self) -> StoreResult<Vec<PermissionRecord>>;
+    fn set_permission(&self, origin: &str, permission: &str, value: &str) -> StoreResult<()>;
+    fn remove_permission(&self, origin: &str, permission: &str) -> StoreResult<bool>;
 }
 
 pub struct SqliteStore {
@@ -88,6 +94,14 @@ impl SqliteStore {
               percent INTEGER NOT NULL DEFAULT 0,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS permissions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              origin TEXT NOT NULL,
+              permission TEXT NOT NULL,
+              value TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(origin, permission)
             );
             ",
         )?;
@@ -158,6 +172,8 @@ impl HistoryRepository for SqliteStore {
         if url.is_empty() || url.starts_with("fubuki://") || url.starts_with("data:") {
             return Ok(());
         }
+        self.conn
+            .execute("DELETE FROM history WHERE url = ?1", params![url])?;
         self.conn.execute(
             "INSERT INTO history (title, url, favicon_url, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![empty_fallback(title, url), url, favicon_url, now_text()],
@@ -264,6 +280,45 @@ impl SettingsRepository for SqliteStore {
             params![key, value],
         )?;
         Ok(())
+    }
+}
+
+impl PermissionRepository for SqliteStore {
+    fn list_permissions(&self) -> StoreResult<Vec<PermissionRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT origin, permission, value, created_at FROM permissions ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PermissionRecord {
+                origin: row.get(0)?,
+                permission: row.get(1)?,
+                value: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    fn set_permission(&self, origin: &str, permission: &str, value: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "
+            INSERT INTO permissions (origin, permission, value, created_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(origin, permission) DO UPDATE SET
+              value = excluded.value
+            ",
+            params![origin, permission, value, now_text()],
+        )?;
+        Ok(())
+    }
+
+    fn remove_permission(&self, origin: &str, permission: &str) -> StoreResult<bool> {
+        let changed = self.conn.execute(
+            "DELETE FROM permissions WHERE origin = ?1 AND permission = ?2",
+            params![origin, permission],
+        )?;
+        Ok(changed > 0)
     }
 }
 
