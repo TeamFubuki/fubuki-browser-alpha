@@ -53,7 +53,7 @@ CEF UI Thread (C++)                Rust Core Thread
 
 ## 3. Phase 実装計画
 
-### Phase 0: workspace + Protocol 型（1-2 日）
+### Phase 0: workspace + Protocol 型（1-2 日） - implemented
 
 Rust workspace と Protocol の型定義だけ作る。C++ とはまだ接続しない。
 
@@ -66,7 +66,17 @@ Rust workspace と Protocol の型定義だけ作る。C++ とはまだ接続し
 
 **完了条件**: `cargo test` が通る。
 
-### Phase 1: Core + Store 実装（3-5 日）
+Current implementation:
+
+- `Cargo.toml` workspace
+- `crates/frost-protocol`
+- `crates/frost-engine-api`
+- `crates/frost-core`
+- `crates/frost-store`
+- UI bridge normalization for `app.snapshot`
+- native bridge aliases for Frost Protocol v0 method names
+
+### Phase 1: Core + Store 実装（3-5 日） - partially implemented
 
 ブラウザ状態を Rust で管理する。まだ C++ とは接続しない。
 

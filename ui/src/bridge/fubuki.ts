@@ -12,6 +12,35 @@ export type Tab = {
   isPinned: boolean;
 };
 
+export type FrostTabState = {
+  id: string;
+  windowId: string;
+  title: string;
+  url: string;
+  faviconUrl: string;
+  errorText: string;
+  zoomLevel: number;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  isActive: boolean;
+  isPinned: boolean;
+};
+
+export type FrostWindowState = {
+  id: string;
+  activeTabId: string | null;
+  isPrivate: boolean;
+  tabIds: string[];
+};
+
+export type FrostAppState = {
+  protocolVersion: number;
+  activeWindowId: string | null;
+  windows: FrostWindowState[];
+  tabs: FrostTabState[];
+};
+
 export type TabSnapshot = {
   title: string;
   url: string;
@@ -150,6 +179,10 @@ export type CommandId =
 
 export type BridgeMethodMap = {
   'app.getState': { params: Record<string, never>; result: BrowserState };
+  'app.snapshot': {
+    params: Record<string, never>;
+    result: FrostAppState | BrowserState;
+  };
   'commands.list': { params: Record<string, never>; result: BrowserCommand[] };
   'commands.execute': {
     params: { id: CommandId | string; args?: Record<string, unknown> };
@@ -159,6 +192,7 @@ export type BridgeMethodMap = {
     params: { url?: string; active?: boolean };
     result: boolean;
   };
+  'tabs.list': { params: Record<string, never>; result: FrostTabState[] | Tab[] };
   'tabs.navigate': {
     params: { tabId: string; input: string };
     result: boolean;
@@ -170,15 +204,26 @@ export type BridgeMethodMap = {
   'tabs.goBack': { params: { tabId: string }; result: boolean };
   'tabs.goForward': { params: { tabId: string }; result: boolean };
   'tabs.move': { params: { tabId: string; toIndex: number }; result: boolean };
+  'windows.list': {
+    params: Record<string, never>;
+    result: FrostWindowState[] | WindowSnapshot[];
+  };
+  'windows.create': { params: Record<string, never>; result: boolean };
+  'windows.close': { params: { windowId?: string }; result: boolean };
   'bookmarks.save': {
     params: { title: string; url: string; faviconUrl: string };
     result: boolean;
   };
   'bookmarks.remove': { params: { url: string }; result: boolean };
+  'settings.get': { params: { key: string }; result: string | null };
   'settings.set': { params: { key: string; value: string }; result: boolean };
 };
 
 export type EventMap = {
+  'tab.created': FrostTabState;
+  'tab.updated': Partial<FrostTabState> & { tabId: string };
+  'tab.closed': { tabId: string };
+  'tab.activated': { tabId: string };
   'tabs.created': void;
   'tabs.updated': void;
   'tabs.closed': void;
@@ -192,7 +237,7 @@ export type EventMap = {
   'history.changed': void;
   'setting.changed': { key: string; value: string };
   'permission.changed': void;
-  'window.created': void;
+  'window.created': FrostWindowState | void;
   'window.closed': void;
   'window.focused': void;
   'app.stateChanged': void;
@@ -282,6 +327,102 @@ export function invokeBridge<K extends keyof BridgeMethodMap>(
     method,
     (params ?? {}) as Record<string, unknown>,
   );
+}
+
+function isFrostAppState(
+  value: FrostAppState | BrowserState,
+): value is FrostAppState {
+  return 'protocolVersion' in value && 'activeWindowId' in value;
+}
+
+function fromFrostTab(tab: FrostTabState): Tab {
+  return {
+    id: tab.id,
+    title: tab.title,
+    url: tab.url,
+    faviconUrl: tab.faviconUrl,
+    errorText: tab.errorText,
+    zoomLevel: tab.zoomLevel,
+    isLoading: tab.isLoading,
+    canGoBack: tab.canGoBack,
+    canGoForward: tab.canGoForward,
+    isActive: tab.isActive,
+    isPinned: tab.isPinned,
+  };
+}
+
+function fromFrostWindow(
+  windowState: FrostWindowState,
+  tabs: FrostTabState[],
+): WindowSnapshot {
+  return {
+    id: windowState.id,
+    private: windowState.isPrivate,
+    activeTabId: windowState.activeTabId ?? '',
+    tabs: windowState.tabIds.map((tabId) => {
+      const tab = tabs.find((item) => item.id === tabId);
+      return {
+        title: tab?.title ?? 'New Tab',
+        url: tab?.url ?? 'fubuki://newtab/',
+        faviconUrl: tab?.faviconUrl ?? '',
+        pinned: tab?.isPinned ?? false,
+        active: windowState.activeTabId === tabId,
+      };
+    }),
+  };
+}
+
+export function normalizeAppState(
+  snapshot: FrostAppState | BrowserState,
+): BrowserState {
+  if (!isFrostAppState(snapshot)) {
+    return snapshot;
+  }
+
+  const activeWindow = snapshot.windows.find(
+    (windowState) => windowState.id === snapshot.activeWindowId,
+  );
+  const activeTab = snapshot.tabs.find((tab) => tab.isActive);
+
+  return {
+    bridgeVersion: `frost-${snapshot.protocolVersion}`,
+    windowId: activeWindow?.id ?? '',
+    isPrivate: activeWindow?.isPrivate ?? false,
+    activeTabId: activeWindow?.activeTabId ?? activeTab?.id ?? '',
+    tabs: snapshot.tabs.map(fromFrostTab),
+    windows: snapshot.windows.map((windowState) =>
+      fromFrostWindow(windowState, snapshot.tabs),
+    ),
+    history: [],
+    bookmarks: [],
+    downloads: [],
+    permissions: [],
+    logs: [],
+    commands: [],
+    recentEvents: [],
+    settings: {
+      homepage: 'https://example.com',
+      searchEngine: 'google',
+      customSearchUrl: 'https://www.google.com/search?q={query}',
+      theme: 'light',
+      appearance: 'system',
+      sidebarVisible: 'show',
+      sidebarWidth: '196',
+      newTabPage: 'blank',
+      homeUrl: 'https://example.com',
+      language: 'system',
+      defaultZoomLevel: '0',
+    },
+    profilePath: '',
+  };
+}
+
+export async function getBrowserState(): Promise<BrowserState> {
+  try {
+    return normalizeAppState(await invokeBridge('app.snapshot'));
+  } catch {
+    return invokeBridge('app.getState');
+  }
 }
 
 export function onBridgeEvent<K extends keyof EventMap>(

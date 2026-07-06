@@ -1,0 +1,76 @@
+use serde::{Deserialize, Serialize};
+
+use crate::state::{TabState, WindowState};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventEnvelope {
+    pub version: u16,
+    #[serde(flatten)]
+    pub event: Event,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", content = "payload")]
+pub enum Event {
+    #[serde(rename = "tab.created")]
+    TabCreated(TabState),
+    #[serde(rename = "tab.updated")]
+    TabUpdated(TabPatch),
+    #[serde(rename = "tab.closed")]
+    TabClosed(TabClosed),
+    #[serde(rename = "tab.activated")]
+    TabActivated(TabClosed),
+    #[serde(rename = "window.created")]
+    WindowCreated(WindowState),
+    #[serde(rename = "window.closed")]
+    WindowClosed { window_id: String },
+    #[serde(rename = "setting.changed")]
+    SettingChanged(SettingChanged),
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabPatch {
+    pub tab_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favicon_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom_level: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_go_back: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_go_forward: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_pinned: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabClosed {
+    pub tab_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingChanged {
+    pub key: String,
+    pub value: String,
+}
+
+impl EventEnvelope {
+    pub fn new(event: Event) -> Self {
+        Self {
+            version: crate::PROTOCOL_VERSION,
+            event,
+        }
+    }
+}

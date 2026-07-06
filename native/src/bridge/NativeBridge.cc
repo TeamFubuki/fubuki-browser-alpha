@@ -39,6 +39,21 @@ void NativeBridge::RegisterMethods() {
     return StateValue();
   };
 
+  methods_["app.snapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return StateValue();
+  };
+
+  methods_["tabs.list"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    auto tabs = CefListValue::Create();
+    const auto snapshot = window_.Tabs().GetTabs();
+    for (size_t i = 0; i < snapshot.size(); ++i) {
+      tabs->SetDictionary(i, TabToDictionary(snapshot[i]));
+    }
+    value->SetList(tabs);
+    return value;
+  };
+
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
     const std::string url =
         params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
@@ -113,6 +128,17 @@ void NativeBridge::RegisterMethods() {
 
   methods_["windows.create"] = [this](CefRefPtr<CefDictionaryValue>) {
     return BoolValue(window_.App().RequestNewWindow(false, nullptr));
+  };
+
+  methods_["windows.list"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    auto windows = CefListValue::Create();
+    const auto windowSnapshot = window_.App().Windows();
+    for (size_t i = 0; i < windowSnapshot.size(); ++i) {
+      windows->SetDictionary(i, windowSnapshot[i]->SessionSnapshot());
+    }
+    value->SetList(windows);
+    return value;
   };
 
   methods_["windows.createPrivate"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -196,6 +222,18 @@ void NativeBridge::RegisterMethods() {
 
   methods_["data.clear"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return BoolValue(window_.ClearBrowsingData(params->GetString("target")));
+  };
+
+  methods_["settings.get"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    auto value = CefValue::Create();
+    const std::string key = params->GetString("key");
+    auto settings = window_.Store().Settings();
+    if (settings && settings->HasKey(key)) {
+      value->SetString(settings->GetString(key));
+    } else {
+      value->SetNull();
+    }
+    return value;
   };
 
   methods_["settings.set"] = [this](CefRefPtr<CefDictionaryValue> params) {

@@ -1,9 +1,11 @@
 import { createStore } from 'solid-js/store';
 import {
+  getBrowserState,
   invokeBridge,
   onBridgeEvent,
   type BrowserState,
   type EventMap,
+  type FrostTabState,
   type Tab,
 } from '../bridge/fubuki';
 
@@ -51,7 +53,7 @@ export async function refreshState(status = 'Ready') {
   }
   const myCounter = ++refreshCounter;
   const statusAtStart = lastStatus;
-  pendingRefresh = invokeBridge('app.getState')
+  pendingRefresh = getBrowserState()
     .then((state) => {
       // Only apply if no newer refresh has started
       if (myCounter === refreshCounter) {
@@ -130,6 +132,65 @@ export function navigateInternal(url: string): void {
 }
 
 export function bindNativeEvents() {
+  const frostDisposers = [
+    onBridgeEvent('tab.created', (tab) => {
+      const nextTab = fromFrostTab(tab);
+      if (nextTab.isActive) {
+        setBrowserState('tabs', (item) => item.id !== nextTab.id, {
+          isActive: false,
+        });
+      }
+      setBrowserState('tabs', (tabs) => [
+        ...tabs.filter((item) => item.id !== nextTab.id),
+        nextTab,
+      ]);
+      if (nextTab.isActive) {
+        setBrowserState({ activeTabId: nextTab.id });
+      }
+      setBrowserState({ status: 'tab.created' });
+    }),
+    onBridgeEvent('tab.updated', (patch) => {
+      setBrowserState('tabs', (tab) => tab.id === patch.tabId, (tab) => ({
+        ...tab,
+        ...toTabPatch(patch),
+      }));
+      setBrowserState({ status: 'tab.updated' });
+    }),
+    onBridgeEvent('tab.closed', ({ tabId }) => {
+      const remainingTabs = browserState.tabs.filter((tab) => tab.id !== tabId);
+      setBrowserState('tabs', remainingTabs);
+      if (browserState.activeTabId === tabId) {
+        setBrowserState({ activeTabId: remainingTabs[0]?.id ?? '' });
+      }
+      setBrowserState({ status: 'tab.closed' });
+    }),
+    onBridgeEvent('tab.activated', ({ tabId }) => {
+      setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
+      setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
+      setBrowserState({ activeTabId: tabId, status: 'tab.activated' });
+    }),
+    onBridgeEvent('window.created', (windowState) => {
+      if (windowState) {
+        setBrowserState('windows', (windows) => [
+          ...windows,
+          {
+            id: windowState.id,
+            private: windowState.isPrivate,
+            activeTabId: windowState.activeTabId ?? '',
+            tabs: [],
+          },
+        ]);
+      }
+      setBrowserState({ status: 'window.created' });
+    }),
+    onBridgeEvent('setting.changed', ({ key, value }) => {
+      if (isSettingsKey(key)) {
+        setBrowserState('settings', key, value);
+      }
+      setBrowserState({ status: 'setting.changed' });
+    }),
+  ];
+
   const refreshEvents: Array<keyof EventMap> = [
     'tabs.created',
     'tabs.updated',
@@ -142,9 +203,7 @@ export function bindNativeEvents() {
     'download.changed',
     'bookmark.changed',
     'history.changed',
-    'setting.changed',
     'permission.changed',
-    'window.created',
     'window.closed',
     'window.focused',
     'app.stateChanged',
@@ -157,5 +216,43 @@ export function bindNativeEvents() {
   );
 
   void refreshState('Ready');
-  return () => disposers.forEach((dispose) => dispose());
+  return () => [...frostDisposers, ...disposers].forEach((dispose) => dispose());
+}
+
+function fromFrostTab(tab: FrostTabState): Tab {
+  return {
+    id: tab.id,
+    title: tab.title,
+    url: tab.url,
+    faviconUrl: tab.faviconUrl,
+    errorText: tab.errorText,
+    zoomLevel: tab.zoomLevel,
+    isLoading: tab.isLoading,
+    canGoBack: tab.canGoBack,
+    canGoForward: tab.canGoForward,
+    isActive: tab.isActive,
+    isPinned: tab.isPinned,
+  };
+}
+
+function toTabPatch(
+  patch: Partial<FrostTabState> & { tabId: string },
+): Partial<Tab> {
+  const next: Partial<Tab> = {};
+  if (patch.title !== undefined) next.title = patch.title;
+  if (patch.url !== undefined) next.url = patch.url;
+  if (patch.faviconUrl !== undefined) next.faviconUrl = patch.faviconUrl;
+  if (patch.errorText !== undefined) next.errorText = patch.errorText;
+  if (patch.zoomLevel !== undefined) next.zoomLevel = patch.zoomLevel;
+  if (patch.isLoading !== undefined) next.isLoading = patch.isLoading;
+  if (patch.canGoBack !== undefined) next.canGoBack = patch.canGoBack;
+  if (patch.canGoForward !== undefined) {
+    next.canGoForward = patch.canGoForward;
+  }
+  if (patch.isPinned !== undefined) next.isPinned = patch.isPinned;
+  return next;
+}
+
+function isSettingsKey(key: string): key is keyof BrowserState['settings'] {
+  return key in browserState.settings;
 }

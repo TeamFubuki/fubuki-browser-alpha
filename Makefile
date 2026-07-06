@@ -7,7 +7,7 @@ LLVM_PREFIX ?= $(shell brew --prefix llvm 2>/dev/null || echo "/opt/homebrew/opt
 CLANG_FORMAT := $(LLVM_PREFIX)/bin/clang-format
 CLANG_TIDY := $(LLVM_PREFIX)/bin/clang-tidy
 
-.PHONY: help all bootstrap cef ui configure native build run test test-ui test-native lint lint-fix format format-check lint-native format-native lint-all format-all clean distclean
+.PHONY: help all bootstrap cef ui configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-native format-native lint-all format-all clean distclean
 
 help:
 	@echo "Fubuki Browser Alpha"
@@ -21,6 +21,7 @@ help:
 	@echo "  make build        Build UI and native app"
 	@echo "  make run          Build and run the app"
 	@echo "  make test         Run all tests (UI + native)"
+	@echo "  make test-rust    Run FrostEngine tests"
 	@echo "  make test-ui      Run Vitest (UI)"
 	@echo "  make test-native  Build & run GoogleTest (native)"
 	@echo "  make lint         Run Oxlint linter (UI)"
@@ -64,7 +65,10 @@ run:
 clean:
 	@./scripts/clean.sh
 
-test: test-ui test-native
+test: test-rust test-ui test-native
+
+test-rust:
+	@cargo test --workspace
 
 test-ui:
 	@cd ui && pnpm test

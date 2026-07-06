@@ -2,6 +2,8 @@
 
 Bridge version: `1`
 
+Frost Protocol compatibility: `0`
+
 The UI calls native code through:
 
 ```ts
@@ -12,8 +14,10 @@ The native bridge only accepts calls from `fubuki://app/`.
 
 ## Methods
 
+- `app.snapshot`
 - `app.getState`
 - `app.openDevTools`
+- `tabs.list()`
 - `tabs.create({ url?: string, active?: boolean })`
 - `tabs.activate({ tabId: string })`
 - `tabs.close({ tabId: string })`
@@ -30,6 +34,7 @@ The native bridge only accepts calls from `fubuki://app/`.
 - `tabs.goBack({ tabId: string })`
 - `tabs.goForward({ tabId: string })`
 - `tabs.home()`
+- `windows.list()`
 - `windows.create()`
 - `windows.createPrivate()`
 - `windows.close()`
@@ -50,6 +55,7 @@ The native bridge only accepts calls from `fubuki://app/`.
 - `downloads.open({ path: string })`
 - `downloads.reveal({ path: string })`
 - `data.clear({ target: "history" | "cookies" | "cache" | "downloads" | "siteData" | "all" })`
+- `settings.get({ key: string })`
 - `settings.set({ key: string, value: string })`
 - `settings.reset({ key: string })`
 - `permissions.set({ origin: string, permission: string, value: "ask" | "allow" | "deny" })`
@@ -58,6 +64,10 @@ The native bridge only accepts calls from `fubuki://app/`.
 
 ## Events
 
+- `tab.created`
+- `tab.updated`
+- `tab.closed`
+- `tab.activated`
 - `window.created`
 - `window.closed`
 - `window.focused`

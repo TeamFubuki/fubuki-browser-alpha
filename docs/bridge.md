@@ -6,19 +6,28 @@ The UI talks to native code through `window.fubuki`.
 - New UI code should prefer typed wrappers from `ui/src/bridge/fubuki.ts`.
 - `BridgeMethodMap` describes common method parameters and results.
 - `EventMap` describes native event names consumed by the UI.
+- Frost Protocol v0 names are available during the migration. The UI calls
+  `app.snapshot` first and falls back to `app.getState` when running against an
+  older host.
 
 Native bridge access is intended for `fubuki://app/` only. Internal content pages such as
 `fubuki://settings/` use trusted `fubuki://settings/set?...` actions handled by native code.
 
 Common methods:
 
+- `app.snapshot`
 - `app.getState`
 - `commands.list`
 - `commands.execute`
+- `tabs.list`
 - `tabs.create`
 - `tabs.navigate`
 - `tabs.activate`
 - `tabs.close`
+- `windows.list`
+- `windows.create`
+- `windows.close`
+- `settings.get`
 - `settings.set`
 
 Keep raw method strings localized to bridge wrappers when adding new UI features.
