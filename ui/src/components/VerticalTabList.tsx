@@ -122,6 +122,9 @@ export default function VerticalTabList() {
               onDragLeave={() => {
                 setDragOverId(null);
               }}
+              onDragEnd={() => {
+                setDragOverId(null);
+              }}
               onDrop={(event) => {
                 event.preventDefault();
                 setDragOverId(null);

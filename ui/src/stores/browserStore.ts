@@ -58,6 +58,10 @@ export async function refreshState(status = "Ready") {
         setBrowserState({ ...state, status: statusAtStart });
       }
     })
+    .catch((error) => {
+      console.error("[Fubuki] Failed to refresh state:", error);
+      setBrowserState({ status: "Error" });
+    })
     .finally(() => {
       pendingRefresh = undefined;
     });
@@ -85,33 +89,36 @@ export async function toggleBookmark(): Promise<void> {
   const tab = activeTab();
   if (!tab?.url || tab.url.startsWith("fubuki://") || tab.url.startsWith("data:"))
     return;
-  if (isTabBookmarked(tab.url)) {
-    await invokeBridge("bookmarks.remove", { url: tab.url });
-  } else {
-    await invokeBridge("bookmarks.save", {
-      title: tab.title || tab.url,
-      url: tab.url,
-      faviconUrl: tab.faviconUrl || "",
-    });
+  try {
+    if (isTabBookmarked(tab.url)) {
+      await invokeBridge("bookmarks.remove", { url: tab.url });
+    } else {
+      await invokeBridge("bookmarks.save", {
+        title: tab.title || tab.url,
+        url: tab.url,
+        faviconUrl: tab.faviconUrl || "",
+      });
+    }
+    await refreshState("bookmarks.changed");
+  } catch (error) {
+    console.error("[Fubuki] Failed to toggle bookmark:", error);
   }
-  await refreshState("bookmarks.changed");
 }
 
 export function toggleSidebar(): void {
   const next =
     browserState.settings.sidebarVisible === "hide" ? "show" : "hide";
-  void invokeBridge("settings.set", { key: "sidebarVisible", value: next }).then(
-    () => refreshState("settings.saved")
-  );
+  void invokeBridge("settings.set", { key: "sidebarVisible", value: next })
+    .then(() => refreshState("settings.saved"))
+    .catch((error) => console.error("[Fubuki] Failed to toggle sidebar:", error));
 }
 
 export function navigateInternal(url: string): void {
   const tab = activeTab();
-  if (tab) {
-    void invokeBridge("tabs.navigate", { tabId: tab.id, input: url });
-  } else {
-    void invokeBridge("tabs.create", { url, active: true });
-  }
+  const promise = tab
+    ? invokeBridge("tabs.navigate", { tabId: tab.id, input: url })
+    : invokeBridge("tabs.create", { url, active: true });
+  void promise.catch((error) => console.error("[Fubuki] Failed to navigate:", error));
 }
 
 export function bindNativeEvents() {

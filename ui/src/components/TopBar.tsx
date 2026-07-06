@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { invokeBridge, page } from "../bridge/fubuki";
 import { t } from "../i18n";
 import {
@@ -12,6 +12,18 @@ import Omnibox from "./Omnibox";
 export default function TopBar() {
   const [findOpen, setFindOpen] = createSignal(false);
   const [findText, setFindText] = createSignal("");
+
+  const currentTab = createMemo(() => activeTab());
+  const isBookmarked = createMemo(() => isTabBookmarked(currentTab()?.url));
+  const isLoading = createMemo(() => currentTab()?.isLoading ?? false);
+  const canGoBack = createMemo(() => currentTab()?.canGoBack ?? false);
+  const canGoForward = createMemo(() => currentTab()?.canGoForward ?? false);
+  const tabUrl = createMemo(() => currentTab()?.url);
+
+  const isDisabledUrl = createMemo(() => {
+    const url = tabUrl();
+    return !url || url.startsWith("fubuki://") || url.startsWith("data:");
+  });
 
   onMount(() => {
     const showFind = () => setFindOpen(true);
@@ -35,7 +47,7 @@ export default function TopBar() {
         class="topbar-button"
         title={t("common.back", lang())}
         aria-label={t("common.back", lang())}
-        disabled={!activeTab()?.canGoBack}
+        disabled={!canGoBack()}
         onClick={() =>
           void invokeBridge("tabs.goBack", {
             tabId: browserState.activeTabId,
@@ -48,7 +60,7 @@ export default function TopBar() {
         class="topbar-button"
         title={t("common.forward", lang())}
         aria-label={t("common.forward", lang())}
-        disabled={!activeTab()?.canGoForward}
+        disabled={!canGoForward()}
         onClick={() =>
           void invokeBridge("tabs.goForward", {
             tabId: browserState.activeTabId,
@@ -60,50 +72,46 @@ export default function TopBar() {
       <button
         class="topbar-button"
         title={
-          activeTab()?.isLoading
+          isLoading()
             ? t("common.stop", lang())
             : t("common.reload", lang())
         }
         aria-label={
-          activeTab()?.isLoading
+          isLoading()
             ? t("common.stop", lang())
             : t("common.reload", lang())
         }
-        disabled={!activeTab()}
+        disabled={!currentTab()}
         onClick={() =>
           void invokeBridge(
-            activeTab()?.isLoading ? "tabs.stop" : "tabs.reload",
+            isLoading() ? "tabs.stop" : "tabs.reload",
             { tabId: browserState.activeTabId }
           )
         }
       >
-        <span aria-hidden="true">{activeTab()?.isLoading ? "×" : "↻"}</span>
+        <span aria-hidden="true">{isLoading() ? "×" : "↻"}</span>
       </button>
       <Omnibox />
       <button
         classList={{
           "topbar-button": true,
-          bookmarked: isTabBookmarked(activeTab()?.url),
+          bookmarked: isBookmarked(),
         }}
         title={
-          isTabBookmarked(activeTab()?.url)
+          isBookmarked()
             ? t("action.removeBookmark", lang())
             : t("action.addBookmark", lang())
         }
         aria-label={
-          isTabBookmarked(activeTab()?.url)
+          isBookmarked()
             ? t("action.removeBookmark", lang())
             : t("action.addBookmark", lang())
         }
-        disabled={
-          !activeTab()?.url ||
-          activeTab()?.url.startsWith("fubuki://") ||
-          activeTab()?.url.startsWith("data:")
-        }
+        disabled={isDisabledUrl()}
         onClick={() => void toggleBookmark()}
       >
         <span aria-hidden="true">
-          {isTabBookmarked(activeTab()?.url) ? "★" : "☆"}
+          {isBookmarked() ? "★" : "☆"}
         </span>
       </button>
       {findOpen() && (
