@@ -5,10 +5,10 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 34px 32px minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 8px;
-  padding-top: 10px;
+  grid-template-rows: 32px 30px minmax(0, 1fr) auto;
+  gap: 7px;
+  padding: 7px;
+  padding-top: 9px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--line);
   pointer-events: auto;
@@ -51,6 +51,12 @@
   transform: translateY(-1px);
 }
 
+.new-tab-button:disabled,
+.sidebar-actions button:disabled {
+  color: var(--muted);
+  opacity: 0.38;
+}
+
 .new-tab-button {
   width: 100%;
   justify-self: stretch;
@@ -61,8 +67,8 @@
   display: grid;
   grid-template-columns: repeat(4, var(--button-size));
   justify-content: space-between;
-  gap: 6px;
-  padding-top: 8px;
+  gap: 5px;
+  padding-top: 7px;
   border-top: 1px solid var(--line);
   align-self: end;
 }

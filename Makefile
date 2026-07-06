@@ -70,7 +70,12 @@ test-ui:
 	@cd ui && pnpm test
 
 test-native:
-	@cmake -S native/tests -B native/tests/build -DCMAKE_BUILD_TYPE=Debug
+	@if [ ! -f native/tests/build/CMakeCache.txt ]; then \
+		echo "Configuring native tests..."; \
+		cmake -S native/tests -B native/tests/build -DCMAKE_BUILD_TYPE=Debug; \
+	else \
+		echo "Using existing native test build."; \
+	fi
 	@cmake --build native/tests/build
 	@cd native/tests/build && ctest --output-on-failure
 

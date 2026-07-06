@@ -49,10 +49,12 @@ export function useSidebarResize() {
   };
 
   const removeListeners = () => {
-    handle?.removeEventListener('pointermove', onPointerMove);
-    handle?.removeEventListener('pointerup', onPointerUp);
-    handle?.removeEventListener('pointercancel', onPointerCancel);
-    handle?.removeEventListener('lostpointercapture', onLostPointerCapture);
+    if (handle) {
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", onPointerUp);
+      handle.removeEventListener("pointercancel", onPointerCancel);
+      handle.removeEventListener("lostpointercapture", onLostPointerCapture);
+    }
   };
 
   const finishResize = (clientX?: number) => {

@@ -19,7 +19,6 @@ describe('clampSidebarWidth', () => {
 
   it('clamps to MAX when above maximum', () => {
     expect(clampSidebarWidth(500)).toBe(MAX_SIDEBAR_WIDTH);
-    expect(clampSidebarWidth(Infinity)).toBe(MAX_SIDEBAR_WIDTH);
   });
 
   it('rounds fractional values', () => {
@@ -32,12 +31,14 @@ describe('clampSidebarWidth', () => {
     expect(clampSidebarWidth(MAX_SIDEBAR_WIDTH)).toBe(MAX_SIDEBAR_WIDTH);
   });
 
-  it('returns DEFAULT when given NaN', () => {
-    // NaN comparisons are always false, so Math.max returns NaN,
-    // then Math.min returns NaN, then Math.round returns NaN.
-    // This documents the current behavior.
+  it("returns DEFAULT when given NaN", () => {
     const result = clampSidebarWidth(NaN);
-    expect(result).toBeNaN();
+    expect(result).toBe(DEFAULT_SIDEBAR_WIDTH);
+  });
+
+  it("returns DEFAULT when given Infinity", () => {
+    expect(clampSidebarWidth(Infinity)).toBe(DEFAULT_SIDEBAR_WIDTH);
+    expect(clampSidebarWidth(-Infinity)).toBe(DEFAULT_SIDEBAR_WIDTH);
   });
 });
 

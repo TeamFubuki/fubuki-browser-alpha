@@ -1,0 +1,223 @@
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
+import { commands, page, tabs, type BrowserCommand } from "../../bridge/fubuki";
+import { t } from "../../i18n";
+import {
+  activeTabId,
+  browserState,
+  currentLanguage,
+  refreshState,
+} from "../../stores/browserStore";
+import { filterCommands, type PaletteCommand } from "./commands";
+
+type Props = {
+  open: boolean;
+  quietMode: boolean;
+  onClose: () => void;
+  onToggleQuietMode: () => void;
+};
+
+const allowedCommandIds = new Set([
+  "tabs.create",
+  "tabs.close",
+  "tabs.reopenClosed",
+  "app.openSettings",
+  "app.openHistory",
+  "app.openBookmarks",
+  "app.openDownloads",
+  "app.toggleSidebar",
+  "page.zoomReset",
+  "app.openDebug",
+  "app.openDevTools",
+]);
+
+function localizeCommand(command: BrowserCommand, lang: string) {
+  switch (command.id) {
+    case "tabs.create":
+      return t("common.newTab", lang);
+    case "tabs.close":
+      return t("action.closeTab", lang);
+    case "tabs.reopenClosed":
+      return lang === "ja" ? "閉じたタブを再度開く" : command.title;
+    case "app.openSettings":
+      return t("common.settings", lang);
+    case "app.openHistory":
+      return t("common.history", lang);
+    case "app.openBookmarks":
+      return t("common.bookmarks", lang);
+    case "app.openDownloads":
+      return t("common.downloads", lang);
+    case "app.toggleSidebar":
+      return t("common.toggleSidebar", lang);
+    case "page.zoomReset":
+      return lang === "ja" ? "表示倍率をリセット" : command.title;
+    case "app.openDebug":
+      return t("common.debug", lang);
+    case "app.openDevTools":
+      return lang === "ja" ? "DevToolsを開く" : command.title;
+    default:
+      return command.title;
+  }
+}
+
+export default function CommandPalette(props: Props) {
+  const [query, setQuery] = createSignal("");
+  const [selectedIndex, setSelectedIndex] = createSignal(0);
+  let inputRef: HTMLInputElement | undefined;
+
+  const paletteCommands = createMemo<PaletteCommand[]>(() => {
+    const lang = currentLanguage();
+    const native = browserState.commands
+      .filter((command) => allowedCommandIds.has(command.id))
+      .map((command) => ({
+        ...command,
+        title: localizeCommand(command, lang),
+        keywords: command.id.replaceAll(".", " "),
+        run: async () => {
+          if (command.id === "tabs.close") {
+            const id = activeTabId();
+            if (id) await tabs.close(id);
+            return;
+          }
+          if (command.id === "page.zoomReset") {
+            await page.zoomReset();
+            return;
+          }
+          await commands.execute(command.id);
+          await refreshState(command.id);
+        },
+      }));
+
+    return [
+      {
+        id: "ui.toggleQuietMode",
+        title: `${t("commandPalette.toggleQuietMode", lang)}${props.quietMode ? " ✓" : ""}`,
+        category: "UI",
+        shortcut: "",
+        keywords: "quiet focus minimal zen",
+        run: props.onToggleQuietMode,
+      },
+      ...native,
+    ];
+  });
+
+  const filtered = createMemo(() => filterCommands(paletteCommands(), query()));
+
+  createEffect(() => {
+    if (props.open) {
+      setQuery("");
+      setSelectedIndex(0);
+      queueMicrotask(() => inputRef?.focus());
+    }
+  });
+
+  createEffect(() => {
+    if (selectedIndex() >= filtered().length) {
+      setSelectedIndex(Math.max(0, filtered().length - 1));
+    }
+  });
+
+  const runSelected = async () => {
+    const command = filtered()[selectedIndex()];
+    if (!command) return;
+    await command.run();
+    props.onClose();
+  };
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!props.open) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      props.onClose();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedIndex((index) => Math.min(index + 1, filtered().length - 1));
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedIndex((index) => Math.max(index - 1, 0));
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void runSelected();
+    }
+  };
+
+  onMount(() => {
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+
+  return (
+    <Show when={props.open}>
+      <div class="command-palette-backdrop" onMouseDown={props.onClose}>
+        <section
+          class="command-palette"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("commandPalette.title", currentLanguage())}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <input
+            ref={inputRef}
+            class="command-palette-input"
+            value={query()}
+            placeholder={t("commandPalette.placeholder", currentLanguage())}
+            aria-label={t("commandPalette.placeholder", currentLanguage())}
+            autocomplete="off"
+            onInput={(event) => {
+              setQuery(event.currentTarget.value);
+              setSelectedIndex(0);
+            }}
+          />
+          <div class="command-palette-list" role="listbox">
+            <Show
+              when={filtered().length > 0}
+              fallback={
+                <p class="command-palette-empty">
+                  {t("commandPalette.empty", currentLanguage())}
+                </p>
+              }
+            >
+              <For each={filtered()}>
+                {(command, index) => (
+                  <button
+                    classList={{
+                      "command-palette-row": true,
+                      selected: index() === selectedIndex(),
+                    }}
+                    role="option"
+                    aria-selected={index() === selectedIndex()}
+                    onMouseEnter={() => setSelectedIndex(index())}
+                    onClick={() => void runSelected()}
+                  >
+                    <span>
+                      <span class="command-palette-title">{command.title}</span>
+                      <span class="command-palette-category">
+                        {command.category}
+                      </span>
+                    </span>
+                    <Show when={command.shortcut}>
+                      <kbd>{command.shortcut}</kbd>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </Show>
+          </div>
+        </section>
+      </div>
+    </Show>
+  );
+}

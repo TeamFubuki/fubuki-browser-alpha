@@ -1,47 +1,36 @@
-import { fubuki } from '../bridge/fubuki';
-import { browserState } from '../stores/browserStore';
-
-function activeTabId() {
-  return browserState.activeTabId;
-}
-
-function openInternal(url: string) {
-  const tabId = activeTabId();
-  if (tabId) {
-    void fubuki.invoke('tabs.navigate', { tabId, input: url });
-  } else {
-    void fubuki.invoke('tabs.create', { url, active: true });
-  }
-}
+import { t } from "../i18n";
+import { currentLanguage, navigateInternal } from "../stores/browserStore";
 
 export default function SidebarActions() {
+  const lang = () => currentLanguage();
+
   return (
     <nav class="sidebar-actions" aria-label="Browser pages">
       <button
-        title="Bookmarks"
-        aria-label="Bookmarks"
-        onClick={() => openInternal('fubuki://bookmarks/')}
+        title={t("common.bookmarks", lang())}
+        aria-label={t("common.bookmarks", lang())}
+        onClick={() => navigateInternal("fubuki://bookmarks/")}
       >
         <span aria-hidden="true">★</span>
       </button>
       <button
-        title="History"
-        aria-label="History"
-        onClick={() => openInternal('fubuki://history/')}
+        title={t("common.history", lang())}
+        aria-label={t("common.history", lang())}
+        onClick={() => navigateInternal("fubuki://history/")}
       >
         <span aria-hidden="true">◷</span>
       </button>
       <button
-        title="Downloads"
-        aria-label="Downloads"
-        onClick={() => openInternal('fubuki://downloads/')}
+        title={t("common.downloads", lang())}
+        aria-label={t("common.downloads", lang())}
+        onClick={() => navigateInternal("fubuki://downloads/")}
       >
         <span aria-hidden="true">↓</span>
       </button>
       <button
-        title="Settings"
-        aria-label="Settings"
-        onClick={() => openInternal('fubuki://settings/')}
+        title={t("common.settings", lang())}
+        aria-label={t("common.settings", lang())}
+        onClick={() => navigateInternal("fubuki://settings/")}
       >
         <span aria-hidden="true">⚙</span>
       </button>

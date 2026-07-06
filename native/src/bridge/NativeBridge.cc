@@ -30,7 +30,202 @@ CopyDictionaryOrEmpty(CefRefPtr<CefDictionaryValue> value) {
 
 }  // namespace
 
-NativeBridge::NativeBridge(BrowserWindow &window) : window_(window) {}
+NativeBridge::NativeBridge(BrowserWindow& window) : window_(window) {
+  RegisterMethods();
+}
+
+void NativeBridge::RegisterMethods() {
+  methods_["app.getState"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return StateValue();
+  };
+
+  methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    const std::string url = params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
+    const bool active = !params->HasKey("active") || params->GetBool("active");
+    return BoolValue(window_.CreateTab(url, active));
+  };
+
+  methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.ActivateTab(params->GetString("tabId")));
+  };
+
+  methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.CloseTab(params->GetString("tabId")));
+  };
+
+  methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.PinTab(params->GetString("tabId"), params->HasKey("pinned") && params->GetBool("pinned")));
+  };
+
+  methods_["tabs.duplicate"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.DuplicateTab(params->GetString("tabId")));
+  };
+
+  methods_["tabs.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.ReopenClosedTab());
+  };
+
+  methods_["tabs.closeOther"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.CloseOtherTabs(params->GetString("tabId")));
+  };
+
+  methods_["tabs.closeToRight"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.CloseTabsToRight(params->GetString("tabId")));
+  };
+
+  methods_["tabs.move"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.MoveTab(params->GetString("tabId"), params->GetInt("toIndex")));
+  };
+
+  methods_["tabs.moveToNewWindow"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.MoveTabToNewWindow(params->GetString("tabId")));
+  };
+
+  methods_["tabs.navigate"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.Navigate(params->GetString("tabId"), params->GetString("input")));
+  };
+
+  methods_["tabs.reload"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.Reload(params->GetString("tabId")));
+  };
+
+  methods_["tabs.stop"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.Stop(params->GetString("tabId")));
+  };
+
+  methods_["tabs.goBack"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.GoBack(params->GetString("tabId")));
+  };
+
+  methods_["tabs.goForward"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.GoForward(params->GetString("tabId")));
+  };
+
+  methods_["tabs.home"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.GoHome());
+  };
+
+  methods_["windows.create"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.App().RequestNewWindow(false, nullptr));
+  };
+
+  methods_["windows.createPrivate"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.App().RequestNewPrivateWindow());
+  };
+
+  methods_["windows.close"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.CloseWindow());
+  };
+
+  methods_["windows.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.App().ReopenClosedWindow());
+  };
+
+  methods_["page.find"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.FindInPage(params->GetString("query"), !params->HasKey("forward") || params->GetBool("forward")));
+  };
+
+  methods_["page.stopFinding"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.StopFinding(!params->HasKey("clear") || params->GetBool("clear")));
+  };
+
+  methods_["page.zoomIn"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.ZoomIn());
+  };
+
+  methods_["page.zoomOut"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.ZoomOut());
+  };
+
+  methods_["page.zoomReset"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.ResetZoom());
+  };
+
+  methods_["page.print"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.PrintPage());
+  };
+
+  methods_["page.viewSource"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.ViewSource());
+  };
+
+  methods_["bookmarks.addActive"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.AddActiveBookmark());
+  };
+
+  methods_["bookmarks.save"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.SaveBookmark(params->GetString("title"), params->GetString("url"), params->GetString("faviconUrl")));
+  };
+
+  methods_["bookmarks.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.RemoveBookmark(params->GetString("url")));
+  };
+
+  methods_["history.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.RemoveHistory(params->GetString("url")));
+  };
+
+  methods_["history.clearRange"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.ClearHistoryRange(params->GetString("range")));
+  };
+
+  methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.RemoveDownload(params->GetString("url"), params->GetString("path")));
+  };
+
+  methods_["downloads.open"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.OpenDownloadedFile(params->GetString("path")));
+  };
+
+  methods_["downloads.reveal"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.RevealDownloadedFile(params->GetString("path")));
+  };
+
+  methods_["data.clear"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.ClearBrowsingData(params->GetString("target")));
+  };
+
+  methods_["settings.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.SetSetting(params->GetString("key"), params->GetString("value")));
+  };
+
+  methods_["settings.reset"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.ResetSetting(params->GetString("key")));
+  };
+
+  methods_["ui.setSidebarWidth"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.SetLiveSidebarWidth(params->GetDouble("width")));
+  };
+
+  methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.SetPermission(params->GetString("origin"), params->GetString("permission"), params->GetString("value")));
+  };
+
+  methods_["ui.setOverlayActive"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    const double overlayWidth = params->HasKey("width") ? params->GetDouble("width") : 392.0;
+    const double overlayHeight = params->HasKey("height") ? params->GetDouble("height") : 560.0;
+    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") && params->GetBool("active"), overlayWidth, overlayHeight));
+  };
+
+  methods_["app.openDevTools"] = [this](CefRefPtr<CefDictionaryValue>) {
+    return BoolValue(window_.OpenDevTools());
+  };
+
+  methods_["commands.execute"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    const std::string id = params->GetString("id");
+    CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
+    if (params->HasKey("args") && params->GetType("args") == VTYPE_DICTIONARY) {
+      args = params->GetDictionary("args");
+    }
+    return window_.Commands().Execute(id, args);
+  };
+
+  methods_["commands.list"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetList(window_.Commands().List());
+    return value;
+  };
+}
 
 bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                            int64_t, const CefString &request, bool,
@@ -67,172 +262,12 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
 void NativeBridge::OnQueryCanceled(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                    int64_t) {}
 
-CefRefPtr<CefValue> NativeBridge::Invoke(const std::string &method,
-                                         CefRefPtr<CefDictionaryValue> params) {
-  if (method == "app.getState") {
-    return StateValue();
+CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<CefDictionaryValue> params) {
+  auto it = methods_.find(method);
+  if (it != methods_.end()) {
+    return it->second(params);
   }
-  if (method == "tabs.create") {
-    const std::string url =
-        params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
-    const bool active = !params->HasKey("active") || params->GetBool("active");
-    return BoolValue(window_.CreateTab(url, active));
-  }
-  if (method == "tabs.activate") {
-    return BoolValue(window_.ActivateTab(params->GetString("tabId")));
-  }
-  if (method == "tabs.close") {
-    return BoolValue(window_.CloseTab(params->GetString("tabId")));
-  }
-  if (method == "tabs.pin") {
-    return BoolValue(
-        window_.PinTab(params->GetString("tabId"),
-                       params->HasKey("pinned") && params->GetBool("pinned")));
-  }
-  if (method == "tabs.duplicate") {
-    return BoolValue(window_.DuplicateTab(params->GetString("tabId")));
-  }
-  if (method == "tabs.reopenClosed") {
-    return BoolValue(window_.ReopenClosedTab());
-  }
-  if (method == "tabs.closeOther") {
-    return BoolValue(window_.CloseOtherTabs(params->GetString("tabId")));
-  }
-  if (method == "tabs.closeToRight") {
-    return BoolValue(window_.CloseTabsToRight(params->GetString("tabId")));
-  }
-  if (method == "tabs.move") {
-    return BoolValue(
-        window_.MoveTab(params->GetString("tabId"), params->GetInt("toIndex")));
-  }
-  if (method == "tabs.moveToNewWindow") {
-    return BoolValue(window_.MoveTabToNewWindow(params->GetString("tabId")));
-  }
-  if (method == "tabs.navigate") {
-    return BoolValue(window_.Navigate(params->GetString("tabId"),
-                                      params->GetString("input")));
-  }
-  if (method == "tabs.reload") {
-    return BoolValue(window_.Reload(params->GetString("tabId")));
-  }
-  if (method == "tabs.stop") {
-    return BoolValue(window_.Stop(params->GetString("tabId")));
-  }
-  if (method == "tabs.goBack") {
-    return BoolValue(window_.GoBack(params->GetString("tabId")));
-  }
-  if (method == "tabs.goForward") {
-    return BoolValue(window_.GoForward(params->GetString("tabId")));
-  }
-  if (method == "tabs.home") {
-    return BoolValue(window_.GoHome());
-  }
-  if (method == "windows.create") {
-    return BoolValue(window_.App().RequestNewWindow(false, nullptr));
-  }
-  if (method == "windows.createPrivate") {
-    return BoolValue(window_.App().RequestNewPrivateWindow());
-  }
-  if (method == "windows.close") {
-    return BoolValue(window_.CloseWindow());
-  }
-  if (method == "windows.reopenClosed") {
-    return BoolValue(window_.App().ReopenClosedWindow());
-  }
-  if (method == "page.find") {
-    return BoolValue(window_.FindInPage(params->GetString("query"),
-                                        !params->HasKey("forward") ||
-                                            params->GetBool("forward")));
-  }
-  if (method == "page.stopFinding") {
-    return BoolValue(window_.StopFinding(!params->HasKey("clear") ||
-                                         params->GetBool("clear")));
-  }
-  if (method == "page.zoomIn") {
-    return BoolValue(window_.ZoomIn());
-  }
-  if (method == "page.zoomOut") {
-    return BoolValue(window_.ZoomOut());
-  }
-  if (method == "page.zoomReset") {
-    return BoolValue(window_.ResetZoom());
-  }
-  if (method == "page.print") {
-    return BoolValue(window_.PrintPage());
-  }
-  if (method == "page.viewSource") {
-    return BoolValue(window_.ViewSource());
-  }
-  if (method == "bookmarks.addActive") {
-    return BoolValue(window_.AddActiveBookmark());
-  }
-  if (method == "bookmarks.save") {
-    return BoolValue(window_.SaveBookmark(params->GetString("title"),
-                                          params->GetString("url"),
-                                          params->GetString("faviconUrl")));
-  }
-  if (method == "bookmarks.remove") {
-    return BoolValue(window_.RemoveBookmark(params->GetString("url")));
-  }
-  if (method == "history.remove") {
-    return BoolValue(window_.RemoveHistory(params->GetString("url")));
-  }
-  if (method == "history.clearRange") {
-    return BoolValue(window_.ClearHistoryRange(params->GetString("range")));
-  }
-  if (method == "downloads.remove") {
-    return BoolValue(window_.RemoveDownload(params->GetString("url"),
-                                            params->GetString("path")));
-  }
-  if (method == "downloads.open") {
-    return BoolValue(window_.OpenDownloadedFile(params->GetString("path")));
-  }
-  if (method == "downloads.reveal") {
-    return BoolValue(window_.RevealDownloadedFile(params->GetString("path")));
-  }
-  if (method == "data.clear") {
-    return BoolValue(window_.ClearBrowsingData(params->GetString("target")));
-  }
-  if (method == "settings.set") {
-    return BoolValue(window_.SetSetting(params->GetString("key"),
-                                        params->GetString("value")));
-  }
-  if (method == "settings.reset") {
-    return BoolValue(window_.ResetSetting(params->GetString("key")));
-  }
-  if (method == "ui.setSidebarWidth") {
-    return BoolValue(window_.SetLiveSidebarWidth(params->GetDouble("width")));
-  }
-  if (method == "permissions.set") {
-    return BoolValue(window_.SetPermission(params->GetString("origin"),
-                                           params->GetString("permission"),
-                                           params->GetString("value")));
-  }
-  if (method == "ui.setOverlayActive") {
-    const double overlayWidth =
-        params->HasKey("width") ? params->GetDouble("width") : 392.0;
-    const double overlayHeight =
-        params->HasKey("height") ? params->GetDouble("height") : 560.0;
-    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") &&
-                                                    params->GetBool("active"),
-                                                overlayWidth, overlayHeight));
-  }
-  if (method == "app.openDevTools") {
-    return BoolValue(window_.OpenDevTools());
-  }
-  if (method == "commands.execute") {
-    const std::string id = params->GetString("id");
-    CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
-    if (params->HasKey("args") && params->GetType("args") == VTYPE_DICTIONARY) {
-      args = params->GetDictionary("args");
-    }
-    return window_.Commands().Execute(id, args);
-  }
-  if (method == "commands.list") {
-    auto value = CefValue::Create();
-    value->SetList(window_.Commands().List());
-    return value;
-  }
+  LOG(ERROR) << "[Bridge] Unknown method: " << method;
   return ErrorValue("Unknown bridge method: " + method);
 }
 

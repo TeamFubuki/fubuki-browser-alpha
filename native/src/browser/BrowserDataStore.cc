@@ -74,7 +74,7 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("defaultZoomLevel", "0");
   EnsureDefaultSetting("closeWindowWithLastTab", "off");
   EnsureDefaultSetting("privateSearchEngine", "default");
-  EnsureDefaultSetting("language", "en");
+  EnsureDefaultSetting("language", "system");
   EnsureDefaultSetting("newTabBackgroundMode", "unsplash");
   EnsureDefaultSetting("newTabBackgroundColor", "#f8fafd");
   EnsureDefaultSetting("newTabBackgroundUrl", "");
@@ -475,42 +475,24 @@ std::string BrowserDataStore::DefaultSetting(const std::string &key) const {
     const char *home = std::getenv("HOME");
     return home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
   }
-  if (key == "theme")
-    return "light";
-  if (key == "appearance")
-    return "system";
-  if (key == "toolbarDensity")
-    return "compact";
-  if (key == "sidebarVisible")
-    return "show";
-  if (key == "sidebarWidth")
-    return "196";
-  if (key == "defaultBookmarkDisplay")
-    return "sidebar";
-  if (key == "openBookmarkIn")
-    return "current";
-  if (key == "showBookmarkFavicons")
-    return "on";
-  if (key == "newTabPage")
-    return "blank";
-  if (key == "homeUrl")
-    return "https://example.com";
-  if (key == "askBeforeDownload")
-    return "off";
-  if (key == "defaultZoomLevel")
-    return "0";
-  if (key == "closeWindowWithLastTab")
-    return "off";
-  if (key == "privateSearchEngine")
-    return "default";
-  if (key == "language")
-    return "en";
-  if (key == "newTabBackgroundMode")
-    return "unsplash";
-  if (key == "newTabBackgroundColor")
-    return "#f8fafd";
-  if (key == "newTabBackgroundUrl")
-    return "";
+  if (key == "theme") return "light";
+  if (key == "appearance") return "system";
+  if (key == "toolbarDensity") return "compact";
+  if (key == "sidebarVisible") return "show";
+  if (key == "sidebarWidth") return "196";
+  if (key == "defaultBookmarkDisplay") return "sidebar";
+  if (key == "openBookmarkIn") return "current";
+  if (key == "showBookmarkFavicons") return "on";
+  if (key == "newTabPage") return "blank";
+  if (key == "homeUrl") return "https://example.com";
+  if (key == "askBeforeDownload") return "off";
+  if (key == "defaultZoomLevel") return "0";
+  if (key == "closeWindowWithLastTab") return "off";
+  if (key == "privateSearchEngine") return "default";
+  if (key == "language") return "system";
+  if (key == "newTabBackgroundMode") return "unsplash";
+  if (key == "newTabBackgroundColor") return "#f8fafd";
+  if (key == "newTabBackgroundUrl") return "";
   return "";
 }
 
