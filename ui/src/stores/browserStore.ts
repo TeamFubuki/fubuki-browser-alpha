@@ -1,5 +1,11 @@
 import { createStore } from "solid-js/store";
-import { fubuki, type BrowserState } from "../bridge/fubuki";
+import {
+  invokeBridge,
+  onBridgeEvent,
+  type BrowserState,
+  type EventMap,
+  type Tab,
+} from "../bridge/fubuki";
 
 const initialState: BrowserState & { status: string } = {
   bridgeVersion: "1",
@@ -25,35 +31,98 @@ const initialState: BrowserState & { status: string } = {
     sidebarWidth: "196",
     newTabPage: "blank",
     homeUrl: "https://example.com",
-    language: "en",
-    defaultZoomLevel: "0"
+    language: "system",
+    defaultZoomLevel: "0",
   },
   profilePath: "",
-  status: "Starting"
+  status: "Starting",
 };
 
 export const [browserState, setBrowserState] = createStore(initialState);
 
 let pendingRefresh: Promise<void> | undefined;
-let pendingStatus = "Ready";
+let refreshCounter = 0;
+let lastStatus = "Ready";
 
 export async function refreshState(status = "Ready") {
-  pendingStatus = status;
+  lastStatus = status;
   if (pendingRefresh) {
     return pendingRefresh;
   }
-  pendingRefresh = Promise.resolve().then(async () => {
-    const statusToApply = pendingStatus;
-    const state = await fubuki.invoke<BrowserState>("app.getState");
-    setBrowserState({ ...state, status: statusToApply });
-  }).finally(() => {
-    pendingRefresh = undefined;
-  });
+  const myCounter = ++refreshCounter;
+  const statusAtStart = lastStatus;
+  pendingRefresh = invokeBridge("app.getState")
+    .then((state) => {
+      // Only apply if no newer refresh has started
+      if (myCounter === refreshCounter) {
+        setBrowserState({ ...state, status: statusAtStart });
+      }
+    })
+    .catch((error) => {
+      console.error("[Fubuki] Failed to refresh state:", error);
+      setBrowserState({ status: "Error" });
+    })
+    .finally(() => {
+      pendingRefresh = undefined;
+    });
   return pendingRefresh;
 }
 
+export function activeTab(): Tab | undefined {
+  return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
+}
+
+export function isTabBookmarked(url: string | undefined): boolean {
+  if (!url) return false;
+  return browserState.bookmarks.some((bookmark) => bookmark.url === url);
+}
+
+export function activeTabId(): string {
+  return browserState.activeTabId;
+}
+
+export function currentLanguage(): string {
+  return browserState.settings.language;
+}
+
+export async function toggleBookmark(): Promise<void> {
+  const tab = activeTab();
+  if (!tab?.url || tab.url.startsWith("fubuki://") || tab.url.startsWith("data:"))
+    return;
+  try {
+    if (isTabBookmarked(tab.url)) {
+      await invokeBridge("bookmarks.remove", { url: tab.url });
+    } else {
+      await invokeBridge("bookmarks.save", {
+        title: tab.title || tab.url,
+        url: tab.url,
+        faviconUrl: tab.faviconUrl || "",
+      });
+    }
+    await refreshState("bookmarks.changed");
+  } catch (error) {
+    console.error("[Fubuki] Failed to toggle bookmark:", error);
+  }
+}
+
+export function toggleSidebar(): void {
+  const next =
+    browserState.settings.sidebarVisible === "hide" ? "show" : "hide";
+  void invokeBridge("settings.set", { key: "sidebarVisible", value: next })
+    .then(() => refreshState("settings.saved"))
+    .catch((error) => console.error("[Fubuki] Failed to toggle sidebar:", error));
+}
+
+export function navigateInternal(url: string): void {
+  const tab = activeTab();
+  const promise = tab
+    ? invokeBridge("tabs.navigate", { tabId: tab.id, input: url })
+    : invokeBridge("tabs.create", { url, active: true });
+  void promise.catch((error) => console.error("[Fubuki] Failed to navigate:", error));
+}
+
 export function bindNativeEvents() {
-  const refreshEvents = [
+  const refreshEvents: Array<keyof EventMap> = [
     "tabs.created",
     "tabs.updated",
     "tabs.closed",
@@ -70,11 +139,11 @@ export function bindNativeEvents() {
     "window.created",
     "window.closed",
     "window.focused",
-    "app.stateChanged"
+    "app.stateChanged",
   ];
 
   const disposers = refreshEvents.map((eventName) =>
-    fubuki.on(eventName, () => {
+    onBridgeEvent(eventName, () => {
       void refreshState(eventName);
     })
   );
