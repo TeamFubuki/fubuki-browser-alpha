@@ -14,7 +14,7 @@ Checks: >
   cppcoreguidelines-*,
   -cppcoreguidelines-avoid-c-arrays,
   -cppcoreguidelines-avoid-magic-numbers,
-  -cppcoreguidelines-avoid-private-ac Members,
+  -cppcoreguidelines-avoid-private-members,
   -cppcoreguidelines-init-variables,
   -cppcoreguidelines-macro-usage,
   -cppcoreguidelines-narrowing-conversions,
