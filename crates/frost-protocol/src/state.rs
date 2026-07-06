@@ -7,6 +7,12 @@ pub struct AppState {
     pub active_window_id: Option<String>,
     pub windows: Vec<WindowState>,
     pub tabs: Vec<TabState>,
+    #[serde(default)]
+    pub history: Vec<HistoryRecord>,
+    #[serde(default)]
+    pub bookmarks: Vec<BookmarkRecord>,
+    #[serde(default)]
+    pub downloads: Vec<DownloadRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -33,4 +39,32 @@ pub struct TabState {
     pub can_go_forward: bool,
     pub is_active: bool,
     pub is_pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryRecord {
+    pub title: String,
+    pub url: String,
+    pub favicon_url: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkRecord {
+    pub title: String,
+    pub url: String,
+    pub favicon_url: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadRecord {
+    pub url: String,
+    pub path: String,
+    pub state: String,
+    pub percent: i64,
+    pub created_at: String,
 }

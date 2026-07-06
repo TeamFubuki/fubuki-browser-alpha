@@ -184,7 +184,7 @@ export function bindNativeEvents() {
       setBrowserState({ status: 'window.created' });
     }),
     onBridgeEvent('setting.changed', ({ key, value }) => {
-      if (isSettingsKey(key)) {
+      if (typeof key === 'string' && typeof value === 'string' && isSettingsKey(key)) {
         setBrowserState('settings', key, value);
       }
       setBrowserState({ status: 'setting.changed' });

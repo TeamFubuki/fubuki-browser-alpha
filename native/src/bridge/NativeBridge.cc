@@ -43,6 +43,16 @@ void NativeBridge::RegisterMethods() {
     return StateValue();
   };
 
+  methods_["frost.coreSnapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
+    const std::string response =
+        frostBridge_.ProcessJson("{\"version\":0,\"method\":\"app.snapshot\"}");
+    auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
+    if (!parsed) {
+      return ErrorValue("FrostEngine returned invalid JSON");
+    }
+    return parsed;
+  };
+
   methods_["tabs.list"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
     auto tabs = CefListValue::Create();
@@ -188,6 +198,12 @@ void NativeBridge::RegisterMethods() {
     return BoolValue(window_.AddActiveBookmark());
   };
 
+  methods_["bookmarks.list"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetList(CopyListOrEmpty(window_.Store().Bookmarks()));
+    return value;
+  };
+
   methods_["bookmarks.save"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return BoolValue(window_.SaveBookmark(params->GetString("title"),
                                           params->GetString("url"),
@@ -202,10 +218,22 @@ void NativeBridge::RegisterMethods() {
     return BoolValue(window_.RemoveHistory(params->GetString("url")));
   };
 
+  methods_["history.list"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetList(CopyListOrEmpty(window_.Store().History()));
+    return value;
+  };
+
   methods_["history.clearRange"] =
       [this](CefRefPtr<CefDictionaryValue> params) {
         return BoolValue(window_.ClearHistoryRange(params->GetString("range")));
       };
+
+  methods_["downloads.list"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetList(CopyListOrEmpty(window_.Store().Downloads()));
+    return value;
+  };
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return BoolValue(window_.RemoveDownload(params->GetString("url"),

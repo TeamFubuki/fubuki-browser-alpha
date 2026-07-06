@@ -19,15 +19,15 @@ impl TabService {
     }
 
     pub fn contains(&self, tab_id: &str) -> bool {
-        self.tabs.iter().any(|tab| tab.id == tab_id)
+        self.tabs.iter().any(|t| t.id == tab_id)
     }
 
     pub fn create_tab(&mut self, window_id: String, url: String, active: bool) -> TabState {
         if active || self.tabs.is_empty() {
             self.tabs
                 .iter_mut()
-                .filter(|tab| tab.window_id == window_id)
-                .for_each(|tab| tab.is_active = false);
+                .filter(|t| t.window_id == window_id)
+                .for_each(|t| t.is_active = false);
         }
 
         let tab = TabState {
@@ -56,8 +56,8 @@ impl TabService {
         let Some(window_id) = self
             .tabs
             .iter()
-            .find(|tab| tab.id == tab_id)
-            .map(|tab| tab.window_id.clone())
+            .find(|t| t.id == tab_id)
+            .map(|t| t.window_id.clone())
         else {
             return false;
         };
@@ -71,23 +71,21 @@ impl TabService {
     }
 
     pub fn close_tab(&mut self, tab_id: &str) -> bool {
-        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return false;
         };
         let was_active = self.tabs[index].is_active;
         let window_id = self.tabs[index].window_id.clone();
         self.tabs.remove(index);
 
-        if was_active {
-            if let Some(next) = self.tabs.iter_mut().find(|tab| tab.window_id == window_id) {
-                next.is_active = true;
-            }
+        if was_active && let Some(next) = self.tabs.iter_mut().find(|t| t.window_id == window_id) {
+            next.is_active = true;
         }
         true
     }
 
     pub fn navigate(&mut self, tab_id: &str, input: &str) -> bool {
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return false;
         };
         tab.url = input.to_owned();

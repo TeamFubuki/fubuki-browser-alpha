@@ -27,6 +27,9 @@ Common methods:
 - `windows.list`
 - `windows.create`
 - `windows.close`
+- `bookmarks.list`
+- `history.list`
+- `downloads.list`
 - `settings.get`
 - `settings.set`
 

@@ -27,16 +27,12 @@ impl WindowService {
     }
 
     pub fn close_window(&mut self, window_id: &str) -> bool {
-        let Some(index) = self
-            .windows
-            .iter()
-            .position(|window| window.id == window_id)
-        else {
+        let Some(index) = self.windows.iter().position(|w| w.id == window_id) else {
             return false;
         };
         self.windows.remove(index);
         if self.active_window_id.as_deref() == Some(window_id) {
-            self.active_window_id = self.windows.last().map(|window| window.id.clone());
+            self.active_window_id = self.windows.last().map(|w| w.id.clone());
         }
         true
     }
@@ -46,10 +42,7 @@ impl WindowService {
     }
 
     pub fn get_window(&self, window_id: &str) -> Option<WindowState> {
-        self.windows
-            .iter()
-            .find(|window| window.id == window_id)
-            .cloned()
+        self.windows.iter().find(|w| w.id == window_id).cloned()
     }
 
     pub fn active_window_id(&self) -> Option<&str> {
@@ -57,11 +50,7 @@ impl WindowService {
     }
 
     pub fn attach_tab(&mut self, window_id: &str, tab_id: &str) {
-        if let Some(window) = self
-            .windows
-            .iter_mut()
-            .find(|window| window.id == window_id)
-        {
+        if let Some(window) = self.windows.iter_mut().find(|w| w.id == window_id) {
             if !window.tab_ids.iter().any(|id| id == tab_id) {
                 window.tab_ids.push(tab_id.to_owned());
             }

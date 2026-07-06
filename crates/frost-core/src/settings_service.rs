@@ -1,22 +1,13 @@
 use frost_store::{SettingsRepository, StoreResult};
 
-pub struct SettingsService<S> {
-    repository: S,
-}
+pub struct SettingsService;
 
-impl<S> SettingsService<S>
-where
-    S: SettingsRepository,
-{
-    pub fn new(repository: S) -> Self {
-        Self { repository }
+impl SettingsService {
+    pub fn get<S: SettingsRepository>(repository: &S, key: &str) -> StoreResult<Option<String>> {
+        repository.get_setting(key)
     }
 
-    pub fn get(&self, key: &str) -> StoreResult<Option<String>> {
-        self.repository.get_setting(key)
-    }
-
-    pub fn set(&self, key: &str, value: &str) -> StoreResult<()> {
-        self.repository.set_setting(key, value)
+    pub fn set<S: SettingsRepository>(repository: &S, key: &str, value: &str) -> StoreResult<()> {
+        repository.set_setting(key, value)
     }
 }

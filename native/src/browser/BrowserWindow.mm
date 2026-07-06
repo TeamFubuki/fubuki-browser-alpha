@@ -1551,10 +1551,37 @@ void BrowserWindow::WireEvents() {
     payload->SetString("windowId", event.windowId);
     payload->SetString("tabId", event.tabId);
     payload->SetString("message", event.message);
+    if (event.type == EventType::SettingChanged) {
+      payload->SetString("key", event.message);
+      auto settings = dataStore_->Settings();
+      payload->SetString("value", settings && settings->HasKey(event.message) ? settings->GetString(event.message) : "");
+    }
+    if (event.type == EventType::BookmarkChanged || event.type == EventType::HistoryChanged) {
+      payload->SetString("url", event.message);
+    }
+    if (event.type == EventType::DownloadChanged) {
+      payload->SetString("path", event.message);
+    }
     auto value = CefValue::Create();
     value->SetDictionary(bridge_->TabToDictionary(event.tab));
     payload->SetValue("tab", value);
     bridge_->EmitToUi(event.name, payload);
+
+    if (event.type == EventType::TabCreated) {
+      bridge_->EmitToUi("tab.created", bridge_->TabToDictionary(event.tab));
+    } else if (event.type == EventType::TabUpdated) {
+      auto patch = bridge_->TabToDictionary(event.tab);
+      patch->SetString("tabId", event.tabId);
+      bridge_->EmitToUi("tab.updated", patch);
+    } else if (event.type == EventType::TabClosed) {
+      auto closed = CefDictionaryValue::Create();
+      closed->SetString("tabId", event.tabId);
+      bridge_->EmitToUi("tab.closed", closed);
+    } else if (event.type == EventType::TabActivated) {
+      auto activated = CefDictionaryValue::Create();
+      activated->SetString("tabId", event.tabId);
+      bridge_->EmitToUi("tab.activated", activated);
+    }
   };
   auto subscribe = [this, &emit](EventType type) {
     eventSubscriptions_.push_back({type, eventBus_.Subscribe(type, emit)});

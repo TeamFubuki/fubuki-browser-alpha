@@ -1,6 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtocolRequest {
     #[serde(default = "default_version")]
@@ -9,6 +10,59 @@ pub struct ProtocolRequest {
     pub id: Option<String>,
     #[serde(flatten)]
     pub request: Request,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireProtocolRequest {
+    #[serde(default = "default_version")]
+    version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(flatten)]
+    request: Request,
+}
+
+impl<'de> Deserialize<'de> for ProtocolRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut value = Value::deserialize(deserializer)?;
+        if should_drop_empty_params(&value)
+            && let Value::Object(object) = &mut value
+        {
+            object.remove("params");
+        }
+        let wire = WireProtocolRequest::deserialize(value).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            version: wire.version,
+            id: wire.id,
+            request: wire.request,
+        })
+    }
+}
+
+fn should_drop_empty_params(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    let Some(Value::String(method)) = object.get("method") else {
+        return false;
+    };
+    let has_empty_params =
+        matches!(object.get("params"), Some(Value::Object(params)) if params.is_empty());
+    has_empty_params
+        && matches!(
+            method.as_str(),
+            "app.snapshot"
+                | "tabs.list"
+                | "windows.list"
+                | "windows.create"
+                | "bookmarks.list"
+                | "history.list"
+                | "downloads.list"
+        )
 }
 
 fn default_version() -> u16 {
@@ -46,6 +100,29 @@ pub enum Request {
     SettingsGet { key: String },
     #[serde(rename = "settings.set", rename_all = "camelCase")]
     SettingsSet { key: String, value: String },
+    #[serde(rename = "bookmarks.list")]
+    BookmarksList,
+    #[serde(rename = "bookmarks.save", rename_all = "camelCase")]
+    BookmarksSave {
+        title: String,
+        url: String,
+        favicon_url: Option<String>,
+    },
+    #[serde(rename = "bookmarks.remove", rename_all = "camelCase")]
+    BookmarksRemove { url: String },
+    #[serde(rename = "history.list")]
+    HistoryList,
+    #[serde(rename = "history.remove", rename_all = "camelCase")]
+    HistoryRemove { url: String },
+    #[serde(rename = "history.clearRange", rename_all = "camelCase")]
+    HistoryClearRange { range: String },
+    #[serde(rename = "downloads.list")]
+    DownloadsList,
+    #[serde(rename = "downloads.remove", rename_all = "camelCase")]
+    DownloadsRemove {
+        url: Option<String>,
+        path: Option<String>,
+    },
 }
 
 impl ProtocolRequest {
@@ -55,5 +132,36 @@ impl ProtocolRequest {
             id: None,
             request,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_unit_request_with_empty_params() {
+        let request: ProtocolRequest =
+            serde_json::from_str(r#"{"version":0,"method":"app.snapshot","params":{}}"#).unwrap();
+
+        assert_eq!(request.version, 0);
+        assert_eq!(request.request, Request::AppSnapshot);
+    }
+
+    #[test]
+    fn parses_bookmark_save_request() {
+        let request: ProtocolRequest = serde_json::from_str(
+            r#"{"version":0,"method":"bookmarks.save","params":{"title":"Example","url":"https://example.com","faviconUrl":""}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            request.request,
+            Request::BookmarksSave {
+                title: "Example".into(),
+                url: "https://example.com".into(),
+                favicon_url: Some(String::new()),
+            }
+        );
     }
 }

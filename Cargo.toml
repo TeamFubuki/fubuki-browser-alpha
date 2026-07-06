@@ -2,22 +2,25 @@
 members = [
   "crates/frost-core",
   "crates/frost-engine-api",
+  "crates/frost-ffi",
   "crates/frost-protocol",
   "crates/frost-store",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
+rust-version = "1.96.1"
 license = "MIT"
 repository = "https://github.com/fubuki-browser/fubuki-browser-alpha"
 
 [workspace.dependencies]
 crossbeam-channel = "0.5"
+frost-core = { path = "crates/frost-core" }
 frost-engine-api = { path = "crates/frost-engine-api" }
 frost-protocol = { path = "crates/frost-protocol" }
 frost-store = { path = "crates/frost-store" }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.33", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

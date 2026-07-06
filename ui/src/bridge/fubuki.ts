@@ -214,7 +214,21 @@ export type BridgeMethodMap = {
     params: { title: string; url: string; faviconUrl: string };
     result: boolean;
   };
+  'bookmarks.list': { params: Record<string, never>; result: BookmarkRecord[] };
   'bookmarks.remove': { params: { url: string }; result: boolean };
+  'history.list': { params: Record<string, never>; result: HistoryRecord[] };
+  'history.remove': { params: { url: string }; result: boolean };
+  'history.clearRange': {
+    params: { range: 'lastHour' | 'today' | 'all' };
+    result: boolean;
+  };
+  'downloads.list': { params: Record<string, never>; result: DownloadRecord[] };
+  'downloads.remove': {
+    params: { url?: string; path?: string };
+    result: boolean;
+  };
+  'downloads.open': { params: { path: string }; result: boolean };
+  'downloads.reveal': { params: { path: string }; result: boolean };
   'settings.get': { params: { key: string }; result: string | null };
   'settings.set': { params: { key: string; value: string }; result: boolean };
 };
@@ -232,9 +246,9 @@ export type EventMap = {
   'navigation.finished': { tabId: string; url: string };
   'navigation.failed': { tabId: string; url: string; errorText: string };
   'downloads.updated': void;
-  'download.changed': DownloadRecord;
-  'bookmark.changed': void;
-  'history.changed': void;
+  'download.changed': Partial<DownloadRecord> | void;
+  'bookmark.changed': { url?: string } | void;
+  'history.changed': { url?: string } | void;
   'setting.changed': { key: string; value: string };
   'permission.changed': void;
   'window.created': FrostWindowState | void;
@@ -294,7 +308,7 @@ async function invoke<T = unknown>(
 
   return new Promise<T>((resolve, reject) => {
     window.cefQuery?.({
-      request: JSON.stringify({ version: '1', method, params }),
+      request: JSON.stringify({ version: 0, bridgeVersion: '1', method, params }),
       onSuccess: (response) => resolve(JSON.parse(response) as T),
       onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });

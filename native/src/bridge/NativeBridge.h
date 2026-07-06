@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "bridge/FrostBridge.h"
 #include "browser/Tab.h"
 #include "commands/CommandRegistry.h"
 #include "include/cef_browser.h"
@@ -41,6 +42,7 @@ private:
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
   BrowserWindow &window_;
+  FrostBridge frostBridge_;
   std::unordered_map<std::string, MethodHandler> methods_;
 };
 

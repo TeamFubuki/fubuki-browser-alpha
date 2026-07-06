@@ -27,6 +27,15 @@ pub enum Event {
     WindowClosed { window_id: String },
     #[serde(rename = "setting.changed")]
     SettingChanged(SettingChanged),
+    #[serde(rename = "bookmark.changed")]
+    BookmarkChanged { url: String },
+    #[serde(rename = "history.changed")]
+    HistoryChanged { url: Option<String> },
+    #[serde(rename = "download.changed")]
+    DownloadChanged {
+        url: Option<String>,
+        path: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

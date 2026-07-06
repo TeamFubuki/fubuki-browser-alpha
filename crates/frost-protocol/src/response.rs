@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::state::{AppState, TabState, WindowState};
+use crate::state::{
+    AppState, BookmarkRecord, DownloadRecord, HistoryRecord, TabState, WindowState,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +21,9 @@ pub enum Response {
     AppSnapshot(AppState),
     TabsList(Vec<TabState>),
     WindowsList(Vec<WindowState>),
+    BookmarksList(Vec<BookmarkRecord>),
+    HistoryList(Vec<HistoryRecord>),
+    DownloadsList(Vec<DownloadRecord>),
     Setting(Option<String>),
     Bool(bool),
     Error(String),

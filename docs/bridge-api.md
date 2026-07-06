@@ -47,10 +47,13 @@ The native bridge only accepts calls from `fubuki://app/`.
 - `page.print()`
 - `page.viewSource()`
 - `bookmarks.addActive()`
+- `bookmarks.list()`
 - `bookmarks.save({ title: string, url: string, faviconUrl?: string })`
 - `bookmarks.remove({ url: string })`
+- `history.list()`
 - `history.remove({ url: string })`
 - `history.clearRange({ range: "lastHour" | "today" | "all" })`
+- `downloads.list()`
 - `downloads.remove({ url?: string, path?: string })`
 - `downloads.open({ path: string })`
 - `downloads.reveal({ path: string })`
@@ -61,6 +64,7 @@ The native bridge only accepts calls from `fubuki://app/`.
 - `permissions.set({ origin: string, permission: string, value: "ask" | "allow" | "deny" })`
 - `commands.execute({ id: string, args?: object })`
 - `commands.list()`
+- `frost.coreSnapshot()` diagnostic endpoint for native-to-Rust bridge verification
 
 ## Events
 
