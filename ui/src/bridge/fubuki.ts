@@ -350,7 +350,7 @@ function isFrostAppState(
   return 'protocolVersion' in value && 'activeWindowId' in value;
 }
 
-function fromFrostTab(tab: FrostTabState): Tab {
+export function fromFrostTab(tab: FrostTabState): Tab {
   return {
     id: tab.id,
     title: tab.title,

@@ -141,10 +141,6 @@ export default function App() {
         '--sidebar-width',
         `${width}px`,
       );
-      document.documentElement.style.setProperty(
-        '--sidebar-width',
-        `${width}px`,
-      );
     }
   });
 

@@ -198,7 +198,23 @@ impl HistoryRepository for SqliteStore {
                 self.conn.execute("DELETE FROM history", [])?;
                 Ok(true)
             }
-            "lastHour" | "today" => Ok(false),
+            "lastHour" => {
+                let cutoff = now_text().parse::<i64>().unwrap_or(0) - 3600;
+                let changed = self.conn.execute(
+                    "DELETE FROM history WHERE CAST(created_at AS INTEGER) >= ?1",
+                    params![cutoff.to_string()],
+                )?;
+                Ok(changed > 0)
+            }
+            "today" => {
+                let now = now_text().parse::<i64>().unwrap_or(0);
+                let start_of_today = now - (now % 86400);
+                let changed = self.conn.execute(
+                    "DELETE FROM history WHERE CAST(created_at AS INTEGER) >= ?1",
+                    params![start_of_today.to_string()],
+                )?;
+                Ok(changed > 0)
+            }
             _ => Ok(false),
         }
     }
@@ -369,5 +385,22 @@ mod tests {
             .unwrap();
         assert_eq!(store.list_downloads().unwrap()[0].path, "/tmp/file");
         assert!(store.remove_download(None, Some("/tmp/file")).unwrap());
+    }
+
+    #[test]
+    fn clear_history_range_all_removes_everything() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.add_history("A", "https://a.com", "").unwrap();
+        store.add_history("B", "https://b.com", "").unwrap();
+        assert!(store.clear_history_range("all").unwrap());
+        assert!(store.list_history().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_history_range_unknown_is_noop() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.add_history("A", "https://a.com", "").unwrap();
+        assert!(!store.clear_history_range("unknown").unwrap());
+        assert_eq!(store.list_history().unwrap().len(), 1);
     }
 }

@@ -5,11 +5,13 @@ mod settings_service;
 mod tab_service;
 mod window_service;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crossbeam_channel::{Receiver, Sender};
 use frost_engine_api::{EngineAdapter, NoopEngineAdapter};
 use frost_protocol::{
     BrowserCommand, Event, EventEnvelope, ProtocolRequest, ProtocolResponse, Request, Response,
-    SettingChanged, TabClosed, TabPatch,
+    SettingChanged, TabActivated, TabClosed, TabPatch,
 };
 use frost_store::{
     BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
@@ -136,13 +138,16 @@ where
                 let activated = self.tabs.activate_tab(&tab_id);
                 if activated {
                     self.windows.set_active_tab(&tab_id);
-                    self.emit(Event::TabActivated(TabClosed { tab_id }));
+                    self.emit(Event::TabActivated(TabActivated { tab_id }));
                 }
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
                 if let Some(tab) = self.tabs.get_tab(&tab_id) {
                     self.closed_tabs.push(tab);
+                    if self.closed_tabs.len() > 50 {
+                        self.closed_tabs.remove(0);
+                    }
                 }
                 let closed = self.tabs.close_tab(&tab_id);
                 if closed {
@@ -180,11 +185,7 @@ where
                 tab.is_active = true;
                 let window_id = tab.window_id.clone();
                 let created = tab.clone();
-                self.tabs.replace_all({
-                    let mut tabs = self.tabs.list();
-                    tabs.push(tab);
-                    tabs
-                });
+                self.tabs.upsert_tab(tab);
                 self.windows.attach_tab(&window_id, &created.id);
                 self.emit(Event::TabCreated(created));
                 Ok(Response::Bool(true))
@@ -198,6 +199,7 @@ where
                     }));
                 }
                 self.closed_tabs.extend(closed);
+                self.trim_closed_tabs();
                 Ok(Response::Bool(true))
             }
             Request::TabsCloseToRight { tab_id } => {
@@ -209,6 +211,7 @@ where
                     }));
                 }
                 self.closed_tabs.extend(closed);
+                self.trim_closed_tabs();
                 Ok(Response::Bool(true))
             }
             Request::TabsMove { tab_id, to_index } => {
@@ -479,39 +482,54 @@ where
                 height: _,
             } => Ok(Response::Bool(true)),
             Request::HostSyncSnapshot { state } => {
+                let mut errors: Vec<String> = Vec::new();
+
                 for bookmark in &state.bookmarks {
-                    let _ = self.repository.save_bookmark(
+                    if let Err(e) = self.repository.save_bookmark(
                         &bookmark.title,
                         &bookmark.url,
                         &bookmark.favicon_url,
-                    );
+                    ) {
+                        errors.push(format!("bookmark '{}': {}", bookmark.url, e));
+                    }
                 }
                 for history in &state.history {
-                    let _ = self.repository.add_history(
+                    if let Err(e) = self.repository.add_history(
                         &history.title,
                         &history.url,
                         &history.favicon_url,
-                    );
+                    ) {
+                        errors.push(format!("history '{}': {}", history.url, e));
+                    }
                 }
                 for download in &state.downloads {
-                    let _ = self.repository.upsert_download(
+                    if let Err(e) = self.repository.upsert_download(
                         &download.url,
                         &download.path,
                         &download.state,
                         download.percent,
-                    );
+                    ) {
+                        errors.push(format!("download '{}': {}", download.url, e));
+                    }
                 }
                 for permission in &state.permissions {
-                    let _ = self.repository.set_permission(
+                    if let Err(e) = self.repository.set_permission(
                         &permission.origin,
                         &permission.permission,
                         &permission.value,
-                    );
+                    ) {
+                        errors.push(format!(
+                            "permission '{}/{}': {}",
+                            permission.origin, permission.permission, e
+                        ));
+                    }
                 }
                 if let Some(settings) = state.settings.as_object() {
                     for (key, value) in settings {
-                        if let Some(value) = value.as_str() {
-                            let _ = self.repository.set_setting(key, value);
+                        if let Some(value) = value.as_str()
+                            && let Err(e) = self.repository.set_setting(key, value)
+                        {
+                            errors.push(format!("setting '{}': {}", key, e));
                         }
                     }
                 }
@@ -519,7 +537,14 @@ where
                 self.windows
                     .replace_all(state.windows, state.active_window_id);
                 self.emit(Event::HostSynced);
-                Ok(Response::Bool(true))
+                if errors.is_empty() {
+                    Ok(Response::Bool(true))
+                } else {
+                    Ok(Response::Json(serde_json::json!({
+                        "synced": true,
+                        "errors": errors,
+                    })))
+                }
             }
         }
     }
@@ -539,6 +564,7 @@ where
     }
 
     fn snapshot(&self) -> frost_protocol::AppState {
+        let settings = self.build_settings_snapshot();
         frost_protocol::AppState {
             protocol_version: frost_protocol::PROTOCOL_VERSION,
             active_window_id: self.windows.active_window_id().map(ToOwned::to_owned),
@@ -548,8 +574,30 @@ where
             bookmarks: self.repository.list_bookmarks().unwrap_or_default(),
             downloads: self.repository.list_downloads().unwrap_or_default(),
             permissions: self.repository.list_permissions().unwrap_or_default(),
-            settings: serde_json::json!({}),
+            settings,
         }
+    }
+
+    fn build_settings_snapshot(&self) -> serde_json::Value {
+        let keys = [
+            "searchEngine",
+            "customSearchUrl",
+            "theme",
+            "appearance",
+            "sidebarVisible",
+            "sidebarWidth",
+            "newTabPage",
+            "homeUrl",
+            "language",
+            "defaultZoomLevel",
+        ];
+        let mut map = serde_json::Map::new();
+        for key in keys {
+            if let Ok(Some(value)) = self.repository.get_setting(key) {
+                map.insert(key.to_owned(), serde_json::Value::String(value));
+            }
+        }
+        serde_json::Value::Object(map)
     }
 
     fn emit(&mut self, event: Event) {
@@ -562,6 +610,20 @@ where
             let _ = sender.send(envelope);
         }
     }
+
+    fn trim_closed_tabs(&mut self) {
+        if self.closed_tabs.len() > 50 {
+            let excess = self.closed_tabs.len() - 50;
+            self.closed_tabs.drain(..excess);
+        }
+    }
+}
+
+fn now_epoch() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn default_setting(key: &str) -> &'static str {
@@ -727,11 +789,32 @@ impl HistoryRepository for InMemoryStore {
     }
 
     fn clear_history_range(&self, range: &str) -> frost_store::StoreResult<bool> {
-        if range == "all" {
-            self.history.borrow_mut().clear();
-            return Ok(true);
+        match range {
+            "all" => {
+                self.history.borrow_mut().clear();
+                Ok(true)
+            }
+            "lastHour" => {
+                let cutoff = now_epoch() - 3600;
+                let mut history = self.history.borrow_mut();
+                let before = history.len();
+                history.retain(|r| r.created_at.parse::<i64>().map_or(true, |ts| ts < cutoff));
+                Ok(history.len() != before)
+            }
+            "today" => {
+                let now = now_epoch();
+                let start_of_today = now - (now % 86400);
+                let mut history = self.history.borrow_mut();
+                let before = history.len();
+                history.retain(|r| {
+                    r.created_at
+                        .parse::<i64>()
+                        .map_or(true, |ts| ts < start_of_today)
+                });
+                Ok(history.len() != before)
+            }
+            _ => Ok(false),
         }
-        Ok(false)
     }
 }
 

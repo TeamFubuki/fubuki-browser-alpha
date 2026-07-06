@@ -1,5 +1,6 @@
 import { createStore } from 'solid-js/store';
 import {
+  fromFrostTab,
   getBrowserState,
   invokeBridge,
   onBridgeEvent,
@@ -217,22 +218,6 @@ export function bindNativeEvents() {
 
   void refreshState('Ready');
   return () => [...frostDisposers, ...disposers].forEach((dispose) => dispose());
-}
-
-function fromFrostTab(tab: FrostTabState): Tab {
-  return {
-    id: tab.id,
-    title: tab.title,
-    url: tab.url,
-    faviconUrl: tab.faviconUrl,
-    errorText: tab.errorText,
-    zoomLevel: tab.zoomLevel,
-    isLoading: tab.isLoading,
-    canGoBack: tab.canGoBack,
-    canGoForward: tab.canGoForward,
-    isActive: tab.isActive,
-    isPinned: tab.isPinned,
-  };
 }
 
 function toTabPatch(

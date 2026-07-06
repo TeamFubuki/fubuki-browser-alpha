@@ -8,16 +8,16 @@ export default function Omnibox() {
   const [draft, setDraft] = createSignal('');
   const [focused, setFocused] = createSignal(false);
   const [isComposing, setIsComposing] = createSignal(false);
-  let lastSyncedTabId = '';
+  const [lastSyncedTabId, setLastSyncedTabId] = createSignal('');
 
   createEffect(() => {
     const tabId = browserState.activeTabId;
     const tab = browserState.tabs.find((t) => t.id === tabId);
     const url = tab?.url ?? '';
 
-    if (!focused() || tabId !== lastSyncedTabId) {
+    if (!focused() || tabId !== lastSyncedTabId()) {
       setDraft(url);
-      lastSyncedTabId = tabId;
+      setLastSyncedTabId(tabId);
     }
   });
 
