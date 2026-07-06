@@ -8,6 +8,7 @@ Fubuki Browser Alpha is a macOS-first browser shell built on C++20, CEF, and a S
 - Apple Silicon CEF binary distribution matching your machine
 - CMake 3.21+
 - Xcode command line tools
+- Rust 1.96.1+ (for FrostEngine)
 - Node.js 20+
 - pnpm 11+
 
@@ -61,11 +62,15 @@ Useful targets:
 make help
 make cef
 make ui
+make rust          # Build FrostEngine (Rust)
 make configure
 make native
-make build
+make build          # Build everything (UI + Rust + native)
 make run
 make clean
+make test           # Run all tests (Rust + UI + native)
+make lint-rust      # Run Clippy linter
+make format-rust    # Run rustfmt formatter
 ```
 
 Advanced manual native build:
