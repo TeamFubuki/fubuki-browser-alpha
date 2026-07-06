@@ -4,15 +4,42 @@
 
 Fubuki Browser Alpha は macOS ファーストのブラウザシェルです。Electron や Tauri は使わず、C++20/CEF と SolidJS を組み合わせて高速なブラウジング体験を提供します。
 
+2 つのコンポーネントで構成され、それぞれ独立してバージョニングします。
+
+| コンポーネント | 場所 | 職責 |
+|---|---|---|
+| **Fubuki Browser UI** | `ui/` | SolidJS フロントエンド、Frost Protocol クライアント |
+| **FrostEngine** | `crates/` | Rust ベースのブラウザ状態管理コア |
+
+## アーキテクチャ
+
+```
+Fubuki Browser UI (SolidJS)
+    ↓  Frost Protocol (JSON-RPC over CEF message router)
+FrostEngine Core (Rust)
+    ↓  EngineAdapter trait
+CEF / macOS Host (C++)
+```
+
+詳細は `docs/architecture.md` と `docs/frost-engine-plan.md` を参照してください。
+
 ## 技術スタック
 
-### ネイティブ側 (`native/`)
+### FrostEngine (`crates/`)
+- **言語**: Rust
+- **crate**:
+  - `frost-protocol` — プロトコル型定義（request, response, event, state）
+  - `frost-core` — BrowserCore, TabService, WindowService, SettingsService, SessionService
+  - `frost-store` — SQLite 永続化、repository trait、migration
+  - `frost-engine-api` — EngineAdapter, PageAdapter, WindowHost の trait 定義
+
+### CEF / macOS Host (`native/macos-cef-host/`)
 - **言語**: C++20
 - **ビルド**: CMake 3.21+
 - **ブラウザエンジン**: Chromium Embedded Framework (CEF)
 - **対応OS**: macOS 12+
 
-### UI 側 (`ui/`)
+### Fubuki Browser UI (`ui/`)
 - **フレームワーク**: SolidJS
 - **ビルドツール**: Vite 8.x
 - **CSS**: Tailwind CSS 4.x
@@ -24,42 +51,49 @@ Fubuki Browser Alpha は macOS ファーストのブラウザシェルです。E
 
 ```
 /
-├── native/           # C++ ネイティブアプリ
-│   ├── src/          # ソースコード（app, bridge, browser, cef, commands, events）
+├── crates/                  # Rust crate（FrostEngine）
+│   ├── frost-protocol/      # プロトコル型定義
+│   ├── frost-core/          # ブラウザ状態管理コア
+│   ├── frost-store/         # SQLite 永続化
+│   └── frost-engine-api/    # EngineAdapter trait
+├── native/
+│   ├── macos-cef-host/      # CEF / macOS 固有処理
 │   └── CMakeLists.txt
-├── ui/               # SolidJS ブラウザUI
+├── ui/                      # SolidJS ブラウザUI
 │   ├── src/
-│   │   ├── bridge/   # ネイティブとの通信層
+│   │   ├── bridge/          # Frost Protocol クライアント
 │   │   ├── components/
 │   │   ├── hooks/
 │   │   ├── stores/
 │   │   └── styles/
 │   └── package.json
-├── third_party/      # CEF バイナリ配置先
-├── scripts/          # ビルド・セットアップスクリプト
-└── docs/             # ドキュメント
+├── third_party/             # CEF バイナリ配置先
+├── scripts/                 # ビルド・セットアップスクリプト
+└── docs/                    # ドキュメント
 ```
 
 ## 実装ルール
 
 ### コーディング規約
 
-1. **ネイティブ側**: C++20 標準を使用し、CEF の API パターンに従う
-2. **UI 側**: SolidJS のリアクティブモデルを活用し、reactive primitives を多用する
-3. **型安全性**: TypeScript の strict モードを使用し、any 型の使用を避ける
-4. **命名規則**: キャメルケース（変数・関数）、パスカルケース（クラス・コンポーネント）
+1. **FrostEngine**: Rust の慣用パターンに従い、所有権と借用を正しく活用する
+2. **CEF / macOS Host**: C++20 標準を使用し、CEF の API パターンに従う
+3. **UI 側**: SolidJS のリアクティブモデルを活用し、reactive primitives を多用する
+4. **型安全性**: TypeScript の strict モードを使用し、any 型の使用を避ける
+5. **命名規則**: Rust はスネークケース、C++/TypeScript はキャメルケース（変数・関数）、パスカルケース（クラス・コンポーネント）
 
 ### ブリッジ通信
 
-- `fubuki://app/` のみがネイティブブリッジにアクセス可能
-- ブリッジはバージョニングされており、後方互換性を維持する
-- 機能追加時は `commands.list` で UI 側にコマンド一覧を提供する
+- `fubuki://app/` のみが Frost Protocol ブリッジにアクセス可能
+- ブリッジは Frost Protocol v0 に従う（`docs/architecture.md` 参照）
+- 機能追加時は `frost-protocol` に Request/Response 型を追加する
 
-### アーキテクチャ
+### アーキテクチャ原則
 
-- **イベント駆動**: ウィンドウ、タブ、ナビゲーション等の状態変更はイベントバスで伝播
-- **コマンドレジストリ**: ブラウザ操作は統一されたコマンドとして登録・実行（`commands.list` と `commands.execute` で UI 側に一覧提供・操作実行）
-- **セッション管理**: 通常ウィンドウとプライベートウィンドウでリクエストコンテキストを分離
+- **状態の所有者は FrostEngine Core のみ**。CEF/macOS Host は表示と入力のみ担当
+- **差分イベントで同期**。起動時だけ `app.snapshot` で全状態取得、以後はイベントで差分更新
+- **EngineAdapter trait でホストを切り替える**。CEF に依存するコードは Host 側に閉じる
+- **新機能は Core に追加する**。UI や Host への影響を最小化する
 
 ### ビルドとテスト
 
@@ -69,6 +103,9 @@ cd ui && pnpm dev
 
 # UI テスト
 cd ui && pnpm test
+
+# Rust テスト
+cargo test
 
 # ネイティブビルド
 make native
@@ -81,4 +118,5 @@ make bootstrap && make build && make run
 
 - CEF バイナリはリポジトリに含めず、`make cef` でダウンロード
 - プロファイルデータは `~/Library/Application Support/Fubuki Browser Alpha/` に保存
-- 新機能実装時は既存のイベントバスやコマンドレジストリを活用すること
+- 新機能実装時は FrostEngine Core に追加し、Protocol に型を定義すること
+- 移行中は旧 Bridge API と Frost Protocol が併存する場合がある
