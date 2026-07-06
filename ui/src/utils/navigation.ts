@@ -17,7 +17,7 @@ function stripPathQueryFragment(value: string): string {
 }
 
 function stripPort(authority: string): string {
-  if (authority.startsWith("[")) return authority;
+  if (authority.startsWith('[')) return authority;
   const match = authority.match(/^(.*):(\d{1,5})$/);
   if (!match) return authority;
   const port = Number(match[2]);
@@ -30,21 +30,29 @@ function hostPart(value: string): string {
 
 function looksLikeIpv4Address(host: string): boolean {
   if (!IPV4_PATTERN.test(host)) return false;
-  return host.split(".").every((part) => Number(part) <= 255);
+  return host.split('.').every((part) => Number(part) <= 255);
 }
 
 function looksLikeDomain(host: string, value: string): boolean {
-  if (!host.includes(".")) return false;
+  if (!host.includes('.')) return false;
   if (containsNonAscii(value)) return true;
   return ASCII_DOMAIN_PATTERN.test(host);
 }
 
 function looksLikeUrlInput(value: string): boolean {
   if (containsWhitespace(value)) return false;
-  if (LOCAL_HOSTNAME_WITH_PORT_PATTERN.test(value) || BRACKETED_IPV6_PATTERN.test(value)) return true;
+  if (
+    LOCAL_HOSTNAME_WITH_PORT_PATTERN.test(value) ||
+    BRACKETED_IPV6_PATTERN.test(value)
+  )
+    return true;
   if (SCHEME_PATTERN.test(value)) return true;
   const host = hostPart(value);
-  return host.toLowerCase() === "localhost" || looksLikeIpv4Address(host) || looksLikeDomain(host, value);
+  return (
+    host.toLowerCase() === 'localhost' ||
+    looksLikeIpv4Address(host) ||
+    looksLikeDomain(host, value)
+  );
 }
 
 export function shouldTreatAsSearch(input: string): boolean {
@@ -53,7 +61,10 @@ export function shouldTreatAsSearch(input: string): boolean {
   return !looksLikeUrlInput(value);
 }
 
-export function normalizeOmniboxInput(input: string): { kind: "search" | "url"; value: string } {
+export function normalizeOmniboxInput(input: string): {
+  kind: 'search' | 'url';
+  value: string;
+} {
   const value = input.trim();
-  return { kind: shouldTreatAsSearch(value) ? "search" : "url", value };
+  return { kind: shouldTreatAsSearch(value) ? 'search' : 'url', value };
 }

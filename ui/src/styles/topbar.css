@@ -16,7 +16,7 @@
   transition: background-color 0.16s ease;
 }
 
-:root[data-sidebar="hide"] .top-bar {
+:root[data-sidebar='hide'] .top-bar {
   padding-left: var(--window-control-space);
 }
 

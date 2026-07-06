@@ -31,12 +31,12 @@ describe('clampSidebarWidth', () => {
     expect(clampSidebarWidth(MAX_SIDEBAR_WIDTH)).toBe(MAX_SIDEBAR_WIDTH);
   });
 
-  it("returns DEFAULT when given NaN", () => {
+  it('returns DEFAULT when given NaN', () => {
     const result = clampSidebarWidth(NaN);
     expect(result).toBe(DEFAULT_SIDEBAR_WIDTH);
   });
 
-  it("returns DEFAULT when given Infinity", () => {
+  it('returns DEFAULT when given Infinity', () => {
     expect(clampSidebarWidth(Infinity)).toBe(DEFAULT_SIDEBAR_WIDTH);
     expect(clampSidebarWidth(-Infinity)).toBe(DEFAULT_SIDEBAR_WIDTH);
   });

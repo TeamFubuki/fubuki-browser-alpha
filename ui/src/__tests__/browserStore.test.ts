@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // browserStore の関数を直接インポートするのではなく、
 // 同じロジックを検証するためのヘルパーをテストする。
@@ -29,7 +29,7 @@ type BookmarkRecord = {
 // テスト用のモック状態
 let tabs: Tab[] = [];
 let bookmarks: BookmarkRecord[] = [];
-let activeTabId = "";
+let activeTabId = '';
 
 function mockActiveTab(): Tab | undefined {
   return tabs.find((tab) => tab.id === activeTabId);
@@ -43,11 +43,11 @@ function mockIsTabBookmarked(url: string | undefined): boolean {
 beforeEach(() => {
   tabs = [
     {
-      id: "tab-1",
-      title: "Example",
-      url: "https://example.com",
-      faviconUrl: "",
-      errorText: "",
+      id: 'tab-1',
+      title: 'Example',
+      url: 'https://example.com',
+      faviconUrl: '',
+      errorText: '',
       zoomLevel: 0,
       isLoading: false,
       canGoBack: false,
@@ -56,11 +56,11 @@ beforeEach(() => {
       isPinned: false,
     },
     {
-      id: "tab-2",
-      title: "Test",
-      url: "https://test.com",
-      faviconUrl: "",
-      errorText: "",
+      id: 'tab-2',
+      title: 'Test',
+      url: 'https://test.com',
+      faviconUrl: '',
+      errorText: '',
       zoomLevel: 0,
       isLoading: false,
       canGoBack: true,
@@ -71,79 +71,79 @@ beforeEach(() => {
   ];
   bookmarks = [
     {
-      title: "Example",
-      url: "https://example.com",
-      faviconUrl: "",
-      createdAt: "2024-01-01",
+      title: 'Example',
+      url: 'https://example.com',
+      faviconUrl: '',
+      createdAt: '2024-01-01',
     },
   ];
-  activeTabId = "tab-1";
+  activeTabId = 'tab-1';
 });
 
-describe("activeTab helper", () => {
-  it("returns the active tab", () => {
+describe('activeTab helper', () => {
+  it('returns the active tab', () => {
     const tab = mockActiveTab();
     expect(tab).toBeDefined();
-    expect(tab?.id).toBe("tab-1");
+    expect(tab?.id).toBe('tab-1');
   });
 
-  it("returns undefined when no tab is active", () => {
-    activeTabId = "nonexistent";
+  it('returns undefined when no tab is active', () => {
+    activeTabId = 'nonexistent';
     expect(mockActiveTab()).toBeUndefined();
   });
 
-  it("returns undefined when tabs array is empty", () => {
+  it('returns undefined when tabs array is empty', () => {
     tabs = [];
     expect(mockActiveTab()).toBeUndefined();
   });
 });
 
-describe("isTabBookmarked helper", () => {
-  it("returns true for bookmarked URLs", () => {
-    expect(mockIsTabBookmarked("https://example.com")).toBe(true);
+describe('isTabBookmarked helper', () => {
+  it('returns true for bookmarked URLs', () => {
+    expect(mockIsTabBookmarked('https://example.com')).toBe(true);
   });
 
-  it("returns false for non-bookmarked URLs", () => {
-    expect(mockIsTabBookmarked("https://test.com")).toBe(false);
+  it('returns false for non-bookmarked URLs', () => {
+    expect(mockIsTabBookmarked('https://test.com')).toBe(false);
   });
 
-  it("returns false for undefined URL", () => {
+  it('returns false for undefined URL', () => {
     expect(mockIsTabBookmarked(undefined)).toBe(false);
   });
 
-  it("returns false for empty string URL", () => {
-    expect(mockIsTabBookmarked("")).toBe(false);
+  it('returns false for empty string URL', () => {
+    expect(mockIsTabBookmarked('')).toBe(false);
   });
 
-  it("returns false when bookmarks array is empty", () => {
+  it('returns false when bookmarks array is empty', () => {
     bookmarks = [];
-    expect(mockIsTabBookmarked("https://example.com")).toBe(false);
+    expect(mockIsTabBookmarked('https://example.com')).toBe(false);
   });
 });
 
-describe("toggleBookmark logic", () => {
-  it("skips internal URLs", () => {
+describe('toggleBookmark logic', () => {
+  it('skips internal URLs', () => {
     const internalUrls = [
-      "fubuki://newtab/",
-      "fubuki://settings/",
-      "data:text/html,<h1>Test</h1>",
+      'fubuki://newtab/',
+      'fubuki://settings/',
+      'data:text/html,<h1>Test</h1>',
     ];
     for (const url of internalUrls) {
       const shouldSkip =
-        !url || url.startsWith("fubuki://") || url.startsWith("data:");
+        !url || url.startsWith('fubuki://') || url.startsWith('data:');
       expect(shouldSkip).toBe(true);
     }
   });
 
-  it("allows external URLs", () => {
-    const url = "https://example.com";
+  it('allows external URLs', () => {
+    const url = 'https://example.com';
     const shouldSkip =
-      !url || url.startsWith("fubuki://") || url.startsWith("data:");
+      !url || url.startsWith('fubuki://') || url.startsWith('data:');
     expect(shouldSkip).toBe(false);
   });
 });
 
-describe("navigateInternal logic", () => {
+describe('navigateInternal logic', () => {
   let originalActiveTabId: string;
 
   beforeEach(() => {
@@ -154,47 +154,47 @@ describe("navigateInternal logic", () => {
     activeTabId = originalActiveTabId;
   });
 
-  it("determines navigation target from active tab", () => {
+  it('determines navigation target from active tab', () => {
     const tab = mockActiveTab();
     const shouldCreateNew = !tab;
     expect(shouldCreateNew).toBe(false);
-    expect(tab?.id).toBe("tab-1");
+    expect(tab?.id).toBe('tab-1');
   });
 
-  it("falls back to create when no active tab", () => {
-    activeTabId = "nonexistent";
+  it('falls back to create when no active tab', () => {
+    activeTabId = 'nonexistent';
     const tab = mockActiveTab();
     const shouldCreateNew = !tab;
     expect(shouldCreateNew).toBe(true);
   });
 });
 
-describe("tab filtering logic", () => {
-  it("filters pinned tabs correctly", () => {
+describe('tab filtering logic', () => {
+  it('filters pinned tabs correctly', () => {
     tabs[0].isPinned = true;
     const pinned = tabs.filter((tab) => tab.isPinned);
     const normal = tabs.filter((tab) => !tab.isPinned);
 
     expect(pinned).toHaveLength(1);
-    expect(pinned[0].id).toBe("tab-1");
+    expect(pinned[0].id).toBe('tab-1');
     expect(normal).toHaveLength(1);
-    expect(normal[0].id).toBe("tab-2");
+    expect(normal[0].id).toBe('tab-2');
   });
 
-  it("filters tabs by search query", () => {
-    const query = "example";
+  it('filters tabs by search query', () => {
+    const query = 'example';
     const filtered = tabs.filter((tab) =>
-      `${tab.title} ${tab.url}`.toLowerCase().includes(query.toLowerCase())
+      `${tab.title} ${tab.url}`.toLowerCase().includes(query.toLowerCase()),
     );
 
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].id).toBe("tab-1");
+    expect(filtered[0].id).toBe('tab-1');
   });
 
-  it("returns all tabs for empty query", () => {
-    const query = "";
+  it('returns all tabs for empty query', () => {
+    const query = '';
     const filtered = tabs.filter((tab) =>
-      `${tab.title} ${tab.url}`.toLowerCase().includes(query.toLowerCase())
+      `${tab.title} ${tab.url}`.toLowerCase().includes(query.toLowerCase()),
     );
 
     expect(filtered).toHaveLength(2);

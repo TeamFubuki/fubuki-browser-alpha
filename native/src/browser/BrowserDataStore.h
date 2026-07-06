@@ -61,9 +61,10 @@ public:
     return profilePath_.string();
   }
 
- private:
+private:
   // BrowserDataStore still owns SQLite access for all persisted browser data.
-  // Keep schema-compatible changes here until narrower History/Bookmark/Download stores are split out.
+  // Keep schema-compatible changes here until narrower
+  // History/Bookmark/Download stores are split out.
   CefRefPtr<CefDictionaryValue> NewRecord() const;
   void OpenDatabase();
   void Execute(const std::string &sql) const;

@@ -31,15 +31,16 @@ public:
   std::string GetStateJson() const;
   CefRefPtr<CefDictionaryValue> TabToDictionary(const Tab &tab) const;
 
- private:
-  using MethodHandler = std::function<CefRefPtr<CefValue>(CefRefPtr<CefDictionaryValue>)>;
+private:
+  using MethodHandler =
+      std::function<CefRefPtr<CefValue>(CefRefPtr<CefDictionaryValue>)>;
   void RegisterMethods();
 
-  CefRefPtr<CefValue> ErrorValue(const std::string& message) const;
+  CefRefPtr<CefValue> ErrorValue(const std::string &message) const;
   CefRefPtr<CefValue> StateValue() const;
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
-  BrowserWindow& window_;
+  BrowserWindow &window_;
   std::unordered_map<std::string, MethodHandler> methods_;
 };
 

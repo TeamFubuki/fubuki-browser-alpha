@@ -81,10 +81,10 @@ export type Settings = {
   searchEngine: string;
   customSearchUrl: string;
   theme: string;
-  appearance: "system" | "light" | "dark";
-  sidebarVisible: "show" | "hide";
+  appearance: 'system' | 'light' | 'dark';
+  sidebarVisible: 'show' | 'hide';
   sidebarWidth: string;
-  newTabPage: "blank" | "home";
+  newTabPage: 'blank' | 'home';
   homeUrl: string;
   language: string;
   defaultZoomLevel: string;
@@ -109,84 +109,96 @@ export type BrowserState = {
 };
 
 export type CommandId =
-  | "tabs.create"
-  | "tabs.close"
-  | "tabs.reopenClosed"
-  | "tabs.duplicate"
-  | "tabs.pin"
-  | "tabs.unpin"
-  | "tabs.closeOther"
-  | "tabs.closeToRight"
-  | "tabs.moveToNewWindow"
-  | "tabs.reload"
-  | "tabs.stop"
-  | "tabs.goBack"
-  | "tabs.goForward"
-  | "tabs.home"
-  | "tabs.activateNext"
-  | "tabs.activatePrevious"
-  | "windows.create"
-  | "windows.createPrivate"
-  | "windows.close"
-  | "windows.reopenClosed"
-  | "app.focusOmnibox"
-  | "app.openSettings"
-  | "app.openHistory"
-  | "app.openDownloads"
-  | "app.openBookmarks"
-  | "app.openDebug"
-  | "app.toggleSidebar"
-  | "app.openDevTools"
-  | "page.find"
-  | "page.stopFinding"
-  | "page.zoomIn"
-  | "page.zoomOut"
-  | "page.zoomReset"
-  | "page.print"
-  | "page.viewSource"
-  | "bookmarks.addActive"
-  | "bookmarks.save"
-  | "bookmarks.remove";
+  | 'tabs.create'
+  | 'tabs.close'
+  | 'tabs.reopenClosed'
+  | 'tabs.duplicate'
+  | 'tabs.pin'
+  | 'tabs.unpin'
+  | 'tabs.closeOther'
+  | 'tabs.closeToRight'
+  | 'tabs.moveToNewWindow'
+  | 'tabs.reload'
+  | 'tabs.stop'
+  | 'tabs.goBack'
+  | 'tabs.goForward'
+  | 'tabs.home'
+  | 'tabs.activateNext'
+  | 'tabs.activatePrevious'
+  | 'windows.create'
+  | 'windows.createPrivate'
+  | 'windows.close'
+  | 'windows.reopenClosed'
+  | 'app.focusOmnibox'
+  | 'app.openSettings'
+  | 'app.openHistory'
+  | 'app.openDownloads'
+  | 'app.openBookmarks'
+  | 'app.openDebug'
+  | 'app.toggleSidebar'
+  | 'app.openDevTools'
+  | 'page.find'
+  | 'page.stopFinding'
+  | 'page.zoomIn'
+  | 'page.zoomOut'
+  | 'page.zoomReset'
+  | 'page.print'
+  | 'page.viewSource'
+  | 'bookmarks.addActive'
+  | 'bookmarks.save'
+  | 'bookmarks.remove';
 
 export type BridgeMethodMap = {
-  "app.getState": { params: Record<string, never>; result: BrowserState };
-  "commands.list": { params: Record<string, never>; result: BrowserCommand[] };
-  "commands.execute": { params: { id: CommandId | string; args?: Record<string, unknown> }; result: unknown };
-  "tabs.create": { params: { url?: string; active?: boolean }; result: boolean };
-  "tabs.navigate": { params: { tabId: string; input: string }; result: boolean };
-  "tabs.activate": { params: { tabId: string }; result: boolean };
-  "tabs.close": { params: { tabId: string }; result: boolean };
-  "tabs.reload": { params: { tabId: string }; result: boolean };
-  "tabs.stop": { params: { tabId: string }; result: boolean };
-  "tabs.goBack": { params: { tabId: string }; result: boolean };
-  "tabs.goForward": { params: { tabId: string }; result: boolean };
-  "tabs.move": { params: { tabId: string; toIndex: number }; result: boolean };
-  "bookmarks.save": { params: { title: string; url: string; faviconUrl: string }; result: boolean };
-  "bookmarks.remove": { params: { url: string }; result: boolean };
-  "settings.set": { params: { key: string; value: string }; result: boolean };
+  'app.getState': { params: Record<string, never>; result: BrowserState };
+  'commands.list': { params: Record<string, never>; result: BrowserCommand[] };
+  'commands.execute': {
+    params: { id: CommandId | string; args?: Record<string, unknown> };
+    result: unknown;
+  };
+  'tabs.create': {
+    params: { url?: string; active?: boolean };
+    result: boolean;
+  };
+  'tabs.navigate': {
+    params: { tabId: string; input: string };
+    result: boolean;
+  };
+  'tabs.activate': { params: { tabId: string }; result: boolean };
+  'tabs.close': { params: { tabId: string }; result: boolean };
+  'tabs.reload': { params: { tabId: string }; result: boolean };
+  'tabs.stop': { params: { tabId: string }; result: boolean };
+  'tabs.goBack': { params: { tabId: string }; result: boolean };
+  'tabs.goForward': { params: { tabId: string }; result: boolean };
+  'tabs.move': { params: { tabId: string; toIndex: number }; result: boolean };
+  'bookmarks.save': {
+    params: { title: string; url: string; faviconUrl: string };
+    result: boolean;
+  };
+  'bookmarks.remove': { params: { url: string }; result: boolean };
+  'settings.set': { params: { key: string; value: string }; result: boolean };
 };
 
 export type EventMap = {
-  "tabs.created": void;
-  "tabs.updated": void;
-  "tabs.closed": void;
-  "tabs.activated": void;
-  "navigation.started": { tabId: string; url: string };
-  "navigation.finished": { tabId: string; url: string };
-  "navigation.failed": { tabId: string; url: string; errorText: string };
-  "downloads.updated": void;
-  "download.changed": DownloadRecord;
-  "bookmark.changed": void;
-  "history.changed": void;
-  "setting.changed": { key: string; value: string };
-  "permission.changed": void;
-  "window.created": void;
-  "window.closed": void;
-  "window.focused": void;
-  "app.stateChanged": void;
+  'tabs.created': void;
+  'tabs.updated': void;
+  'tabs.closed': void;
+  'tabs.activated': void;
+  'navigation.started': { tabId: string; url: string };
+  'navigation.finished': { tabId: string; url: string };
+  'navigation.failed': { tabId: string; url: string; errorText: string };
+  'downloads.updated': void;
+  'download.changed': DownloadRecord;
+  'bookmark.changed': void;
+  'history.changed': void;
+  'setting.changed': { key: string; value: string };
+  'permission.changed': void;
+  'window.created': void;
+  'window.closed': void;
+  'window.focused': void;
+  'app.stateChanged': void;
 };
 
-export { fubukiLogoSvg, fubukiLogoDataUri } from "../assets/logo";
+export { fubukiLogoSvg, fubukiLogoDataUri } from '../assets/logo';
 
 type NativeQuery = {
   request: string;
@@ -264,38 +276,47 @@ export const fubuki = window.fubuki;
 
 export function invokeBridge<K extends keyof BridgeMethodMap>(
   method: K,
-  params?: BridgeMethodMap[K]["params"]
-): Promise<BridgeMethodMap[K]["result"]> {
-  return fubuki.invoke<BridgeMethodMap[K]["result"]>(
+  params?: BridgeMethodMap[K]['params'],
+): Promise<BridgeMethodMap[K]['result']> {
+  return fubuki.invoke<BridgeMethodMap[K]['result']>(
     method,
-    (params ?? {}) as Record<string, unknown>
+    (params ?? {}) as Record<string, unknown>,
   );
 }
 
 export function onBridgeEvent<K extends keyof EventMap>(
   eventName: K,
-  listener: (payload: EventMap[K]) => void
+  listener: (payload: EventMap[K]) => void,
 ): () => void {
   return fubuki.on(eventName, listener as (payload: unknown) => void);
 }
 
 export const commands = {
-  execute: <T = unknown>(id: CommandId | string, args: Record<string, unknown> = {}) =>
-    invokeBridge("commands.execute", { id, args }) as Promise<T>,
-  list: () => invokeBridge("commands.list")
+  execute: <T = unknown>(
+    id: CommandId | string,
+    args: Record<string, unknown> = {},
+  ) => invokeBridge('commands.execute', { id, args }) as Promise<T>,
+  list: () => invokeBridge('commands.list'),
 };
 
 export const tabs = {
-  create: (url = "fubuki://newtab/") => commands.execute<boolean>("tabs.create", { url }),
-  navigate: (tabId: string, input: string) => invokeBridge("tabs.navigate", { tabId, input }),
-  activate: (tabId: string) => invokeBridge("tabs.activate", { tabId }),
-  close: (tabId: string) => commands.execute<boolean>("tabs.close", { tabId }),
-  pin: (tabId: string, pinned: boolean) => commands.execute<boolean>(pinned ? "tabs.pin" : "tabs.unpin", { tabId }),
-  duplicate: (tabId: string) => commands.execute<boolean>("tabs.duplicate", { tabId }),
-  reopenClosed: () => commands.execute<boolean>("tabs.reopenClosed"),
-  closeOther: (tabId: string) => commands.execute<boolean>("tabs.closeOther", { tabId }),
-  closeToRight: (tabId: string) => commands.execute<boolean>("tabs.closeToRight", { tabId }),
-  moveToNewWindow: (tabId: string) => commands.execute<boolean>("tabs.moveToNewWindow", { tabId })
+  create: (url = 'fubuki://newtab/') =>
+    commands.execute<boolean>('tabs.create', { url }),
+  navigate: (tabId: string, input: string) =>
+    invokeBridge('tabs.navigate', { tabId, input }),
+  activate: (tabId: string) => invokeBridge('tabs.activate', { tabId }),
+  close: (tabId: string) => commands.execute<boolean>('tabs.close', { tabId }),
+  pin: (tabId: string, pinned: boolean) =>
+    commands.execute<boolean>(pinned ? 'tabs.pin' : 'tabs.unpin', { tabId }),
+  duplicate: (tabId: string) =>
+    commands.execute<boolean>('tabs.duplicate', { tabId }),
+  reopenClosed: () => commands.execute<boolean>('tabs.reopenClosed'),
+  closeOther: (tabId: string) =>
+    commands.execute<boolean>('tabs.closeOther', { tabId }),
+  closeToRight: (tabId: string) =>
+    commands.execute<boolean>('tabs.closeToRight', { tabId }),
+  moveToNewWindow: (tabId: string) =>
+    commands.execute<boolean>('tabs.moveToNewWindow', { tabId }),
 };
 
 export const page = {

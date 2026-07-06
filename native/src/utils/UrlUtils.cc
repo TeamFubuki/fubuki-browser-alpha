@@ -20,16 +20,19 @@ std::string Trim(std::string value) {
   return value;
 }
 
-bool ContainsWhitespace(const std::string& value) {
-  return std::any_of(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c); });
+bool ContainsWhitespace(const std::string &value) {
+  return std::any_of(value.begin(), value.end(),
+                     [](unsigned char c) { return std::isspace(c); });
 }
 
-bool ContainsNonAscii(const std::string& value) {
-  return std::any_of(value.begin(), value.end(), [](unsigned char c) { return c >= 0x80; });
+bool ContainsNonAscii(const std::string &value) {
+  return std::any_of(value.begin(), value.end(),
+                     [](unsigned char c) { return c >= 0x80; });
 }
 
-bool HasScheme(const std::string& value) {
-  if (value.empty() || !std::isalpha(static_cast<unsigned char>(value.front()))) {
+bool HasScheme(const std::string &value) {
+  if (value.empty() ||
+      !std::isalpha(static_cast<unsigned char>(value.front()))) {
     return false;
   }
 
@@ -52,7 +55,8 @@ std::string_view StripPathQueryFragment(std::string_view value) {
 
 bool IsAllDigits(std::string_view value) {
   return !value.empty() &&
-         std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c); });
+         std::all_of(value.begin(), value.end(),
+                     [](unsigned char c) { return std::isdigit(c); });
 }
 
 std::optional<int> ParsePort(std::string_view value) {
@@ -77,10 +81,12 @@ std::string_view StripPort(std::string_view authority) {
   if (colon == std::string_view::npos) {
     return authority;
   }
-  return ParsePort(authority.substr(colon + 1)).has_value() ? authority.substr(0, colon) : authority;
+  return ParsePort(authority.substr(colon + 1)).has_value()
+             ? authority.substr(0, colon)
+             : authority;
 }
 
-std::string_view HostPart(const std::string& value) {
+std::string_view HostPart(const std::string &value) {
   return StripPort(StripPathQueryFragment(value));
 }
 
@@ -141,11 +147,12 @@ bool LooksLikePrivateOrLoopbackIpv4(std::string_view host) {
   }
   const int first = Ipv4Octet(host, 0);
   const int second = Ipv4Octet(host, 1);
-  return first == 10 || first == 127 || (first == 172 && second >= 16 && second <= 31) ||
+  return first == 10 || first == 127 ||
+         (first == 172 && second >= 16 && second <= 31) ||
          (first == 192 && second == 168) || (first == 169 && second == 254);
 }
 
-bool LooksLikeBracketedIpv6(const std::string& value) {
+bool LooksLikeBracketedIpv6(const std::string &value) {
   const std::string_view authority = StripPathQueryFragment(value);
   if (authority.empty() || authority.front() != '[') {
     return false;
@@ -158,16 +165,18 @@ bool LooksLikeBracketedIpv6(const std::string& value) {
   if (address.find(':') == std::string_view::npos) {
     return false;
   }
-  const bool addressCharsOk = std::all_of(address.begin(), address.end(), [](unsigned char c) {
-    return std::isxdigit(c) || c == ':' || c == '.';
-  });
+  const bool addressCharsOk =
+      std::all_of(address.begin(), address.end(), [](unsigned char c) {
+        return std::isxdigit(c) || c == ':' || c == '.';
+      });
   if (!addressCharsOk) {
     return false;
   }
   if (close + 1 == authority.size()) {
     return true;
   }
-  return authority[close + 1] == ':' && ParsePort(authority.substr(close + 2)).has_value();
+  return authority[close + 1] == ':' &&
+         ParsePort(authority.substr(close + 2)).has_value();
 }
 
 bool LooksLikeLocalhost(std::string_view host) {
@@ -197,32 +206,36 @@ bool LooksLikeDomain(std::string_view host, bool containsNonAscii) {
   return std::all_of(labels.begin(), labels.end(), IsAsciiAlphaNumHyphen);
 }
 
-bool LooksLikeLocalHostnameWithPort(const std::string& value) {
+bool LooksLikeLocalHostnameWithPort(const std::string &value) {
   const std::string_view authority = StripPathQueryFragment(value);
   if (authority.empty() || authority.front() == '[') {
     return false;
   }
   const size_t colon = authority.rfind(':');
-  if (colon == std::string_view::npos || !ParsePort(authority.substr(colon + 1)).has_value()) {
+  if (colon == std::string_view::npos ||
+      !ParsePort(authority.substr(colon + 1)).has_value()) {
     return false;
   }
   const std::string_view host = authority.substr(0, colon);
-  return host.find('.') == std::string_view::npos && IsAsciiAlphaNumHyphen(host);
+  return host.find('.') == std::string_view::npos &&
+         IsAsciiAlphaNumHyphen(host);
 }
 
-bool LooksLikeHostWithPort(const std::string& value) {
+bool LooksLikeHostWithPort(const std::string &value) {
   const std::string_view authority = StripPathQueryFragment(value);
   if (authority.empty() || authority.front() == '[') {
     return false;
   }
   const size_t colon = authority.rfind(':');
-  if (colon == std::string_view::npos || !ParsePort(authority.substr(colon + 1)).has_value()) {
+  if (colon == std::string_view::npos ||
+      !ParsePort(authority.substr(colon + 1)).has_value()) {
     return false;
   }
   const std::string_view host = authority.substr(0, colon);
   return LooksLikeLocalhost(host) || LooksLikeIpv4Address(host) ||
          LooksLikeDomain(host, ContainsNonAscii(value)) ||
-         (host.find('.') == std::string_view::npos && IsAsciiAlphaNumHyphen(host));
+         (host.find('.') == std::string_view::npos &&
+          IsAsciiAlphaNumHyphen(host));
 }
 
 bool LooksLikeDotLocal(std::string_view host) {
@@ -239,24 +252,27 @@ bool LooksLikeDotLocal(std::string_view host) {
   return true;
 }
 
-bool LooksLikeUrlInput(const std::string& value) {
+bool LooksLikeUrlInput(const std::string &value) {
   if (ContainsWhitespace(value)) {
     return false;
   }
-  if (LooksLikeHostWithPort(value) || HasScheme(value) || LooksLikeBracketedIpv6(value)) {
+  if (LooksLikeHostWithPort(value) || HasScheme(value) ||
+      LooksLikeBracketedIpv6(value)) {
     return true;
   }
   const std::string_view host = HostPart(value);
   const bool nonAscii = ContainsNonAscii(value);
-  return LooksLikeLocalhost(host) || LooksLikeIpv4Address(host) || LooksLikeDomain(host, nonAscii);
+  return LooksLikeLocalhost(host) || LooksLikeIpv4Address(host) ||
+         LooksLikeDomain(host, nonAscii);
 }
 
-bool ShouldPreferHttp(const std::string& value) {
+bool ShouldPreferHttp(const std::string &value) {
   if (LooksLikeBracketedIpv6(value) || LooksLikeLocalHostnameWithPort(value)) {
     return true;
   }
   const std::string_view host = HostPart(value);
-  return LooksLikeLocalhost(host) || LooksLikePrivateOrLoopbackIpv4(host) || LooksLikeDotLocal(host);
+  return LooksLikeLocalhost(host) || LooksLikePrivateOrLoopbackIpv4(host) ||
+         LooksLikeDotLocal(host);
 }
 
 std::string ReplaceAll(std::string value, const std::string &needle,
@@ -327,13 +343,15 @@ std::string NormalizeNavigationInput(const std::string &input,
     return "fubuki://newtab/";
   }
   if (LooksLikeHostWithPort(value)) {
-    return std::string(ShouldPreferHttp(value) ? "http://" : "https://") + value;
+    return std::string(ShouldPreferHttp(value) ? "http://" : "https://") +
+           value;
   }
   if (HasScheme(value)) {
     return value;
   }
   if (LooksLikeUrlInput(value)) {
-    return std::string(ShouldPreferHttp(value) ? "http://" : "https://") + value;
+    return std::string(ShouldPreferHttp(value) ? "http://" : "https://") +
+           value;
   }
   return SearchUrlFor(searchEngine, customSearchUrl, value);
 }

@@ -1,19 +1,21 @@
-import { dictionaries, type I18nKey, type Language } from "./dictionaries";
+import { dictionaries, type I18nKey, type Language } from './dictionaries';
 
-export type LanguageSetting = "system" | Language;
+export type LanguageSetting = 'system' | Language;
 
 export function normalizeLanguage(value: string | undefined): LanguageSetting {
-  return value === "ja" || value === "en" || value === "system" ? value : "system";
+  return value === 'ja' || value === 'en' || value === 'system'
+    ? value
+    : 'system';
 }
 
 export function systemLanguage(): Language {
-  const language = navigator.language || navigator.languages?.[0] || "en";
-  return language.toLowerCase().startsWith("ja") ? "ja" : "en";
+  const language = navigator.language || navigator.languages?.[0] || 'en';
+  return language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
 }
 
 export function resolveLanguage(setting: string | undefined): Language {
   const normalized = normalizeLanguage(setting);
-  return normalized === "system" ? systemLanguage() : normalized;
+  return normalized === 'system' ? systemLanguage() : normalized;
 }
 
 export function translate(key: I18nKey, language: Language): string {

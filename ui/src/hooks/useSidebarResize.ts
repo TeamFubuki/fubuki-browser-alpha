@@ -50,10 +50,10 @@ export function useSidebarResize() {
 
   const removeListeners = () => {
     if (handle) {
-      handle.removeEventListener("pointermove", onPointerMove);
-      handle.removeEventListener("pointerup", onPointerUp);
-      handle.removeEventListener("pointercancel", onPointerCancel);
-      handle.removeEventListener("lostpointercapture", onLostPointerCapture);
+      handle.removeEventListener('pointermove', onPointerMove);
+      handle.removeEventListener('pointerup', onPointerUp);
+      handle.removeEventListener('pointercancel', onPointerCancel);
+      handle.removeEventListener('lostpointercapture', onLostPointerCapture);
     }
   };
 
