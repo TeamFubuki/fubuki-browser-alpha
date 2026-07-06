@@ -9,7 +9,7 @@
 | パフォーマンス | **問題なし** | ブラウザ操作は CEF 呼び出しが支配的、FFI オーバーヘッドは無視できる |
 | ビルド統合 | **実現可能** | Cargo build を CMake のカスタムコマンドで呼ぶ |
 | セッション永続化 | **実現可能** | SQLite ファイルを Rust と C++ で共有、CEF cookie は別管理 |
-| CEF スレッドモデル | **注意が必要** | CEF UI thread 制約あり、FFI 呼び出しのスレッド安全性が必要 |
+| CEF スレッドモデル | **実現可能** | チャネル隔離で Rust Core から CEF を完全に切り離す |
 | 既存コード移行 | **実現可能** | 段階的に移行可、旧 API と新 Protocol の併存期間あり |
 | macOS 固有コード | **実現可能** | NSWindow/ObjC は C++ Host 側に残す |
 
@@ -166,24 +166,84 @@ target_link_libraries(FubukiBrowserAlpha PRIVATE frost_core)
 
 ---
 
-## 6. CEF スレッドモデル（注意点）
+## 6. CEF スレッドモデル → チャネル隔離で回避
 
-### 制約
+### 問題
 
 - CEF のコールバック（`OnTitleChange`, `OnLoadingStateChange` 等）は **CEF UI thread** で呼ばれる
 - CEF UI thread はメインスレッド（macOS の main thread）
-- FFI 呼び出しもこのスレッド上で行われる
+- 直接 FFI で Rust を呼ぶと、Rust も CEF のスレッド制約に従う必要がある
 
-### 対策
+### 解決策: チャネル隔離
 
-- Rust Core は `Send + Sync` として設計し、FFI 呼び出しは CEF UI thread から行う
-- Rust Core 内部で `Mutex` や `channel` を使っても、CEF UI thread からの呼び出しは直列なので問題ない
-- イベント通知は Rust Core → C++ Host のコールバック経由で、引き続き CEF UI thread 上で `EmitToUi()` を呼ぶ
+```
+CEF UI Thread (C++)                Rust Core Thread
+─────────────────                  ─────────────────
+  CEF callback 発火
+    ↓
+  JSON にシリアライズ
+    ↓
+  channel.send(request)  ──────→  channel.recv()
+                                     ↓
+                                   process()
+                                     ↓
+  channel.recv()          ←──────  channel.send(response)
+    ↓
+  CefPostTask で UI thread に復帰
+    ↓
+  CEF 操作実行
+```
+
+### 利点
+
+- **Rust Core は専用スレッドで単一スレッド動作**: `RefCell` も使える、`Mutex` 不要
+- **CEF を知らなくていい**: Rust Core は JSON の入出力だけ担当
+- **C++ Host がすべての CEF スレッド処理を担当**: CEF の制約は C++ 側に閉じる
+- **FFI は最小限**: `channel.send` / `channel.recv` の C ラッパーだけ
+
+### 実装方針
+
+```rust
+// frost-core/src/lib.rs
+pub struct FrostCore {
+    request_rx: Receiver<String>,   // C++ → Rust
+    response_tx: Sender<String>,    // Rust → C++
+    state: BrowserState,
+}
+
+impl FrostCore {
+    pub fn run(&mut self) {
+        while let Ok(json) = self.request_rx.recv() {
+            let request: Request = serde_json::from_str(&json).unwrap();
+            let response = self.process(request);
+            let json = serde_json::to_string(&response).unwrap();
+            self.response_tx.send(json).unwrap();
+        }
+    }
+}
+```
+
+```cpp
+// C++ Host 側
+void FrostBridge::OnQuery(...) {
+    std::string json = SerializeRequest(method, params);
+    requestChannel_.Send(json);           // Rust スレッドへ
+    std::string response = responseChannel_.Receive(); // Rust から応答
+    callback->Success(response);
+}
+
+// CEF callback 側
+void FrostBridge::OnTabUpdated(const TabPatch& patch) {
+    std::string json = SerializeEvent("tab.updated", patch);
+    requestChannel_.Send(json);           // Rust にイベント通知
+    // 応答は不要（fire-and-forget）
+}
+```
 
 ### リスク
 
-- Rust の `RefCell` は `Send` ではないため、FFI 呼び出しでは `Mutex` を使う
-- **判定**: 注意が必要だが対策可能。
+- CEF UI thread が `channel.recv()` でブロックする可能性 → タイムアウト付きで回避
+- **判定**: 実現可能。CEF スレッドモデルの複雑さを完全に回避できる。
 
 ---
 
@@ -248,7 +308,7 @@ Cons: 密結合は解消されず、将来の拡張で崩壊リスク
 ### 実現可能判定: **○**
 
 - 技術的制約はすべて対策可能
-- 最大のリスクは **Phase 4 の移行工数** と **CEF スレッドモデルとの兼ね合い**
+- 最大のリスクは **Phase 4 の移行工数**
 - 段階的に移行できるため、一度に書き換える必要がない
 - 既存の CEF message router パスはそのまま活用可能
 
