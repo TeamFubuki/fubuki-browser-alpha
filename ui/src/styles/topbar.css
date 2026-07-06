@@ -14,6 +14,10 @@
   transition: background-color 0.16s ease;
 }
 
+:root[data-sidebar="hide"] .top-bar {
+  padding-left: var(--window-control-space);
+}
+
 .top-bar.private {
   background: color-mix(in srgb, var(--topbar-bg) 72%, #17151f);
 }

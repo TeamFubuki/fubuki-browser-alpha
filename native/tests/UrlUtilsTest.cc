@@ -49,12 +49,14 @@ TEST(NormalizeNavigationInputTest, PreservesFileScheme) {
   EXPECT_EQ(NormalizeNavigationInput("file:///Users/test/index.html"), "file:///Users/test/index.html");
 }
 
-// data: URI は HasScheme が "://" / "about:" / "fubuki:" のみチェックするため、
-// スキーマ付きとして認識されない。ドット無しなので検索クエリ扱いになる。
-// これは既知の制限（将来 data: 対応を追加する場合は HasScheme を修正する必要あり）。
-TEST(NormalizeNavigationInputTest, DataUriIsNotRecognizedAsScheme) {
+TEST(NormalizeNavigationInputTest, PreservesDataUriScheme) {
   EXPECT_EQ(NormalizeNavigationInput("data:text/html,<h1>Hello</h1>"),
-            "https://www.google.com/search?q=data%3Atext%2Fhtml%2C%3Ch1%3EHello%3C%2Fh1%3E");
+            "data:text/html,<h1>Hello</h1>");
+}
+
+TEST(NormalizeNavigationInputTest, PreservesSchemeWithoutSlashes) {
+  EXPECT_EQ(NormalizeNavigationInput("http:example.com"), "http:example.com");
+  EXPECT_EQ(NormalizeNavigationInput("file:/Users/test/index.html"), "file:/Users/test/index.html");
 }
 
 TEST(NormalizeNavigationInputTest, PreservesUrlWithQueryAndFragment) {
@@ -112,12 +114,20 @@ TEST(NormalizeNavigationInputTest, PrependsHttpsToHostLikeInput) {
   EXPECT_EQ(NormalizeNavigationInput("example.com"), "https://example.com");
   EXPECT_EQ(NormalizeNavigationInput("sub.domain.org"), "https://sub.domain.org");
   EXPECT_EQ(NormalizeNavigationInput("my-site.co.jp"), "https://my-site.co.jp");
+  EXPECT_EQ(NormalizeNavigationInput("example.com/path"), "https://example.com/path");
+  EXPECT_EQ(NormalizeNavigationInput("example.com:8080/path?q=1"),
+            "https://example.com:8080/path?q=1");
 }
 
-TEST(NormalizeNavigationInputTest, PrependsHttpsToIpAddress) {
-  EXPECT_EQ(NormalizeNavigationInput("192.168.1.1"), "https://192.168.1.1");
-  EXPECT_EQ(NormalizeNavigationInput("10.0.0.1"), "https://10.0.0.1");
-  EXPECT_EQ(NormalizeNavigationInput("127.0.0.1"), "https://127.0.0.1");
+TEST(NormalizeNavigationInputTest, PrependsHttpToLocalIpAddress) {
+  EXPECT_EQ(NormalizeNavigationInput("192.168.1.1"), "http://192.168.1.1");
+  EXPECT_EQ(NormalizeNavigationInput("10.0.0.1"), "http://10.0.0.1");
+  EXPECT_EQ(NormalizeNavigationInput("127.0.0.1"), "http://127.0.0.1");
+  EXPECT_EQ(NormalizeNavigationInput("127.0.0.1:3000"), "http://127.0.0.1:3000");
+}
+
+TEST(NormalizeNavigationInputTest, PrependsHttpsToPublicIpAddress) {
+  EXPECT_EQ(NormalizeNavigationInput("8.8.8.8"), "https://8.8.8.8");
 }
 
 TEST(NormalizeNavigationInputTest, InputWithDotButNoSpaceIsHostLike) {
@@ -125,11 +135,19 @@ TEST(NormalizeNavigationInputTest, InputWithDotButNoSpaceIsHostLike) {
   EXPECT_EQ(NormalizeNavigationInput("hello.world"), "https://hello.world");
 }
 
-// localhost:3000 はドットを含まないため LooksLikeHost が false になり、検索クエリ扱いになる。
-// これは既知の制限（"localhost" や "example:port" はドットレスのため検索に転送される）。
-TEST(NormalizeNavigationInputTest, PortOnlyInputWithoutDotIsSearchQuery) {
-  EXPECT_EQ(NormalizeNavigationInput("localhost:3000"),
-            "https://www.google.com/search?q=localhost%3A3000");
+TEST(NormalizeNavigationInputTest, PrependsHttpToLocalHosts) {
+  EXPECT_EQ(NormalizeNavigationInput("localhost"), "http://localhost");
+  EXPECT_EQ(NormalizeNavigationInput("localhost:5173"), "http://localhost:5173");
+  EXPECT_EQ(NormalizeNavigationInput("[::1]:5173"), "http://[::1]:5173");
+  EXPECT_EQ(NormalizeNavigationInput("nas.local"), "http://nas.local");
+  EXPECT_EQ(NormalizeNavigationInput("router.local"), "http://router.local");
+  EXPECT_EQ(NormalizeNavigationInput("proxmox.local"), "http://proxmox.local");
+  EXPECT_EQ(NormalizeNavigationInput("devbox:8080"), "http://devbox:8080");
+}
+
+TEST(NormalizeNavigationInputTest, PrependsHttpsToIdnLikeHosts) {
+  EXPECT_EQ(NormalizeNavigationInput("日本語.com"), "https://日本語.com");
+  EXPECT_EQ(NormalizeNavigationInput("münich.example"), "https://münich.example");
 }
 
 // ============================================================
@@ -147,7 +165,6 @@ TEST(NormalizeNavigationInputTest, SingleWordIsSearchQuery) {
 }
 
 TEST(NormalizeNavigationInputTest, InputWithoutDotIsSearchQuery) {
-  EXPECT_EQ(NormalizeNavigationInput("localhost"), "https://www.google.com/search?q=localhost");
   EXPECT_EQ(NormalizeNavigationInput("192"), "https://www.google.com/search?q=192");
 }
 
@@ -156,9 +173,11 @@ TEST(NormalizeNavigationInputTest, JapaneseTextIsSearchQuery) {
             "https://www.google.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E%E3%83%86%E3%82%B9%E3%83%88");
 }
 
-TEST(NormalizeNavigationInputTest, JapaneseTextWithDotIsSearchQuery) {
-  EXPECT_EQ(NormalizeNavigationInput("日本語.com", "google"),
-            "https://www.google.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E.com");
+TEST(NormalizeNavigationInputTest, JapaneseTextWithSpacesIsSearchQuery) {
+  EXPECT_EQ(NormalizeNavigationInput("東京 天気", "google"),
+            "https://www.google.com/search?q=%E6%9D%B1%E4%BA%AC+%E5%A4%A9%E6%B0%97");
+  EXPECT_EQ(NormalizeNavigationInput("日本語 テスト", "google"),
+            "https://www.google.com/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E+%E3%83%86%E3%82%B9%E3%83%88");
 }
 
 // ============================================================
