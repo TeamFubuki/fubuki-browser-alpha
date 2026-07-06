@@ -6,7 +6,10 @@ use crossbeam_channel::{Receiver, Sender};
 use frost_core::BrowserCore;
 use frost_engine_api::EngineAdapter;
 use frost_protocol::{EventEnvelope, ProtocolRequest, ProtocolResponse};
-use frost_store::{BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository, SettingsRepository};
+use frost_store::{
+    BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
+    SettingsRepository,
+};
 
 pub struct FrostEngineHandle {
     request_tx: Sender<ProtocolRequest>,
@@ -36,7 +39,9 @@ pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
 /// - `path` must be a valid null-terminated UTF-8 string, or null.
 /// - Returns a valid non-null handle on success.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn frost_engine_new_with_store(path: *const c_char) -> *mut FrostEngineHandle {
+pub unsafe extern "C" fn frost_engine_new_with_store(
+    path: *const c_char,
+) -> *mut FrostEngineHandle {
     let (request_tx, request_rx) = crossbeam_channel::unbounded();
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();

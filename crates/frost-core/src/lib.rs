@@ -11,7 +11,10 @@ use frost_protocol::{
     BrowserCommand, Event, EventEnvelope, ProtocolRequest, ProtocolResponse, Request, Response,
     SettingChanged, TabClosed, TabPatch,
 };
-use frost_store::{BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository, SettingsRepository};
+use frost_store::{
+    BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
+    SettingsRepository,
+};
 use thiserror::Error;
 
 pub use bookmark_service::BookmarkService;
@@ -55,7 +58,11 @@ impl Default for BrowserCore<NoopEngineAdapter, InMemoryStore> {
 impl<A, S> BrowserCore<A, S>
 where
     A: EngineAdapter,
-    S: SettingsRepository + BookmarkRepository + HistoryRepository + DownloadRepository + PermissionRepository,
+    S: SettingsRepository
+        + BookmarkRepository
+        + HistoryRepository
+        + DownloadRepository
+        + PermissionRepository,
 {
     pub fn with_adapter_and_settings(adapter: A, repository: S) -> Self {
         let mut windows = WindowService::new();
@@ -308,15 +315,14 @@ where
                         .into_iter()
                         .filter(|t| t.window_id == target)
                         .collect();
-                    let window_state = self
-                        .windows
-                        .get_window(&target)
-                        .unwrap_or_else(|| frost_protocol::WindowState {
+                    let window_state = self.windows.get_window(&target).unwrap_or_else(|| {
+                        frost_protocol::WindowState {
                             id: target.clone(),
                             active_tab_id: None,
                             is_private: false,
                             tab_ids: window_tabs.iter().map(|t| t.id.clone()).collect(),
-                        });
+                        }
+                    });
                     self.closed_windows.push(ClosedWindow {
                         window: window_state,
                         tabs: window_tabs,
