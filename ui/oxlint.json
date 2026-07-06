@@ -1,0 +1,11 @@
+{
+  "plugins": ["import", "typescript", "solid"],
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-console": "warn",
+    "eqeqeq": "error",
+    "prefer-const": "error",
+    "no-var": "error"
+  },
+  "ignorePatterns": ["dist/", "node_modules/", "*.config.js", "*.config.ts"]
+}

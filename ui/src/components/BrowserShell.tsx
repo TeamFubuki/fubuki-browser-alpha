@@ -1,6 +1,6 @@
-import Sidebar from "./Sidebar";
-import TopBar from "./TopBar";
-import WebViewArea from "./WebViewArea";
+import Sidebar from './Sidebar';
+import TopBar from './TopBar';
+import WebViewArea from './WebViewArea';
 
 export default function BrowserShell() {
   return (

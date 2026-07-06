@@ -1,19 +1,25 @@
-import { createSignal, onCleanup } from "solid-js";
-import { fubuki } from "../bridge/fubuki";
-import { browserState, refreshState } from "../stores/browserStore";
-import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from "../sidebarSizing";
+import { createSignal, onCleanup } from 'solid-js';
+import { fubuki } from '../bridge/fubuki';
+import { browserState, refreshState } from '../stores/browserStore';
+import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
 
 function applyLiveSidebarWidth(width: number) {
-  document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
-  void fubuki.invoke("ui.setSidebarWidth", { width });
+  document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
+  void fubuki.invoke('ui.setSidebarWidth', { width });
 }
 
 function currentSidebarWidth() {
-  const cssWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width"));
+  const cssWidth = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(
+      '--sidebar-width',
+    ),
+  );
   if (Number.isFinite(cssWidth)) {
     return clampSidebarWidth(cssWidth);
   }
-  return clampSidebarWidth(Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH);
+  return clampSidebarWidth(
+    Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH,
+  );
 }
 
 export function useSidebarResize() {
@@ -27,7 +33,9 @@ export function useSidebarResize() {
   let animationFrame = 0;
 
   const saveWidth = (width: number) =>
-    fubuki.invoke("settings.set", { key: "sidebarWidth", value: String(width) }).then(() => refreshState("settings.saved"));
+    fubuki
+      .invoke('settings.set', { key: 'sidebarWidth', value: String(width) })
+      .then(() => refreshState('settings.saved'));
 
   const flushLiveWidth = () => {
     animationFrame = 0;
@@ -41,17 +49,21 @@ export function useSidebarResize() {
   };
 
   const removeListeners = () => {
-    handle?.removeEventListener("pointermove", onPointerMove);
-    handle?.removeEventListener("pointerup", onPointerUp);
-    handle?.removeEventListener("pointercancel", onPointerCancel);
-    handle?.removeEventListener("lostpointercapture", onLostPointerCapture);
+    handle?.removeEventListener('pointermove', onPointerMove);
+    handle?.removeEventListener('pointerup', onPointerUp);
+    handle?.removeEventListener('pointercancel', onPointerCancel);
+    handle?.removeEventListener('lostpointercapture', onLostPointerCapture);
   };
 
   const finishResize = (clientX?: number) => {
     if (!active) return;
 
     active = false;
-    const width = clampSidebarWidth(typeof clientX === "number" ? startWidth + clientX - startX : pendingWidth);
+    const width = clampSidebarWidth(
+      typeof clientX === 'number'
+        ? startWidth + clientX - startX
+        : pendingWidth,
+    );
     pendingWidth = width;
 
     if (animationFrame) {
@@ -92,7 +104,9 @@ export function useSidebarResize() {
     finishResize();
   };
 
-  const startResize = (event: PointerEvent & { currentTarget: HTMLElement }) => {
+  const startResize = (
+    event: PointerEvent & { currentTarget: HTMLElement },
+  ) => {
     if (event.button !== 0 || active) return;
     event.preventDefault();
 
@@ -103,13 +117,13 @@ export function useSidebarResize() {
     pendingWidth = startWidth;
     active = true;
 
-    document.documentElement.dataset.sidebarResizing = "true";
+    document.documentElement.dataset.sidebarResizing = 'true';
     setResizing(true);
     handle.setPointerCapture(activePointerId);
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", onPointerUp);
-    handle.addEventListener("pointercancel", onPointerCancel);
-    handle.addEventListener("lostpointercapture", onLostPointerCapture);
+    handle.addEventListener('pointermove', onPointerMove);
+    handle.addEventListener('pointerup', onPointerUp);
+    handle.addEventListener('pointercancel', onPointerCancel);
+    handle.addEventListener('lostpointercapture', onLostPointerCapture);
   };
 
   const resetWidth = () => {

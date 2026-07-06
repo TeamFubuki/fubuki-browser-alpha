@@ -1,24 +1,24 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
-import { fubuki } from "../bridge/fubuki";
-import { browserState } from "../stores/browserStore";
+import { createEffect, createSignal, onCleanup } from 'solid-js';
+import { fubuki } from '../bridge/fubuki';
+import { browserState } from '../stores/browserStore';
 
 function activeTab() {
   return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
 }
 
 function isNonNavigableUrl(url: string | undefined): boolean {
-  return !url || url.startsWith("fubuki://") || url.startsWith("data:");
+  return !url || url.startsWith('fubuki://') || url.startsWith('data:');
 }
 
 export default function Omnibox() {
-  const [draft, setDraft] = createSignal("");
+  const [draft, setDraft] = createSignal('');
   const [focused, setFocused] = createSignal(false);
-  let lastSyncedTabId = "";
+  let lastSyncedTabId = '';
 
   createEffect(() => {
     const tabId = browserState.activeTabId;
     const tab = browserState.tabs.find((t) => t.id === tabId);
-    const url = tab?.url ?? "";
+    const url = tab?.url ?? '';
 
     if (!focused() || tabId !== lastSyncedTabId) {
       setDraft(url);
@@ -30,7 +30,7 @@ export default function Omnibox() {
     const tab = activeTab();
     const input = draft().trim();
     if (!tab || !input) return;
-    void fubuki.invoke("tabs.navigate", { tabId: tab.id, input });
+    void fubuki.invoke('tabs.navigate', { tabId: tab.id, input });
   };
 
   let inputRef: HTMLInputElement | undefined;

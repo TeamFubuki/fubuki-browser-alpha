@@ -1,6 +1,8 @@
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial,
+    sans-serif;
   --sidebar-width: 196px;
   --topbar-height: 42px;
   --tab-height: 34px;
@@ -22,7 +24,7 @@
   text-rendering: optimizeLegibility;
 }
 
-:root[data-theme="dark"] {
+:root[data-theme='dark'] {
   color-scheme: dark;
   --bg: #17191d;
   --sidebar-bg: #202329;

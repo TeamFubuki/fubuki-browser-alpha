@@ -1,11 +1,11 @@
-import { createStore } from "solid-js/store";
-import { fubuki, type BrowserState } from "../bridge/fubuki";
+import { createStore } from 'solid-js/store';
+import { fubuki, type BrowserState } from '../bridge/fubuki';
 
 const initialState: BrowserState & { status: string } = {
-  bridgeVersion: "1",
-  windowId: "",
+  bridgeVersion: '1',
+  windowId: '',
   isPrivate: false,
-  activeTabId: "",
+  activeTabId: '',
   tabs: [],
   windows: [],
   history: [],
@@ -16,69 +16,71 @@ const initialState: BrowserState & { status: string } = {
   commands: [],
   recentEvents: [],
   settings: {
-    homepage: "https://example.com",
-    searchEngine: "google",
-    customSearchUrl: "https://www.google.com/search?q={query}",
-    theme: "light",
-    appearance: "system",
-    sidebarVisible: "show",
-    sidebarWidth: "196",
-    newTabPage: "blank",
-    homeUrl: "https://example.com",
-    language: "en",
-    defaultZoomLevel: "0"
+    homepage: 'https://example.com',
+    searchEngine: 'google',
+    customSearchUrl: 'https://www.google.com/search?q={query}',
+    theme: 'light',
+    appearance: 'system',
+    sidebarVisible: 'show',
+    sidebarWidth: '196',
+    newTabPage: 'blank',
+    homeUrl: 'https://example.com',
+    language: 'en',
+    defaultZoomLevel: '0',
   },
-  profilePath: "",
-  status: "Starting"
+  profilePath: '',
+  status: 'Starting',
 };
 
 export const [browserState, setBrowserState] = createStore(initialState);
 
 let pendingRefresh: Promise<void> | undefined;
-let pendingStatus = "Ready";
+let pendingStatus = 'Ready';
 
-export async function refreshState(status = "Ready") {
+export async function refreshState(status = 'Ready') {
   pendingStatus = status;
   if (pendingRefresh) {
     return pendingRefresh;
   }
-  pendingRefresh = Promise.resolve().then(async () => {
-    const statusToApply = pendingStatus;
-    const state = await fubuki.invoke<BrowserState>("app.getState");
-    setBrowserState({ ...state, status: statusToApply });
-  }).finally(() => {
-    pendingRefresh = undefined;
-  });
+  pendingRefresh = Promise.resolve()
+    .then(async () => {
+      const statusToApply = pendingStatus;
+      const state = await fubuki.invoke<BrowserState>('app.getState');
+      setBrowserState({ ...state, status: statusToApply });
+    })
+    .finally(() => {
+      pendingRefresh = undefined;
+    });
   return pendingRefresh;
 }
 
 export function bindNativeEvents() {
   const refreshEvents = [
-    "tabs.created",
-    "tabs.updated",
-    "tabs.closed",
-    "tabs.activated",
-    "navigation.started",
-    "navigation.finished",
-    "navigation.failed",
-    "downloads.updated",
-    "download.changed",
-    "bookmark.changed",
-    "history.changed",
-    "setting.changed",
-    "permission.changed",
-    "window.created",
-    "window.closed",
-    "window.focused",
-    "app.stateChanged"
+    'tabs.created',
+    'tabs.updated',
+    'tabs.closed',
+    'tabs.activated',
+    'navigation.started',
+    'navigation.finished',
+    'navigation.failed',
+    'downloads.updated',
+    'download.changed',
+    'bookmark.changed',
+    'history.changed',
+    'setting.changed',
+    'permission.changed',
+    'window.created',
+    'window.closed',
+    'window.focused',
+    'app.stateChanged',
   ];
 
   const disposers = refreshEvents.map((eventName) =>
     fubuki.on(eventName, () => {
       void refreshState(eventName);
-    })
+    }),
   );
 
-  void refreshState("Ready");
+  void refreshState('Ready');
   return () => disposers.forEach((dispose) => dispose());
 }

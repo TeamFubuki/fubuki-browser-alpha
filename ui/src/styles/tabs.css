@@ -41,7 +41,10 @@
   background: var(--content-bg);
   color: var(--text);
   font-size: 12px;
-  transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+  transition:
+    border-color 0.14s ease,
+    background-color 0.14s ease,
+    box-shadow 0.14s ease;
 }
 
 .tab-search-toggle {
@@ -53,7 +56,10 @@
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease;
 }
 
 .tab-search-toggle:hover {
@@ -76,7 +82,9 @@
   width: 28px;
   height: 28px;
   border-radius: 7px;
-  transition: background-color 0.14s ease, transform 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    transform 0.14s ease;
 }
 
 .pinned-tab:hover,
@@ -117,7 +125,10 @@
   align-items: center;
   border-radius: 7px;
   color: var(--muted);
-  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease;
 }
 
 .vertical-tab:hover {
@@ -167,7 +178,11 @@
   color: var(--muted);
   font-size: 12px;
   opacity: 0;
-  transition: opacity 0.12s ease, background-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
+  transition:
+    opacity 0.12s ease,
+    background-color 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease;
 }
 
 .vertical-tab:hover .tab-close,
@@ -193,7 +208,7 @@
 }
 
 .tab-icon::before {
-  content: "";
+  content: '';
   width: 14px;
   height: 14px;
   border-radius: 4px;

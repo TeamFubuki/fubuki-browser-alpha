@@ -5,7 +5,9 @@
   min-width: 0;
   height: var(--topbar-height);
   display: grid;
-  grid-template-columns: repeat(3, var(--button-size)) minmax(160px, 1fr) var(--button-size);
+  grid-template-columns: repeat(3, var(--button-size)) minmax(160px, 1fr) var(
+      --button-size
+    );
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
@@ -27,7 +29,11 @@
   background: transparent;
   color: var(--text);
   font-size: 14px;
-  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease, opacity 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease,
+    opacity 0.14s ease;
 }
 
 .topbar-button:hover {
@@ -60,7 +66,10 @@
   color: var(--text);
   font-size: 13px;
   outline: none;
-  transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+  transition:
+    border-color 0.14s ease,
+    background-color 0.14s ease,
+    box-shadow 0.14s ease;
 }
 
 .omnibox-input:focus {
@@ -84,7 +93,9 @@
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.14);
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
 }
 
 .find-bar input {
@@ -104,7 +115,9 @@
   border-radius: 5px;
   background: transparent;
   color: var(--text);
-  transition: background-color 0.14s ease, transform 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    transform 0.14s ease;
 }
 
 .find-bar button:hover {

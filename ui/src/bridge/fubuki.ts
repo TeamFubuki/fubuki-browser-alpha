@@ -65,10 +65,10 @@ export type BrowserState = {
     searchEngine: string;
     customSearchUrl: string;
     theme: string;
-    appearance: "system" | "light" | "dark" | string;
-    sidebarVisible: "show" | "hide" | string;
+    appearance: 'system' | 'light' | 'dark' | string;
+    sidebarVisible: 'show' | 'hide' | string;
     sidebarWidth: string;
-    newTabPage: "blank" | "home" | string;
+    newTabPage: 'blank' | 'home' | string;
     homeUrl: string;
     language: string;
     [key: string]: string;
@@ -100,8 +100,14 @@ declare global {
     cefQuery?: (query: NativeQuery) => void;
     fubuki: {
       bridgeVersion: string;
-      invoke: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>;
-      on: (eventName: string, listener: (payload: unknown) => void) => () => void;
+      invoke: <T = unknown>(
+        method: string,
+        params?: Record<string, unknown>,
+      ) => Promise<T>;
+      on: (
+        eventName: string,
+        listener: (payload: unknown) => void,
+      ) => () => void;
     };
   }
 }
@@ -112,28 +118,37 @@ function emit(eventName: string, payload: unknown) {
   listeners.get(eventName)?.forEach((listener) => listener(payload));
 }
 
-window.addEventListener("fubuki:event", (event) => {
-  const detail = (event as CustomEvent).detail as { name?: string; payload?: unknown };
+window.addEventListener('fubuki:event', (event) => {
+  const detail = (event as CustomEvent).detail as {
+    name?: string;
+    payload?: unknown;
+  };
   if (detail?.name) {
     emit(detail.name, detail.payload);
   }
 });
 
-async function invoke<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+async function invoke<T = unknown>(
+  method: string,
+  params: Record<string, unknown> = {},
+): Promise<T> {
   if (!window.cefQuery) {
-    throw new Error("Fubuki native bridge is not available");
+    throw new Error('Fubuki native bridge is not available');
   }
 
   return new Promise<T>((resolve, reject) => {
     window.cefQuery?.({
-      request: JSON.stringify({ version: "1", method, params }),
+      request: JSON.stringify({ version: '1', method, params }),
       onSuccess: (response) => resolve(JSON.parse(response) as T),
-      onFailure: (code, message) => reject(new Error(`${code}: ${message}`))
+      onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });
   });
 }
 
-function on(eventName: string, listener: (payload: unknown) => void): () => void {
+function on(
+  eventName: string,
+  listener: (payload: unknown) => void,
+): () => void {
   const set = listeners.get(eventName) ?? new Set<(payload: unknown) => void>();
   set.add(listener);
   listeners.set(eventName, set);
@@ -141,37 +156,46 @@ function on(eventName: string, listener: (payload: unknown) => void): () => void
 }
 
 window.fubuki = {
-  bridgeVersion: "1",
+  bridgeVersion: '1',
   invoke,
-  on
+  on,
 };
 
 export const fubuki = window.fubuki;
 
 export const commands = {
   execute: <T = unknown>(id: string, args: Record<string, unknown> = {}) =>
-    fubuki.invoke<T>("commands.execute", { id, args }),
-  list: () => fubuki.invoke<BrowserCommand[]>("commands.list")
+    fubuki.invoke<T>('commands.execute', { id, args }),
+  list: () => fubuki.invoke<BrowserCommand[]>('commands.list'),
 };
 
 export const tabs = {
-  create: (url = "fubuki://newtab/") => commands.execute<boolean>("tabs.create", { url }),
-  activate: (tabId: string) => fubuki.invoke<boolean>("tabs.activate", { tabId }),
-  close: (tabId: string) => commands.execute<boolean>("tabs.close", { tabId }),
-  pin: (tabId: string, pinned: boolean) => commands.execute<boolean>(pinned ? "tabs.pin" : "tabs.unpin", { tabId }),
-  duplicate: (tabId: string) => commands.execute<boolean>("tabs.duplicate", { tabId }),
-  reopenClosed: () => commands.execute<boolean>("tabs.reopenClosed"),
-  closeOther: (tabId: string) => commands.execute<boolean>("tabs.closeOther", { tabId }),
-  closeToRight: (tabId: string) => commands.execute<boolean>("tabs.closeToRight", { tabId }),
-  moveToNewWindow: (tabId: string) => commands.execute<boolean>("tabs.moveToNewWindow", { tabId })
+  create: (url = 'fubuki://newtab/') =>
+    commands.execute<boolean>('tabs.create', { url }),
+  activate: (tabId: string) =>
+    fubuki.invoke<boolean>('tabs.activate', { tabId }),
+  close: (tabId: string) => commands.execute<boolean>('tabs.close', { tabId }),
+  pin: (tabId: string, pinned: boolean) =>
+    commands.execute<boolean>(pinned ? 'tabs.pin' : 'tabs.unpin', { tabId }),
+  duplicate: (tabId: string) =>
+    commands.execute<boolean>('tabs.duplicate', { tabId }),
+  reopenClosed: () => commands.execute<boolean>('tabs.reopenClosed'),
+  closeOther: (tabId: string) =>
+    commands.execute<boolean>('tabs.closeOther', { tabId }),
+  closeToRight: (tabId: string) =>
+    commands.execute<boolean>('tabs.closeToRight', { tabId }),
+  moveToNewWindow: (tabId: string) =>
+    commands.execute<boolean>('tabs.moveToNewWindow', { tabId }),
 };
 
 export const page = {
-  find: (query: string, forward = true) => commands.execute<boolean>("page.find", { query, forward }),
-  stopFinding: () => commands.execute<boolean>("page.stopFinding", { clear: true }),
-  zoomIn: () => commands.execute<boolean>("page.zoomIn"),
-  zoomOut: () => commands.execute<boolean>("page.zoomOut"),
-  zoomReset: () => commands.execute<boolean>("page.zoomReset"),
-  print: () => commands.execute<boolean>("page.print"),
-  viewSource: () => commands.execute<boolean>("page.viewSource")
+  find: (query: string, forward = true) =>
+    commands.execute<boolean>('page.find', { query, forward }),
+  stopFinding: () =>
+    commands.execute<boolean>('page.stopFinding', { clear: true }),
+  zoomIn: () => commands.execute<boolean>('page.zoomIn'),
+  zoomOut: () => commands.execute<boolean>('page.zoomOut'),
+  zoomReset: () => commands.execute<boolean>('page.zoomReset'),
+  print: () => commands.execute<boolean>('page.print'),
+  viewSource: () => commands.execute<boolean>('page.viewSource'),
 };
