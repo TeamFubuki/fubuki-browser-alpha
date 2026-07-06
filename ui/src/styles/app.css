@@ -1,8 +1,8 @@
-@import "tailwindcss";
-@import "./tokens.css";
-@import "./shell.css";
-@import "./sidebar.css";
-@import "./tabs.css";
-@import "./topbar.css";
-@import "./internal-pages.css";
-@import "./command-palette.css";
+@import 'tailwindcss';
+@import './tokens.css';
+@import './shell.css';
+@import './sidebar.css';
+@import './tabs.css';
+@import './topbar.css';
+@import './internal-pages.css';
+@import './command-palette.css';

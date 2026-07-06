@@ -1,6 +1,9 @@
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Hiragino Sans',
+    'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Helvetica Neue', Arial,
+    sans-serif;
   --sidebar-width: 196px;
   --topbar-height: 40px;
   --tab-height: 32px;
@@ -23,7 +26,7 @@
   text-rendering: optimizeLegibility;
 }
 
-:root[data-theme="dark"] {
+:root[data-theme='dark'] {
   color-scheme: dark;
   --bg: #17191d;
   --sidebar-bg: #202329;

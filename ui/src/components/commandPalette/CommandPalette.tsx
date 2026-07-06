@@ -6,16 +6,16 @@ import {
   onCleanup,
   onMount,
   Show,
-} from "solid-js";
-import { commands, page, tabs, type BrowserCommand } from "../../bridge/fubuki";
-import { t } from "../../i18n";
+} from 'solid-js';
+import { commands, page, tabs, type BrowserCommand } from '../../bridge/fubuki';
+import { t } from '../../i18n';
 import {
   activeTabId,
   browserState,
   currentLanguage,
   refreshState,
-} from "../../stores/browserStore";
-import { filterCommands, type PaletteCommand } from "./commands";
+} from '../../stores/browserStore';
+import { filterCommands, type PaletteCommand } from './commands';
 
 type Props = {
   open: boolean;
@@ -25,50 +25,50 @@ type Props = {
 };
 
 const allowedCommandIds = new Set([
-  "tabs.create",
-  "tabs.close",
-  "tabs.reopenClosed",
-  "app.openSettings",
-  "app.openHistory",
-  "app.openBookmarks",
-  "app.openDownloads",
-  "app.toggleSidebar",
-  "page.zoomReset",
-  "app.openDebug",
-  "app.openDevTools",
+  'tabs.create',
+  'tabs.close',
+  'tabs.reopenClosed',
+  'app.openSettings',
+  'app.openHistory',
+  'app.openBookmarks',
+  'app.openDownloads',
+  'app.toggleSidebar',
+  'page.zoomReset',
+  'app.openDebug',
+  'app.openDevTools',
 ]);
 
 function localizeCommand(command: BrowserCommand, lang: string) {
   switch (command.id) {
-    case "tabs.create":
-      return t("common.newTab", lang);
-    case "tabs.close":
-      return t("action.closeTab", lang);
-    case "tabs.reopenClosed":
-      return lang === "ja" ? "閉じたタブを再度開く" : command.title;
-    case "app.openSettings":
-      return t("common.settings", lang);
-    case "app.openHistory":
-      return t("common.history", lang);
-    case "app.openBookmarks":
-      return t("common.bookmarks", lang);
-    case "app.openDownloads":
-      return t("common.downloads", lang);
-    case "app.toggleSidebar":
-      return t("common.toggleSidebar", lang);
-    case "page.zoomReset":
-      return lang === "ja" ? "表示倍率をリセット" : command.title;
-    case "app.openDebug":
-      return t("common.debug", lang);
-    case "app.openDevTools":
-      return lang === "ja" ? "DevToolsを開く" : command.title;
+    case 'tabs.create':
+      return t('common.newTab', lang);
+    case 'tabs.close':
+      return t('action.closeTab', lang);
+    case 'tabs.reopenClosed':
+      return lang === 'ja' ? '閉じたタブを再度開く' : command.title;
+    case 'app.openSettings':
+      return t('common.settings', lang);
+    case 'app.openHistory':
+      return t('common.history', lang);
+    case 'app.openBookmarks':
+      return t('common.bookmarks', lang);
+    case 'app.openDownloads':
+      return t('common.downloads', lang);
+    case 'app.toggleSidebar':
+      return t('common.toggleSidebar', lang);
+    case 'page.zoomReset':
+      return lang === 'ja' ? '表示倍率をリセット' : command.title;
+    case 'app.openDebug':
+      return t('common.debug', lang);
+    case 'app.openDevTools':
+      return lang === 'ja' ? 'DevToolsを開く' : command.title;
     default:
       return command.title;
   }
 }
 
 export default function CommandPalette(props: Props) {
-  const [query, setQuery] = createSignal("");
+  const [query, setQuery] = createSignal('');
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   let inputRef: HTMLInputElement | undefined;
 
@@ -79,14 +79,14 @@ export default function CommandPalette(props: Props) {
       .map((command) => ({
         ...command,
         title: localizeCommand(command, lang),
-        keywords: command.id.replaceAll(".", " "),
+        keywords: command.id.replaceAll('.', ' '),
         run: async () => {
-          if (command.id === "tabs.close") {
+          if (command.id === 'tabs.close') {
             const id = activeTabId();
             if (id) await tabs.close(id);
             return;
           }
-          if (command.id === "page.zoomReset") {
+          if (command.id === 'page.zoomReset') {
             await page.zoomReset();
             return;
           }
@@ -97,11 +97,11 @@ export default function CommandPalette(props: Props) {
 
     return [
       {
-        id: "ui.toggleQuietMode",
-        title: `${t("commandPalette.toggleQuietMode", lang)}${props.quietMode ? " ✓" : ""}`,
-        category: "UI",
-        shortcut: "",
-        keywords: "quiet focus minimal zen",
+        id: 'ui.toggleQuietMode',
+        title: `${t('commandPalette.toggleQuietMode', lang)}${props.quietMode ? ' ✓' : ''}`,
+        category: 'UI',
+        shortcut: '',
+        keywords: 'quiet focus minimal zen',
         run: props.onToggleQuietMode,
       },
       ...native,
@@ -112,7 +112,7 @@ export default function CommandPalette(props: Props) {
 
   createEffect(() => {
     if (props.open) {
-      setQuery("");
+      setQuery('');
       setSelectedIndex(0);
       queueMicrotask(() => inputRef?.focus());
     }
@@ -133,30 +133,30 @@ export default function CommandPalette(props: Props) {
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (!props.open) return;
-    if (event.key === "Escape") {
+    if (event.key === 'Escape') {
       event.preventDefault();
       props.onClose();
       return;
     }
-    if (event.key === "ArrowDown") {
+    if (event.key === 'ArrowDown') {
       event.preventDefault();
       setSelectedIndex((index) => Math.min(index + 1, filtered().length - 1));
       return;
     }
-    if (event.key === "ArrowUp") {
+    if (event.key === 'ArrowUp') {
       event.preventDefault();
       setSelectedIndex((index) => Math.max(index - 1, 0));
       return;
     }
-    if (event.key === "Enter") {
+    if (event.key === 'Enter') {
       event.preventDefault();
       void runSelected();
     }
   };
 
   onMount(() => {
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+    window.addEventListener('keydown', onKeyDown);
+    onCleanup(() => window.removeEventListener('keydown', onKeyDown));
   });
 
   return (
@@ -166,15 +166,15 @@ export default function CommandPalette(props: Props) {
           class="command-palette"
           role="dialog"
           aria-modal="true"
-          aria-label={t("commandPalette.title", currentLanguage())}
+          aria-label={t('commandPalette.title', currentLanguage())}
           onMouseDown={(event) => event.stopPropagation()}
         >
           <input
             ref={inputRef}
             class="command-palette-input"
             value={query()}
-            placeholder={t("commandPalette.placeholder", currentLanguage())}
-            aria-label={t("commandPalette.placeholder", currentLanguage())}
+            placeholder={t('commandPalette.placeholder', currentLanguage())}
+            aria-label={t('commandPalette.placeholder', currentLanguage())}
             autocomplete="off"
             onInput={(event) => {
               setQuery(event.currentTarget.value);
@@ -186,7 +186,7 @@ export default function CommandPalette(props: Props) {
               when={filtered().length > 0}
               fallback={
                 <p class="command-palette-empty">
-                  {t("commandPalette.empty", currentLanguage())}
+                  {t('commandPalette.empty', currentLanguage())}
                 </p>
               }
             >
@@ -194,7 +194,7 @@ export default function CommandPalette(props: Props) {
                 {(command, index) => (
                   <button
                     classList={{
-                      "command-palette-row": true,
+                      'command-palette-row': true,
                       selected: index() === selectedIndex(),
                     }}
                     role="option"

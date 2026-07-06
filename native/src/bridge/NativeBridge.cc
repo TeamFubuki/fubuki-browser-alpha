@@ -23,13 +23,14 @@ CefRefPtr<CefListValue> CopyListOrEmpty(CefRefPtr<CefListValue> value) {
   return value ? value->Copy() : CefListValue::Create();
 }
 
-CefRefPtr<CefDictionaryValue> CopyDictionaryOrEmpty(CefRefPtr<CefDictionaryValue> value) {
+CefRefPtr<CefDictionaryValue>
+CopyDictionaryOrEmpty(CefRefPtr<CefDictionaryValue> value) {
   return value ? value->Copy(false) : CefDictionaryValue::Create();
 }
 
 }  // namespace
 
-NativeBridge::NativeBridge(BrowserWindow& window) : window_(window) {
+NativeBridge::NativeBridge(BrowserWindow &window) : window_(window) {
   RegisterMethods();
 }
 
@@ -39,7 +40,8 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const std::string url = params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
+    const std::string url =
+        params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
     const bool active = !params->HasKey("active") || params->GetBool("active");
     return BoolValue(window_.CreateTab(url, active));
   };
@@ -53,7 +55,9 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.PinTab(params->GetString("tabId"), params->HasKey("pinned") && params->GetBool("pinned")));
+    return BoolValue(
+        window_.PinTab(params->GetString("tabId"),
+                       params->HasKey("pinned") && params->GetBool("pinned")));
   };
 
   methods_["tabs.duplicate"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -73,15 +77,18 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.move"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.MoveTab(params->GetString("tabId"), params->GetInt("toIndex")));
+    return BoolValue(
+        window_.MoveTab(params->GetString("tabId"), params->GetInt("toIndex")));
   };
 
-  methods_["tabs.moveToNewWindow"] = [this](CefRefPtr<CefDictionaryValue> params) {
+  methods_["tabs.moveToNewWindow"] = [this](
+                                         CefRefPtr<CefDictionaryValue> params) {
     return BoolValue(window_.MoveTabToNewWindow(params->GetString("tabId")));
   };
 
   methods_["tabs.navigate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.Navigate(params->GetString("tabId"), params->GetString("input")));
+    return BoolValue(window_.Navigate(params->GetString("tabId"),
+                                      params->GetString("input")));
   };
 
   methods_["tabs.reload"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -121,11 +128,14 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["page.find"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.FindInPage(params->GetString("query"), !params->HasKey("forward") || params->GetBool("forward")));
+    return BoolValue(window_.FindInPage(params->GetString("query"),
+                                        !params->HasKey("forward") ||
+                                            params->GetBool("forward")));
   };
 
   methods_["page.stopFinding"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.StopFinding(!params->HasKey("clear") || params->GetBool("clear")));
+    return BoolValue(window_.StopFinding(!params->HasKey("clear") ||
+                                         params->GetBool("clear")));
   };
 
   methods_["page.zoomIn"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -153,7 +163,9 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.save"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.SaveBookmark(params->GetString("title"), params->GetString("url"), params->GetString("faviconUrl")));
+    return BoolValue(window_.SaveBookmark(params->GetString("title"),
+                                          params->GetString("url"),
+                                          params->GetString("faviconUrl")));
   };
 
   methods_["bookmarks.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -164,12 +176,14 @@ void NativeBridge::RegisterMethods() {
     return BoolValue(window_.RemoveHistory(params->GetString("url")));
   };
 
-  methods_["history.clearRange"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.ClearHistoryRange(params->GetString("range")));
-  };
+  methods_["history.clearRange"] =
+      [this](CefRefPtr<CefDictionaryValue> params) {
+        return BoolValue(window_.ClearHistoryRange(params->GetString("range")));
+      };
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.RemoveDownload(params->GetString("url"), params->GetString("path")));
+    return BoolValue(window_.RemoveDownload(params->GetString("url"),
+                                            params->GetString("path")));
   };
 
   methods_["downloads.open"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -185,25 +199,34 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["settings.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.SetSetting(params->GetString("key"), params->GetString("value")));
+    return BoolValue(window_.SetSetting(params->GetString("key"),
+                                        params->GetString("value")));
   };
 
   methods_["settings.reset"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return BoolValue(window_.ResetSetting(params->GetString("key")));
   };
 
-  methods_["ui.setSidebarWidth"] = [this](CefRefPtr<CefDictionaryValue> params) {
+  methods_["ui.setSidebarWidth"] = [this](
+                                       CefRefPtr<CefDictionaryValue> params) {
     return BoolValue(window_.SetLiveSidebarWidth(params->GetDouble("width")));
   };
 
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return BoolValue(window_.SetPermission(params->GetString("origin"), params->GetString("permission"), params->GetString("value")));
+    return BoolValue(window_.SetPermission(params->GetString("origin"),
+                                           params->GetString("permission"),
+                                           params->GetString("value")));
   };
 
-  methods_["ui.setOverlayActive"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const double overlayWidth = params->HasKey("width") ? params->GetDouble("width") : 392.0;
-    const double overlayHeight = params->HasKey("height") ? params->GetDouble("height") : 560.0;
-    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") && params->GetBool("active"), overlayWidth, overlayHeight));
+  methods_["ui.setOverlayActive"] = [this](
+                                        CefRefPtr<CefDictionaryValue> params) {
+    const double overlayWidth =
+        params->HasKey("width") ? params->GetDouble("width") : 392.0;
+    const double overlayHeight =
+        params->HasKey("height") ? params->GetDouble("height") : 560.0;
+    return BoolValue(window_.SetUiOverlayActive(params->HasKey("active") &&
+                                                    params->GetBool("active"),
+                                                overlayWidth, overlayHeight));
   };
 
   methods_["app.openDevTools"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -226,11 +249,8 @@ void NativeBridge::RegisterMethods() {
   };
 }
 
-bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>,
-                           CefRefPtr<CefFrame> frame,
-                           int64_t,
-                           const CefString& request,
-                           bool,
+bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                           int64_t, const CefString &request, bool,
                            CefRefPtr<Callback> callback) {
   CEF_REQUIRE_UI_THREAD();
   if (!IsAllowedUiFrame(frame)) {
@@ -261,9 +281,11 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>,
   return true;
 }
 
-void NativeBridge::OnQueryCanceled(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int64_t) {}
+void NativeBridge::OnQueryCanceled(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                   int64_t) {}
 
-CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<CefDictionaryValue> params) {
+CefRefPtr<CefValue> NativeBridge::Invoke(const std::string &method,
+                                         CefRefPtr<CefDictionaryValue> params) {
   auto it = methods_.find(method);
   if (it != methods_.end()) {
     return it->second(params);
@@ -272,7 +294,8 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string& method, CefRefPtr<Ce
   return ErrorValue("Unknown bridge method: " + method);
 }
 
-void NativeBridge::EmitToUi(const std::string& eventName, CefRefPtr<CefDictionaryValue> payload) {
+void NativeBridge::EmitToUi(const std::string &eventName,
+                            CefRefPtr<CefDictionaryValue> payload) {
   CEF_REQUIRE_UI_THREAD();
   auto event = CefDictionaryValue::Create();
   event->SetString("name", eventName);
@@ -280,7 +303,9 @@ void NativeBridge::EmitToUi(const std::string& eventName, CefRefPtr<CefDictionar
   auto value = CefValue::Create();
   value->SetDictionary(event);
 
-  const std::string script = "window.dispatchEvent(new CustomEvent('fubuki:event', { detail: " + WriteValue(value) + " }));";
+  const std::string script =
+      "window.dispatchEvent(new CustomEvent('fubuki:event', { detail: " +
+      WriteValue(value) + " }));";
   if (auto ui = window_.UiBrowser()) {
     ui->GetMainFrame()->ExecuteJavaScript(script, "fubuki://app/", 0);
   }
@@ -290,7 +315,7 @@ std::string NativeBridge::GetStateJson() const {
   return WriteValue(StateValue());
 }
 
-CefRefPtr<CefValue> NativeBridge::ErrorValue(const std::string& message) const {
+CefRefPtr<CefValue> NativeBridge::ErrorValue(const std::string &message) const {
   auto dict = CefDictionaryValue::Create();
   dict->SetBool("ok", false);
   dict->SetString("error", message);
@@ -299,7 +324,8 @@ CefRefPtr<CefValue> NativeBridge::ErrorValue(const std::string& message) const {
   return value;
 }
 
-CefRefPtr<CefDictionaryValue> NativeBridge::TabToDictionary(const Tab& tab) const {
+CefRefPtr<CefDictionaryValue>
+NativeBridge::TabToDictionary(const Tab &tab) const {
   auto dict = CefDictionaryValue::Create();
   dict->SetString("id", tab.id);
   dict->SetString("title", tab.title);
@@ -351,7 +377,8 @@ CefRefPtr<CefValue> NativeBridge::StateValue() const {
   state->SetList("logs", CopyListOrEmpty(window_.Store().Logs()));
   state->SetList("commands", window_.Commands().List());
   state->SetList("recentEvents", events);
-  state->SetDictionary("settings", CopyDictionaryOrEmpty(window_.Store().Settings()));
+  state->SetDictionary("settings",
+                       CopyDictionaryOrEmpty(window_.Store().Settings()));
   auto value = CefValue::Create();
   value->SetDictionary(state);
   return value;

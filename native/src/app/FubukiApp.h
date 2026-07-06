@@ -2,6 +2,6 @@
 
 namespace fubuki {
 
-int RunFubukiApplication(int argc, char* argv[]);
+int RunFubukiApplication(int argc, char *argv[]);
 
 }  // namespace fubuki

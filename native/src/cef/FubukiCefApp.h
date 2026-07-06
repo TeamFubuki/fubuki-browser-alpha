@@ -13,13 +13,18 @@ namespace fubuki {
 class FubukiCefApp : public CefApp,
                      public CefBrowserProcessHandler,
                      public CefRenderProcessHandler {
- public:
+public:
   explicit FubukiCefApp(std::string uiDistPath);
 
-  CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
-  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+  CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
+    return this;
+  }
+  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
+    return this;
+  }
 
-  void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+  void
+  OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
   void OnContextInitialized() override;
   void OnWebKitInitialized() override;
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
@@ -33,7 +38,7 @@ class FubukiCefApp : public CefApp,
                                 CefProcessId source_process,
                                 CefRefPtr<CefProcessMessage> message) override;
 
- private:
+private:
   std::string uiDistPath_;
   CefRefPtr<CefMessageRouterRendererSide> rendererRouter_;
   std::unique_ptr<BrowserAppController> browserApp_;

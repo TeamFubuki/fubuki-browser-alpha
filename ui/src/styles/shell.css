@@ -5,8 +5,8 @@
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-rows: var(--topbar-height) minmax(0, 1fr);
   grid-template-areas:
-    "sidebar topbar"
-    "sidebar content";
+    'sidebar topbar'
+    'sidebar content';
   overflow: hidden;
   background: var(--bg);
   pointer-events: none;
@@ -17,11 +17,11 @@
   grid-template-rows: 0 minmax(0, 1fr);
 }
 
-:root[data-sidebar-resizing="true"] .browser-shell {
+:root[data-sidebar-resizing='true'] .browser-shell {
   transition: none;
 }
 
-:root[data-sidebar="hide"] .browser-shell {
+:root[data-sidebar='hide'] .browser-shell {
   grid-template-columns: 0 minmax(0, 1fr);
 }
 

@@ -1,19 +1,19 @@
-import { createEffect, createSignal } from "solid-js";
-import { tabs } from "../bridge/fubuki";
-import { t } from "../i18n";
-import { browserState } from "../stores/browserStore";
-import { normalizeOmniboxInput } from "../utils/navigation";
+import { createEffect, createSignal } from 'solid-js';
+import { tabs } from '../bridge/fubuki';
+import { t } from '../i18n';
+import { browserState } from '../stores/browserStore';
+import { normalizeOmniboxInput } from '../utils/navigation';
 
 export default function Omnibox() {
-  const [draft, setDraft] = createSignal("");
+  const [draft, setDraft] = createSignal('');
   const [focused, setFocused] = createSignal(false);
   const [isComposing, setIsComposing] = createSignal(false);
-  let lastSyncedTabId = "";
+  let lastSyncedTabId = '';
 
   createEffect(() => {
     const tabId = browserState.activeTabId;
     const tab = browserState.tabs.find((t) => t.id === tabId);
-    const url = tab?.url ?? "";
+    const url = tab?.url ?? '';
 
     if (!focused() || tabId !== lastSyncedTabId) {
       setDraft(url);
@@ -23,7 +23,9 @@ export default function Omnibox() {
 
   const submit = () => {
     if (isComposing()) return;
-    const tab = browserState.tabs.find((item) => item.id === browserState.activeTabId);
+    const tab = browserState.tabs.find(
+      (item) => item.id === browserState.activeTabId,
+    );
     const input = normalizeOmniboxInput(draft()).value;
     if (!tab || !input) return;
     void tabs.navigate(tab.id, input);
@@ -44,8 +46,14 @@ export default function Omnibox() {
         ref={inputRef}
         class="omnibox-input"
         value={draft()}
-        placeholder={t("common.searchOrEnterUrl", browserState.settings.language)}
-        aria-label={t("common.searchOrEnterUrl", browserState.settings.language)}
+        placeholder={t(
+          'common.searchOrEnterUrl',
+          browserState.settings.language,
+        )}
+        aria-label={t(
+          'common.searchOrEnterUrl',
+          browserState.settings.language,
+        )}
         autocomplete="off"
         autocapitalize="off"
         spellcheck={false}
@@ -61,7 +69,7 @@ export default function Omnibox() {
           setDraft(event.currentTarget.value);
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.isComposing || isComposing())) {
+          if (event.key === 'Enter' && (event.isComposing || isComposing())) {
             event.preventDefault();
           }
         }}

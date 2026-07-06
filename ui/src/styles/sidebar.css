@@ -12,14 +12,16 @@
   background: var(--sidebar-bg);
   border-right: 1px solid var(--line);
   pointer-events: auto;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease;
 }
 
 .sidebar.resizing {
   user-select: none;
 }
 
-:root[data-sidebar="hide"] .sidebar {
+:root[data-sidebar='hide'] .sidebar {
   display: none;
 }
 
@@ -36,7 +38,11 @@
   background: transparent;
   color: var(--text);
   font-size: 16px;
-  transition: background-color 0.14s ease, color 0.14s ease, transform 0.14s ease, opacity 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease,
+    opacity 0.14s ease;
 }
 
 .new-tab-button:hover,
@@ -82,7 +88,7 @@
 }
 
 .sidebar-resize-handle::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 8px;
   right: 2px;

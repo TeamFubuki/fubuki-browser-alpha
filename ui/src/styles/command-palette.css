@@ -79,7 +79,11 @@
 .command-palette kbd {
   min-width: 0;
   color: var(--muted);
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
 }
 
 .command-palette-empty {

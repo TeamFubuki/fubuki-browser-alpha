@@ -17,23 +17,26 @@ void EventBus::Unsubscribe(EventType type, int token) {
   }
 }
 
-void EventBus::Publish(const Event& event) {
+void EventBus::Publish(const Event &event) {
   std::vector<Listener> listeners;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     recentEvents_.push_back(event);
     if (recentEvents_.size() > 200) {
-      recentEvents_.erase(recentEvents_.begin(), recentEvents_.begin() + static_cast<std::ptrdiff_t>(recentEvents_.size() - 200));
+      recentEvents_.erase(
+          recentEvents_.begin(),
+          recentEvents_.begin() +
+              static_cast<std::ptrdiff_t>(recentEvents_.size() - 200));
     }
     auto it = listeners_.find(event.type);
     if (it != listeners_.end()) {
-      for (const auto& [_, listener] : it->second) {
+      for (const auto &[_, listener] : it->second) {
         listeners.push_back(listener);
       }
     }
   }
 
-  for (const auto& listener : listeners) {
+  for (const auto &listener : listeners) {
     listener(event);
   }
 }
