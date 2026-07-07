@@ -16,6 +16,8 @@ target/
 # UI build artifacts
 ui/dist/
 ui/node_modules/
+ui/.vite/
+ui/.solid/
 
 # Dependencies and caches
 third_party/cef/
@@ -42,6 +44,8 @@ yarn-error.log*
 
 # Test coverage
 coverage/
+*.lcov
 
 # OS files
 Thumbs.db
+*.dSYM
