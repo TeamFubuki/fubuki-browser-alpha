@@ -19,15 +19,29 @@ is `off`, and disabling the setting stops the external operation path.
 
 ## Settings
 
-Open `fubuki://settings/` and use `AI Integration / MCP`.
+Open `fubuki://settings/` and use `MCP`.
 
 - `automation.mcp.enabled`: starts or stops the local automation IPC server.
 - `automation.mcp.confirmSensitive`: reserved for confirmation UI before
   destructive or sensitive operations.
+- `automation.mcp.serverTemplate`: the selected settings template. Supported
+  values are `fubuki`, `stdio`, `sse`, and `custom`.
+- `automation.mcp.serverCommand`: the command shown in generated MCP client
+  configuration. The default is `target/debug/fubuki-mcp-server`.
+- `automation.mcp.serverArgs`: optional arguments for the generated MCP client
+  configuration, stored as a JSON string array.
+- `automation.mcp.clientName`: the server name used in generated MCP client
+  configuration. The default is `fubuki`.
+- `automation.mcp.enabledTools`: JSON string array of tools published to
+  external MCP clients.
 
-The settings page marks this section with an `Experimental` badge.
+The MCP server is a local stdio MCP server. It is not an HTTP endpoint and does
+not use an API key.
 
 ## Exposed Tools
+
+The settings UI can disable individual tools through
+`automation.mcp.enabledTools`.
 
 - `browser.snapshot`
 - `tabs.list`
@@ -85,5 +99,18 @@ Configure an MCP client to run:
 target/debug/fubuki-mcp-server
 ```
 
-Fubuki must be running and `AI Integration / MCP` must be enabled before tools
-can reach the browser.
+Example client configuration:
+
+```json
+{
+  "mcpServers": {
+    "fubuki": {
+      "command": "target/debug/fubuki-mcp-server",
+      "args": []
+    }
+  }
+}
+```
+
+Fubuki must be running and `MCP` must be enabled before tools can reach the
+browser.

@@ -314,6 +314,43 @@ void NativeBridge::RegisterMethods() {
     });
   };
 
+  methods_["mcp.testConnection"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto result = CefDictionaryValue::Create();
+    const bool enabled = window_.App().Automation().Enabled();
+    result->SetBool("ok", enabled);
+    result->SetString("status", enabled ? "running" : "disabled");
+    result->SetString(
+        "message",
+        enabled ? "Automation IPC is running" : "MCP automation is disabled");
+    auto value = CefValue::Create();
+    value->SetDictionary(result);
+    return value;
+  };
+
+  methods_["mcp.listServers"] = [](CefRefPtr<CefDictionaryValue>) {
+    auto list = CefListValue::Create();
+    const struct {
+      const char *id;
+      const char *name;
+      const char *transport;
+    } servers[] = {
+        {"fubuki", "Fubuki stdio", "stdio"},
+        {"stdio", "Generic stdio", "stdio"},
+        {"sse", "Server-Sent Events", "sse"},
+        {"custom", "Custom", "custom"},
+    };
+    for (size_t i = 0; i < sizeof(servers) / sizeof(servers[0]); ++i) {
+      auto item = CefDictionaryValue::Create();
+      item->SetString("id", servers[i].id);
+      item->SetString("name", servers[i].name);
+      item->SetString("transport", servers[i].transport);
+      list->SetDictionary(i, item);
+    }
+    auto value = CefValue::Create();
+    value->SetList(list);
+    return value;
+  };
+
   methods_["ui.setSidebarWidth"] = [this](
                                        CefRefPtr<CefDictionaryValue> params) {
     return HostBackedFrostInvoke("ui.setSidebarWidth", params, [this, params] {

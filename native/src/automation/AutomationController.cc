@@ -1,6 +1,8 @@
 #include "automation/AutomationController.h"
 
+#include <algorithm>
 #include <future>
+#include <vector>
 
 #include "automation/AutomationIpcServer.h"
 #include "automation/BrowserAutomation.h"
@@ -43,6 +45,31 @@ CefRefPtr<CefDictionaryValue> Params(CefRefPtr<CefDictionaryValue> request) {
                  request->GetType("params") == VTYPE_DICTIONARY
              ? request->GetDictionary("params")
              : CefDictionaryValue::Create();
+}
+
+std::vector<std::string> EnabledTools(BrowserAppController &app) {
+  const std::string value =
+      app.Store().Settings()->GetString("automation.mcp.enabledTools");
+  if (value.empty()) {
+    return {};
+  }
+  auto parsed = CefParseJSON(value, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_LIST) {
+    return {};
+  }
+  std::vector<std::string> tools;
+  auto list = parsed->GetList();
+  for (size_t i = 0; i < list->GetSize(); ++i) {
+    if (list->GetType(i) == VTYPE_STRING) {
+      tools.push_back(list->GetString(i));
+    }
+  }
+  return tools;
+}
+
+bool ContainsTool(const std::vector<std::string> &tools,
+                  const std::string &method) {
+  return std::find(tools.begin(), tools.end(), method) != tools.end();
 }
 
 }  // namespace
@@ -137,6 +164,15 @@ CefRefPtr<CefDictionaryValue> AutomationController::Dispatch(
     Audit(method, "blocked:private_window");
     return Error("private_window", "Automation is disabled in Private Window");
   }
+  if (method == "page.evaluate" || method == "cdp.send") {
+    Audit(method, "blocked:forbidden_api");
+    return Error("forbidden_api", "Raw JavaScript and raw CDP are not exposed");
+  }
+  const auto enabledTools = EnabledTools(app_);
+  if (!enabledTools.empty() && !ContainsTool(enabledTools, method)) {
+    Audit(method, "blocked:tool_disabled");
+    return Error("tool_disabled", "MCP tool is not published: " + method);
+  }
 
   BrowserAutomation browser(app_);
   PageAutomation page(app_);
@@ -185,9 +221,6 @@ CefRefPtr<CefDictionaryValue> AutomationController::Dispatch(
     result = browser.ListHistory();
   } else if (method == "downloads.list") {
     result = browser.ListDownloads();
-  } else if (method == "page.evaluate" || method == "cdp.send") {
-    Audit(method, "blocked:forbidden_api");
-    return Error("forbidden_api", "Raw JavaScript and raw CDP are not exposed");
   } else {
     return Error("unknown_method", "Unknown automation method: " + method);
   }

@@ -10,11 +10,7 @@
   padding: 7px;
   padding-top: 9px;
   background: var(--sidebar-bg);
-  border-right: 1px solid var(--line);
   pointer-events: auto;
-  transition:
-    background-color 0.16s ease,
-    border-color 0.16s ease;
 }
 
 .sidebar.resizing {
@@ -39,11 +35,6 @@
   background: transparent;
   color: var(--text);
   font-size: 16px;
-  transition:
-    background-color 0.14s ease,
-    color 0.14s ease,
-    transform 0.14s ease,
-    opacity 0.14s ease;
 }
 
 .new-tab-button:hover,
@@ -69,7 +60,6 @@
   justify-content: space-between;
   gap: 5px;
   padding-top: 7px;
-  border-top: 1px solid var(--line);
   align-self: end;
   contain: layout style;
 }
@@ -100,5 +90,5 @@
 
 .sidebar-resize-handle:hover::after,
 .sidebar.resizing .sidebar-resize-handle::after {
-  background: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
 }

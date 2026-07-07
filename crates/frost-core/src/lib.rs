@@ -591,6 +591,13 @@ where
             "homeUrl",
             "language",
             "defaultZoomLevel",
+            "automation.mcp.enabled",
+            "automation.mcp.confirmSensitive",
+            "automation.mcp.serverTemplate",
+            "automation.mcp.serverCommand",
+            "automation.mcp.serverArgs",
+            "automation.mcp.clientName",
+            "automation.mcp.enabledTools",
         ];
         let mut map = serde_json::Map::new();
         for key in keys {
@@ -639,6 +646,13 @@ fn default_setting(key: &str) -> &'static str {
         "newTabPage" => "blank",
         "language" => "system",
         "defaultZoomLevel" => "0",
+        "automation.mcp.enabled" => "off",
+        "automation.mcp.confirmSensitive" => "on",
+        "automation.mcp.serverTemplate" => "fubuki",
+        "automation.mcp.serverCommand" => "target/debug/fubuki-mcp-server",
+        "automation.mcp.serverArgs" => "",
+        "automation.mcp.clientName" => "fubuki",
+        "automation.mcp.enabledTools" => "[\"browser.snapshot\",\"tabs.list\",\"tabs.create\",\"tabs.navigate\",\"tabs.activate\",\"tabs.close\",\"tabs.reload\",\"tabs.goBack\",\"tabs.goForward\",\"page.getText\",\"page.getHtml\",\"page.click\",\"page.type\",\"page.press\",\"page.scroll\",\"page.find\",\"bookmarks.list\",\"history.list\",\"downloads.list\"]",
         _ => "",
     }
 }

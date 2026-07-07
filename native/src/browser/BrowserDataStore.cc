@@ -80,6 +80,13 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("newTabBackgroundUrl", "");
   EnsureDefaultSetting("automation.mcp.enabled", "off");
   EnsureDefaultSetting("automation.mcp.confirmSensitive", "on");
+  EnsureDefaultSetting("automation.mcp.serverTemplate", "fubuki");
+  EnsureDefaultSetting("automation.mcp.serverCommand", "target/debug/fubuki-mcp-server");
+  EnsureDefaultSetting("automation.mcp.serverArgs", "");
+  EnsureDefaultSetting("automation.mcp.clientName", "fubuki");
+  EnsureDefaultSetting(
+      "automation.mcp.enabledTools",
+      "[\"browser.snapshot\",\"tabs.list\",\"tabs.create\",\"tabs.navigate\",\"tabs.activate\",\"tabs.close\",\"tabs.reload\",\"tabs.goBack\",\"tabs.goForward\",\"page.getText\",\"page.getHtml\",\"page.click\",\"page.type\",\"page.press\",\"page.scroll\",\"page.find\",\"bookmarks.list\",\"history.list\",\"downloads.list\"]");
   RefreshCaches();
 }
 
@@ -517,6 +524,16 @@ std::string BrowserDataStore::DefaultSetting(const std::string &key) const {
     return "off";
   if (key == "automation.mcp.confirmSensitive")
     return "on";
+  if (key == "automation.mcp.serverTemplate")
+    return "fubuki";
+  if (key == "automation.mcp.serverCommand")
+    return "target/debug/fubuki-mcp-server";
+  if (key == "automation.mcp.serverArgs")
+    return "";
+  if (key == "automation.mcp.clientName")
+    return "fubuki";
+  if (key == "automation.mcp.enabledTools")
+    return "[\"browser.snapshot\",\"tabs.list\",\"tabs.create\",\"tabs.navigate\",\"tabs.activate\",\"tabs.close\",\"tabs.reload\",\"tabs.goBack\",\"tabs.goForward\",\"page.getText\",\"page.getHtml\",\"page.click\",\"page.type\",\"page.press\",\"page.scroll\",\"page.find\",\"bookmarks.list\",\"history.list\",\"downloads.list\"]";
   return "";
 }
 

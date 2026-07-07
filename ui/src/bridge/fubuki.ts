@@ -43,7 +43,7 @@ export type FrostAppState = {
   bookmarks?: BookmarkRecord[];
   downloads?: DownloadRecord[];
   permissions?: PermissionRecord[];
-  settings?: Partial<Settings>;
+  settings?: Record<string, unknown>;
 };
 
 export type TabSnapshot = {
@@ -122,6 +122,25 @@ export type Settings = {
   homeUrl: string;
   language: string;
   defaultZoomLevel: string;
+  'automation.mcp.enabled': 'on' | 'off';
+  'automation.mcp.confirmSensitive': 'on' | 'off';
+  'automation.mcp.serverTemplate': 'fubuki' | 'stdio' | 'sse' | 'custom';
+  'automation.mcp.serverCommand': string;
+  'automation.mcp.serverArgs': string;
+  'automation.mcp.clientName': string;
+  'automation.mcp.enabledTools': string[];
+};
+
+export type McpConnectionTestResult = {
+  ok: boolean;
+  status: 'running' | 'disabled' | 'unavailable';
+  message: string;
+};
+
+export type McpServerDescriptor = {
+  id: 'fubuki' | 'stdio' | 'sse' | 'custom';
+  name: string;
+  transport: 'stdio' | 'sse' | 'websocket' | 'custom';
 };
 
 export type BrowserState = {
@@ -248,6 +267,14 @@ export type BridgeMethodMap = {
   'settings.get': { params: { key: string }; result: string | null };
   'settings.set': { params: { key: string; value: string }; result: boolean };
   'settings.reset': { params: { key: string }; result: boolean };
+  'mcp.testConnection': {
+    params: Record<string, never>;
+    result: McpConnectionTestResult;
+  };
+  'mcp.listServers': {
+    params: Record<string, never>;
+    result: McpServerDescriptor[];
+  };
   'ui.setSidebarWidth': { params: { width: number }; result: boolean };
   'ui.setOverlayActive': {
     params: { active: boolean; width?: number; height?: number };
@@ -389,7 +416,64 @@ function defaultSettings(): Settings {
     homeUrl: 'https://example.com',
     language: 'system',
     defaultZoomLevel: '0',
+    'automation.mcp.enabled': 'off',
+    'automation.mcp.confirmSensitive': 'on',
+    'automation.mcp.serverTemplate': 'fubuki',
+    'automation.mcp.serverCommand': 'target/debug/fubuki-mcp-server',
+    'automation.mcp.serverArgs': '',
+    'automation.mcp.clientName': 'fubuki',
+    'automation.mcp.enabledTools': [
+      'browser.snapshot',
+      'tabs.list',
+      'tabs.create',
+      'tabs.navigate',
+      'tabs.activate',
+      'tabs.close',
+      'tabs.reload',
+      'tabs.goBack',
+      'tabs.goForward',
+      'page.getText',
+      'page.getHtml',
+      'page.click',
+      'page.type',
+      'page.press',
+      'page.scroll',
+      'page.find',
+      'bookmarks.list',
+      'history.list',
+      'downloads.list',
+    ],
   };
+}
+
+function normalizeSettings(settings?: Record<string, unknown>): Settings {
+  const defaults = defaultSettings();
+  const next: Settings = { ...defaults };
+  if (!settings) return next;
+
+  for (const [key, value] of Object.entries(settings)) {
+    if (key === 'automation.mcp.enabledTools') {
+      if (Array.isArray(value)) {
+        next[key] = value.filter((item): item is string => typeof item === 'string');
+      } else if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value) as unknown;
+          next[key] = Array.isArray(parsed)
+            ? parsed.filter((item): item is string => typeof item === 'string')
+            : value.split(',').map((item) => item.trim()).filter(Boolean);
+        } catch {
+          next[key] = value.split(',').map((item) => item.trim()).filter(Boolean);
+        }
+      }
+      continue;
+    }
+
+    if (key in defaults && typeof value === 'string') {
+      (next as Record<string, unknown>)[key] = value;
+    }
+  }
+
+  return next;
 }
 
 export function fromFrostTab(tab: FrostTabState): Tab {
@@ -468,7 +552,7 @@ export function normalizeAppState(
     logs: [],
     commands: [],
     recentEvents: [],
-    settings: { ...defaultSettings(), ...snapshot.settings },
+    settings: normalizeSettings(snapshot.settings),
     profilePath: '',
   };
 }

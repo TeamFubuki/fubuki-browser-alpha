@@ -221,6 +221,50 @@ static const std::unordered_map<std::string, std::string> kJaLabels = {
     {"Recent events", "最近のイベント"},
     {"Logs", "ログ"},
     {"Actions", "操作"},
+    {"MCP", "MCP"},
+    {"Status", "ステータス"},
+    {"MCP is enabled", "MCPは有効です"},
+    {"MCP is disabled", "MCPは無効です"},
+    {"Enable", "有効"},
+    {"Disable", "無効"},
+    {"Server Configuration", "サーバー設定"},
+    {"MCP server command and arguments", "MCPサーバーのコマンドと引数"},
+    {"Client Configuration", "クライアント設定"},
+    {"Add this to your MCP client config", "MCPクライアントの設定ファイルに追加してください"},
+    {"Available Tools", "利用可能なツール"},
+    {"Tools exposed to MCP clients", "MCPクライアントから利用可能なツール"},
+    {"Get browser state", "ブラウザの状態を取得"},
+    {"List all tabs", "すべてのタブを一覧"},
+    {"Create a new tab", "新しいタブを作成"},
+    {"Navigate a tab", "タブを移動"},
+    {"Focus a tab", "タブにフォーカス"},
+    {"Close a tab", "タブを閉じる"},
+    {"Reload a tab", "タブを再読み込み"},
+    {"Go back", "戻る"},
+    {"Go forward", "進む"},
+    {"Extract page text", "ページのテキストを抽出"},
+    {"Extract page HTML", "ページのHTMLを抽出"},
+    {"Click at coordinates", "座標をクリック"},
+    {"Type text", "テキストを入力"},
+    {"Press a key", "キーを押す"},
+    {"Scroll the page", "ページをスクロール"},
+    {"Find text", "テキストを検索"},
+    {"Read bookmarks", "ブックマークを読み取り"},
+    {"Read history", "履歴を読み取り"},
+    {"Read downloads", "ダウンロードを読み取り"},
+    {"Protocol Info", "プロトコル情報"},
+    {"Advanced Settings", "詳細設定"},
+    {"Open in Settings", "設定で開く"},
+    {"Connection Address", "接続アドレス"},
+    {"Address information for MCP clients", "MCPクライアント向けの接続情報"},
+    {"IPC Port", "IPCポート"},
+    {"Protocol", "プロトコル"},
+    {"Version", "バージョン"},
+    {"Transport", "トランスポート"},
+    {"Security", "セキュリティ"},
+    {"Confirmation for sensitive operations", "重要な操作時の確認"},
+    {"Require confirmation", "確認を必須にする"},
+    {"No confirmation", "確認不要"},
 };
 
 std::string Label(const std::string &key) {
@@ -308,7 +352,7 @@ std::string PageChrome(const std::string &title, const std::string &body) {
 html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}
 @media(prefers-color-scheme:dark){html[data-appearance=system] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}}
 @keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 25%,transparent)}100%{box-shadow:0 0 0 6px transparent}}
-main{width:min(1040px,calc(100vw - 48px));margin:0 auto;padding:34px 0 56px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px}h1{font-size:30px;line-height:1.08;margin:0;font-weight:720}h2{font-size:13px;margin:14px 0 5px;color:var(--muted);font-weight:680}a{color:inherit}.list{display:grid;gap:7px}.row{min-height:48px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);text-decoration:none;animation:rowIn .28s cubic-bezier(.2,.8,.2,1);transition:background .16s ease,border-color .16s ease,transform .16s ease}.row:hover{background:var(--hover);border-color:color-mix(in srgb,var(--line) 55%,var(--accent));transform:translateY(-1px)}.row>a{min-width:0;text-decoration:none}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#25a8d7,#6d7edc 58%,#f08072)}.favicon img{width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:640}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;line-height:1.45}.button,.chip{min-height:30px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}.button:hover,.chip:hover{background:var(--hover);transform:translateY(-1px)}.danger{color:var(--danger)}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:14px}.field{display:grid;gap:11px;padding:14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);animation:rowIn .28s cubic-bezier(.2,.8,.2,1);scroll-margin-top:18px}.field>span{font-weight:680}.badge{display:inline-grid;place-items:center;margin-left:6px;min-height:20px;border:1px solid #f59e0b;border-radius:7px;padding:0 7px;background:rgb(245 158 11/.12);color:#9a5a00;font-size:11px;font-weight:720}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));background:var(--active);color:var(--accent)}input{height:34px;min-width:220px;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);font:inherit;outline:0;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}input:focus{border-color:var(--accent);animation:focusPulse .5s ease}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}.settings-nav{position:sticky;top:20px;display:grid;gap:4px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow)}.settings-nav a{min-height:34px;display:flex;align-items:center;padding:0 10px;border-radius:6px;color:var(--muted);font-weight:640;text-decoration:none;transition:background .16s ease,color .16s ease,transform .16s ease}.settings-nav a:hover{background:var(--hover);color:var(--text);transform:translateX(2px)}.settings-content{display:grid;gap:14px}.settings-search{margin-bottom:0}.section-kicker{color:var(--muted);font-size:12px}.switch-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}@media(max-width:760px){main{width:min(100% - 28px,1040px);padding-top:24px}.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}input{min-width:0;width:100%}.row{grid-template-columns:20px minmax(0,1fr)}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+main{width:min(1040px,calc(100vw - 48px));margin:0 auto;padding:34px 0 56px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px}h1{font-size:30px;line-height:1.08;margin:0;font-weight:720}h2{font-size:13px;margin:14px 0 5px;color:var(--muted);font-weight:680}a{color:inherit}.list{display:grid;gap:7px}.row{min-height:48px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 10px;border-radius:7px;background:var(--surface);box-shadow:var(--shadow);text-decoration:none;animation:rowIn .28s cubic-bezier(.2,.8,.2,1);transition:background .16s ease,transform .16s ease}.row:hover{background:var(--hover);transform:translateY(-1px)}.row>a{min-width:0;text-decoration:none}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#25a8d7,#6d7edc 58%,#f08072)}.favicon img{width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:640}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;line-height:1.45}.button,.chip{min-height:30px;display:inline-grid;place-items:center;border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620;transition:background .16s ease,color .16s ease,transform .16s ease}.button:hover,.chip:hover{background:var(--hover);transform:translateY(-1px)}.danger{color:var(--danger)}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:14px}.field{display:grid;gap:18px;padding:14px;border-radius:7px;background:var(--surface);box-shadow:var(--shadow);animation:rowIn .28s cubic-bezier(.2,.8,.2,1);scroll-margin-top:18px}.field>span{font-weight:680}.badge{display:inline-grid;place-items:center;margin-left:6px;min-height:20px;border-radius:7px;padding:0 7px;background:rgb(245 158 11/.12);color:#9a5a00;font-size:11px;font-weight:720}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{background:var(--active);color:var(--accent)}input{height:34px;min-width:220px;border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);font:inherit;outline:0;transition:box-shadow .16s ease,background .16s ease}input:focus{animation:focusPulse .5s ease}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}.settings-nav{position:sticky;top:20px;display:grid;gap:4px;padding:8px;border-radius:7px;background:var(--surface);box-shadow:var(--shadow)}.settings-nav a{min-height:34px;display:flex;align-items:center;padding:0 10px;border-radius:6px;color:var(--muted);font-weight:640;text-decoration:none;transition:background .16s ease,color .16s ease,transform .16s ease}.settings-nav a:hover{background:var(--hover);color:var(--text);transform:translateX(2px)}.settings-content{display:grid;gap:14px}.settings-search{margin-bottom:0}.section-kicker{color:var(--muted);font-size:12px}.switch-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}@media(max-width:760px){main{width:min(100% - 28px,1040px);padding-top:24px}.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}input{min-width:0;width:100%}.row{grid-template-columns:20px minmax(0,1fr)}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}
 </style></head><body><main><header>)"
        << FubukiLogoSvg() << "<h1>" << HtmlEscape(Label(title))
@@ -451,9 +495,6 @@ std::string SettingsHtml() {
   const std::string newTabPage = Setting("newTabPage", "blank");
   const std::string startupBehavior = Setting("startupBehavior", "newTab");
   const std::string askBeforeDownload = Setting("askBeforeDownload", "off");
-  const std::string mcpEnabled = Setting("automation.mcp.enabled", "off");
-  const std::string mcpConfirmSensitive =
-      Setting("automation.mcp.confirmSensitive", "on");
   const std::string sidebarVisible =
       Setting("sidebarVisible", "show") == "hide" ? "hide" : "show";
   const std::string language = Setting("language", "system");
@@ -477,7 +518,7 @@ std::string SettingsHtml() {
       << "<a href=\"#windows\">" << Label("Windows")
       << "</a><a href=\"#search\">" << Label("Search")
       << "</a><a href=\"#privacy\">" << Label("Privacy") << "</a>"
-      << "<a href=\"#ai-mcp\">" << Label("AI Integration / MCP") << "</a>"
+      << "<a href=\"fubuki://settings/mcp\">" << Label("AI Integration / MCP") << "</a>"
       << "<a href=\"#downloads\">" << Label("Downloads section")
       << "</a><a href=\"#developer\">" << Label("Developer") << "</a>"
       << "</nav><section class=\"settings-content\">"
@@ -596,27 +637,6 @@ std::string SettingsHtml() {
       << ActionLink("clearData", "all", "fubuki://settings/") << "\">"
       << Label("Clear all") << "</a>"
       << "</div></div>"
-      << "<div id=\"ai-mcp\" class=\"field\" data-setting-section><span>"
-      << Label("AI Integration / MCP")
-      << " <span class=\"badge\">" << Label("Experimental")
-      << "</span></span><div class=\"section-kicker\">Expose safe browser "
-         "automation to a local fubuki-mcp-server only when explicitly "
-         "enabled. Raw JavaScript, raw CDP, Private Window access, and "
-         "fubuki:// page automation stay blocked.</div><div "
-         "class=\"segmented\">"
-      << chip("automation.mcp.enabled", mcpEnabled, "on",
-              Label("Enable MCP automation"))
-      << chip("automation.mcp.enabled", mcpEnabled, "off",
-              Label("Disable MCP automation"))
-      << "</div><div class=\"segmented\">"
-      << chip("automation.mcp.confirmSensitive", mcpConfirmSensitive, "on",
-              Label("Require confirmation"))
-      << chip("automation.mcp.confirmSensitive", mcpConfirmSensitive, "off",
-              Label("Do not require confirmation"))
-      << "</div><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "automation.mcp.enabled",
-                    "fubuki://settings/#ai-mcp")
-      << "\">" << Label("Reset") << "</a></div>"
       << "<div id=\"downloads\" class=\"field\" data-setting-section><span>"
       << Label("Downloads section")
       << "</span><div class=\"section-kicker\">Set download confirmation and "
@@ -728,6 +748,178 @@ std::string DebugHtml() {
   return PageChrome("Debug", body.str());
 }
 
+std::string McpHtml() {
+  const std::string mcpEnabled = Setting("automation.mcp.enabled", "off");
+  const std::string mcpServerCommand =
+      Setting("automation.mcp.serverCommand", "target/debug/fubuki-mcp-server");
+  const std::string mcpServerArgs = Setting("automation.mcp.serverArgs", "");
+  const std::string mcpClientName = Setting("automation.mcp.clientName", "fubuki");
+  const std::string confirmSensitive = Setting("automation.mcp.confirmSensitive", "on");
+  const bool isEnabled = mcpEnabled == "on";
+  const bool needConfirm = confirmSensitive == "on";
+
+  // Build client config JSON
+  std::string clientConfig;
+  {
+    std::ostringstream json;
+    json << "{\n  \"mcpServers\": {\n    \"" << HtmlEscape(mcpClientName)
+         << "\": {\n      \"command\": \"" << HtmlEscape(mcpServerCommand)
+         << "\"";
+    if (!mcpServerArgs.empty()) {
+      json << ",\n      \"args\": [\"";
+      std::istringstream iss(mcpServerArgs);
+      std::string arg;
+      bool first = true;
+      while (iss >> arg) {
+        if (!first) json << "\", \"";
+        json << HtmlEscape(arg);
+        first = false;
+      }
+      json << "\"]";
+    }
+    json << "\n    }\n  }\n}";
+    clientConfig = json.str();
+  }
+
+  std::ostringstream body;
+  
+  // Page header with status badge
+  body << "<div class=\"field\" style=\"display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center\">"
+       << "<div><span>" << Label("Status") << "</span><div class=\"meta\" style=\"margin-top:4px\">"
+       << (isEnabled ? Label("MCP is enabled") : Label("MCP is disabled"))
+       << "</div></div><div class=\"segmented\">"
+       << "<a class=\"chip" << (isEnabled ? " selected" : "")
+       << "\" href=\"" << ActionLink("automation.mcp.enabled", "on", "fubuki://settings/mcp")
+       << "\">" << Label("Enable") << "</a>"
+       << "<a class=\"chip" << (!isEnabled ? " selected" : "")
+       << "\" href=\"" << ActionLink("automation.mcp.enabled", "off", "fubuki://settings/mcp")
+       << "\">" << Label("Disable") << "</a>"
+       << "</div></div>";
+
+  // Connection address section
+  body << "<div class=\"field\"><span>" << Label("Connection Address")
+       << "</span><div class=\"section-kicker\">" << Label("Address information for MCP clients")
+       << "</div>"
+       << "<div style=\"display:grid;gap:8px\">"
+       << "<div style=\"display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center\">"
+       << "<span class=\"meta\">" << Label("IPC Port") << "</span>"
+       << "<code style=\"padding:6px 10px;background:var(--surface-2);border-radius:5px;font-size:12px\">42176</code>"
+       << "</div>"
+       << "<div style=\"display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center\">"
+       << "<span class=\"meta\">" << Label("Protocol") << "</span>"
+       << "<code style=\"padding:6px 10px;background:var(--surface-2);border-radius:5px;font-size:12px\">Model Context Protocol (MCP)</code>"
+       << "</div>"
+       << "<div style=\"display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center\">"
+       << "<span class=\"meta\">" << Label("Version") << "</span>"
+       << "<code style=\"padding:6px 10px;background:var(--surface-2);border-radius:5px;font-size:12px\">2025-03-26</code>"
+       << "</div>"
+       << "<div style=\"display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center\">"
+       << "<span class=\"meta\">" << Label("Transport") << "</span>"
+       << "<code style=\"padding:6px 10px;background:var(--surface-2);border-radius:5px;font-size:12px\">stdio / Server-Sent Events</code>"
+       << "</div>"
+       << "</div></div>";
+
+  // Server configuration section
+  body << "<div class=\"field\"><span>" << Label("Server Configuration")
+       << "</span><div class=\"section-kicker\">" << Label("MCP server command and arguments")
+       << "</div>"
+       << "<form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\">"
+       << "<input type=\"hidden\" name=\"key\" value=\"automation.mcp.serverCommand\">"
+       << "<input type=\"hidden\" name=\"return\" value=\"fubuki://settings/mcp\">"
+       << "<input name=\"value\" value=\"" << HtmlEscape(mcpServerCommand)
+       << "\" placeholder=\"target/debug/fubuki-mcp-server\">"
+       << "<button class=\"button\">" << Label("Save") << "</button>"
+       << "</form>"
+       << "<form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\">"
+       << "<input type=\"hidden\" name=\"key\" value=\"automation.mcp.serverArgs\">"
+       << "<input type=\"hidden\" name=\"return\" value=\"fubuki://settings/mcp\">"
+       << "<input name=\"value\" value=\"" << HtmlEscape(mcpServerArgs)
+       << "\" placeholder=\"Server arguments\">"
+       << "<button class=\"button\">" << Label("Save") << "</button>"
+       << "</form>"
+       << "<form class=\"inline-form\" action=\"fubuki://settings/set\" method=\"get\">"
+       << "<input type=\"hidden\" name=\"key\" value=\"automation.mcp.clientName\">"
+       << "<input type=\"hidden\" name=\"return\" value=\"fubuki://settings/mcp\">"
+       << "<input name=\"value\" value=\"" << HtmlEscape(mcpClientName)
+       << "\" placeholder=\"fubuki\">"
+       << "<button class=\"button\">" << Label("Save") << "</button>"
+       << "</form></div>";
+
+  // Security settings
+  body << "<div class=\"field\"><span>" << Label("Security")
+       << "</span><div class=\"section-kicker\">" << Label("Confirmation for sensitive operations")
+       << "</div><div class=\"segmented\">"
+       << "<a class=\"chip" << (needConfirm ? " selected" : "")
+       << "\" href=\"" << ActionLink("automation.mcp.confirmSensitive", "on", "fubuki://settings/mcp")
+       << "\">" << Label("Require confirmation") << "</a>"
+       << "<a class=\"chip" << (!needConfirm ? " selected" : "")
+       << "\" href=\"" << ActionLink("automation.mcp.confirmSensitive", "off", "fubuki://settings/mcp")
+       << "\">" << Label("No confirmation") << "</a>"
+       << "</div></div>";
+
+  // Client configuration section
+  body << "<div class=\"field\"><span>" << Label("Client Configuration")
+       << "</span><div class=\"section-kicker\">" << Label("Add this to your MCP client config")
+       << "</div>"
+       << "<pre style=\"padding:12px;background:var(--surface-2);border-radius:7px;font-size:12px;overflow-x:auto;white-space:pre-wrap\">"
+       << HtmlEscape(clientConfig) << "</pre></div>";
+
+  // Available tools section
+  body << "<div class=\"field\"><span>" << Label("Available Tools")
+       << "</span><div class=\"section-kicker\">" << Label("Tools exposed to MCP clients")
+       << "</div><div class=\"list\">";
+
+  // Browser tools
+  const std::vector<std::pair<std::string, std::string>> browserTools = {
+    {"browser.snapshot", Label("Get browser state")},
+    {"tabs.list", Label("List all tabs")},
+    {"tabs.create", Label("Create a new tab")},
+    {"tabs.navigate", Label("Navigate a tab")},
+    {"tabs.activate", Label("Focus a tab")},
+    {"tabs.close", Label("Close a tab")},
+    {"tabs.reload", Label("Reload a tab")},
+    {"tabs.goBack", Label("Go back")},
+    {"tabs.goForward", Label("Go forward")},
+  };
+  for (const auto &[name, desc] : browserTools) {
+    body << "<article class=\"row\"><span>B</span><div><div class=\"title\">"
+         << name << "</div><div class=\"meta\">" << desc
+         << "</div></div><span></span></article>";
+  }
+
+  // Page tools
+  const std::vector<std::pair<std::string, std::string>> pageTools = {
+    {"page.getText", Label("Extract page text")},
+    {"page.getHtml", Label("Extract page HTML")},
+    {"page.click", Label("Click at coordinates")},
+    {"page.type", Label("Type text")},
+    {"page.press", Label("Press a key")},
+    {"page.scroll", Label("Scroll the page")},
+    {"page.find", Label("Find text")},
+  };
+  for (const auto &[name, desc] : pageTools) {
+    body << "<article class=\"row\"><span>P</span><div><div class=\"title\">"
+         << name << "</div><div class=\"meta\">" << desc
+         << "</div></div><span></span></article>";
+  }
+
+  // Data tools
+  const std::vector<std::pair<std::string, std::string>> dataTools = {
+    {"bookmarks.list", Label("Read bookmarks")},
+    {"history.list", Label("Read history")},
+    {"downloads.list", Label("Read downloads")},
+  };
+  for (const auto &[name, desc] : dataTools) {
+    body << "<article class=\"row\"><span>D</span><div><div class=\"title\">"
+         << name << "</div><div class=\"meta\">" << desc
+         << "</div></div><span></span></article>";
+  }
+  body << "</div></div>";
+
+  body << "</section>";
+  return PageChrome("MCP", body.str());
+}
+
 std::string NewTabHtml() {
   const std::string appearance = BrowserAppearance();
   const std::string lang = BrowserLanguage();
@@ -737,7 +929,7 @@ std::string NewTabHtml() {
       << "\" data-appearance=\"" << HtmlEscape(appearance)
       << R"("><head><meta charset="utf-8"><title>)" << Label("New Tab")
       << R"(</title>)" << FubukiFaviconLink() << R"(<style>
-*{box-sizing:border-box}html,body{height:100%}@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 rgb(31 111 235/.24)}100%{box-shadow:0 0 0 7px transparent}}body{margin:0;display:grid;place-items:center;background:#f5f6f8;color:#15171a;font:15px -apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Helvetica Neue",sans-serif;letter-spacing:0}html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}main{width:min(620px,calc(100vw - 40px));display:grid;gap:20px;justify-items:center;animation:pageIn .34s cubic-bezier(.2,.8,.2,1)}.logo{width:58px;height:58px}h1{margin:0;font-size:32px;line-height:1;font-weight:720}form{width:100%}input{width:100%;height:44px;border:1px solid rgb(24 32 44/.14);border-radius:7px;background:#fff;padding:0 13px;font:inherit;outline:0;transition:border-color .16s ease,background .16s ease}html[data-appearance=dark] input{background:#1d2025;border-color:rgb(255 255 255/.12);color:#f4f6f8}@media(prefers-color-scheme:dark){html[data-appearance=system] body{background:#14161a;color:#f4f6f8;color-scheme:dark}html[data-appearance=system] input{background:#1d2025;border-color:rgb(255 255 255/.12);color:#f4f6f8}}input:focus{border-color:#1f6feb;animation:focusPulse .5s ease}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}html[data-appearance=dark] input{background:#1d2025;border-color:rgb(255 255 255/.12);color:#f4f6f8}
+*{box-sizing:border-box}html,body{height:100%}@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 rgb(31 111 235/.24)}100%{box-shadow:0 0 0 7px transparent}}body{margin:0;display:grid;place-items:center;background:#f5f6f8;color:#15171a;font:15px -apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Helvetica Neue",sans-serif;letter-spacing:0}html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}main{width:min(620px,calc(100vw - 40px));display:grid;gap:20px;justify-items:center;animation:pageIn .34s cubic-bezier(.2,.8,.2,1)}.logo{width:58px;height:58px}h1{margin:0;font-size:32px;line-height:1;font-weight:720}form{width:100%}input{width:100%;height:44px;border-radius:7px;background:#fff;padding:0 13px;font:inherit;outline:0;transition:background .16s ease,box-shadow .16s ease}html[data-appearance=dark] input{background:#1d2025;color:#f4f6f8}@media(prefers-color-scheme:dark){html[data-appearance=system] body{background:#14161a;color:#f4f6f8;color-scheme:dark}html[data-appearance=system] input{background:#1d2025;color:#f4f6f8}}input:focus{animation:focusPulse .5s ease}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}html[data-appearance=dark] body{background:#14161a;color:#f4f6f8;color-scheme:dark}html[data-appearance=dark] input{background:#1d2025;color:#f4f6f8}
 </style></head><body><main>)"
       << FubukiLogoSvg()
       << R"(<h1>Fubuki Browser Alpha</h1><form action="fubuki://newtab/search" method="get"><input name="q" autofocus autocomplete="off" placeholder=")"
@@ -942,6 +1134,17 @@ bool FubukiSchemeHandler::LoadRequest(const std::string &url) {
     } else {
       html = HistoryHtml();
       cache.Set(url, html);
+      LoadText(std::move(html), "text/html", 200);
+    }
+    return true;
+  }
+  if (url.rfind("fubuki://settings/mcp", 0) == 0) {
+    std::string html;
+    if (cache.Get(url, html)) {
+      LoadText(std::move(html), "text/html", 200);
+    } else {
+      html = McpHtml();
+      cache.Set(url, html, std::chrono::seconds{2});
       LoadText(std::move(html), "text/html", 200);
     }
     return true;

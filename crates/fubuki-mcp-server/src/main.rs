@@ -38,14 +38,16 @@ fn main() -> io::Result<()> {
             continue;
         }
         let request: Value = serde_json::from_str(&line).unwrap_or_else(|_| json!({}));
-        let response = handle_json_rpc(request);
-        writeln!(stdout, "{response}")?;
-        stdout.flush()?;
+        if let Some(response) = handle_json_rpc(request) {
+            writeln!(stdout, "{response}")?;
+            stdout.flush()?;
+        }
     }
     Ok(())
 }
 
-fn handle_json_rpc(request: Value) -> Value {
+fn handle_json_rpc(request: Value) -> Option<Value> {
+    let is_notification = request.get("id").is_none();
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
@@ -54,7 +56,8 @@ fn handle_json_rpc(request: Value) -> Value {
             "serverInfo": { "name": "fubuki-mcp-server", "version": env!("CARGO_PKG_VERSION") },
             "capabilities": { "tools": {} }
         }),
-        "notifications/initialized" => return json!({ "jsonrpc": "2.0", "id": id, "result": null }),
+        "notifications/initialized" => return None,
+        "ping" => json!({}),
         "tools/list" => json!({ "tools": tool_descriptors() }),
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -75,14 +78,21 @@ fn handle_json_rpc(request: Value) -> Value {
             }
         }
         _ => {
-            return json!({
+            if is_notification {
+                return None;
+            }
+            return Some(json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": { "code": -32601, "message": format!("Unknown method: {method}") }
-            });
+            }));
         }
     };
-    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+    if is_notification {
+        None
+    } else {
+        Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+    }
 }
 
 fn tool_descriptors() -> Vec<Value> {

@@ -51,6 +51,20 @@ describe('BridgeMethodMap types', () => {
     expectTypeOf<Params>().toMatchTypeOf<{ key: string; value: string }>();
     expectTypeOf<Result>().toBeBoolean();
   });
+
+  it('has correct result types for MCP bridge methods', () => {
+    type TestResult = BridgeMethodMap['mcp.testConnection']['result'];
+    type ServersResult = BridgeMethodMap['mcp.listServers']['result'];
+
+    expectTypeOf<TestResult>().toMatchTypeOf<{
+      ok: boolean;
+      status: 'running' | 'disabled' | 'unavailable';
+      message: string;
+    }>();
+    expectTypeOf<ServersResult>().toMatchTypeOf<
+      { id: string; name: string; transport: string }[]
+    >();
+  });
 });
 
 describe('CommandId type', () => {
@@ -146,5 +160,10 @@ describe('Settings type', () => {
   it('has correct newTabPage union type', () => {
     type NewTabPage = Settings['newTabPage'];
     expectTypeOf<NewTabPage>().toEqualTypeOf<'blank' | 'home'>();
+  });
+
+  it('stores MCP enabled tools as an array in UI state', () => {
+    type EnabledTools = Settings['automation.mcp.enabledTools'];
+    expectTypeOf<EnabledTools>().toEqualTypeOf<string[]>();
   });
 });

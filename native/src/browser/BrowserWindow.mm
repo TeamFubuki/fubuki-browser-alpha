@@ -928,7 +928,10 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
       key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload" &&
       key != "defaultZoomLevel" && key != "closeWindowWithLastTab" && key != "privateSearchEngine" &&
-      key != "automation.mcp.enabled" && key != "automation.mcp.confirmSensitive") {
+      key != "automation.mcp.enabled" && key != "automation.mcp.confirmSensitive" &&
+      key != "automation.mcp.serverTemplate" && key != "automation.mcp.serverCommand" &&
+      key != "automation.mcp.serverArgs" && key != "automation.mcp.clientName" &&
+      key != "automation.mcp.enabledTools") {
     return false;
   }
   std::string savedValue = value;
