@@ -127,7 +127,7 @@ where
                     url.unwrap_or_else(|| "fubuki://newtab/".into()),
                     active,
                 );
-                self.windows.attach_tab(&window_id, &tab.id);
+                self.windows.attach_tab(&window_id, &tab.id, true);
                 self.adapter
                     .create_page(&tab.id, &window_id, &tab.url)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
@@ -174,7 +174,7 @@ where
                 let Some(tab) = self.tabs.duplicate_tab(&tab_id) else {
                     return Ok(Response::Bool(false));
                 };
-                self.windows.attach_tab(&tab.window_id, &tab.id);
+                self.windows.attach_tab(&tab.window_id, &tab.id, true);
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
@@ -186,7 +186,7 @@ where
                 let window_id = tab.window_id.clone();
                 let created = tab.clone();
                 self.tabs.upsert_tab(tab);
-                self.windows.attach_tab(&window_id, &created.id);
+                self.windows.attach_tab(&window_id, &created.id, true);
                 self.emit(Event::TabCreated(created));
                 Ok(Response::Bool(true))
             }
@@ -309,29 +309,30 @@ where
                 let target = window_id
                     .or_else(|| self.windows.active_window_id().map(ToOwned::to_owned))
                     .ok_or_else(|| CoreError::Message("No active window".into()))?;
+                // Capture full window state with tabs BEFORE closing the window.
+                let window_state = self
+                    .windows
+                    .get_window(&target)
+                    .ok_or_else(|| CoreError::Message("Window not found".into()))?;
+                let window_tabs: Vec<frost_protocol::TabState> = self
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .filter(|t| t.window_id == target)
+                    .collect();
+                // Now remove the window.
                 let closed = self.windows.close_window(&target);
                 if closed {
-                    // Capture full window state with tabs for reopen.
-                    let window_tabs: Vec<frost_protocol::TabState> = self
-                        .tabs
-                        .list()
-                        .into_iter()
-                        .filter(|t| t.window_id == target)
-                        .collect();
-                    let window_state = self.windows.get_window(&target).unwrap_or_else(|| {
-                        frost_protocol::WindowState {
-                            id: target.clone(),
-                            active_tab_id: None,
-                            is_private: false,
-                            tab_ids: window_tabs.iter().map(|t| t.id.clone()).collect(),
-                        }
-                    });
                     self.closed_windows.push(ClosedWindow {
                         window: window_state,
-                        tabs: window_tabs,
+                        tabs: window_tabs.clone(),
                     });
                     if self.closed_windows.len() > 10 {
                         self.closed_windows.remove(0);
+                    }
+                    // Remove tabs belonging to this window from TabService.
+                    for tab in &window_tabs {
+                        self.tabs.remove_tab(&tab.id);
                     }
                     self.adapter
                         .close_window(&target)
@@ -962,5 +963,216 @@ mod tests {
         };
         assert_eq!(bookmarks.len(), 1);
         assert_eq!(bookmarks[0].url, "https://example.com");
+    }
+
+    // ── Multi-window tests ────────────────────────────────────────────────
+
+    /// Helper: create a window and return (window_id, [tab_ids]).
+    fn create_window_with_tabs(core: &mut BrowserCore, count: usize) -> (String, Vec<String>) {
+        let resp = core.process(ProtocolRequest::new(Request::WindowsCreate));
+        assert_eq!(resp.response, Response::Bool(true));
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        let window_id = state.windows.last().unwrap().id.clone();
+        let mut tab_ids = Vec::new();
+        for i in 0..count {
+            let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+                url: Some(format!("https://example{}.com", i)),
+                active: true,
+            }));
+            assert!(resp.ok);
+            let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+            let Response::AppSnapshot(s) = snap.response else {
+                panic!("expected snapshot");
+            };
+            let new_tab = s.tabs.last().unwrap();
+            assert_eq!(new_tab.window_id, window_id);
+            tab_ids.push(new_tab.id.clone());
+        }
+        (window_id, tab_ids)
+    }
+
+    #[test]
+    fn close_other_tabs_scoped_to_window() {
+        let mut core = BrowserCore::new();
+        // Window 1 (default) – 1 tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://w1.com".into()),
+            active: true,
+        }));
+        assert!(resp.ok);
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s1) = snap.response else {
+            panic!()
+        };
+        let w1_tab = s1.tabs.last().unwrap().id.clone();
+
+        // Window 2 – 3 tabs
+        let (_w2_id, w2_tabs) = create_window_with_tabs(&mut core, 3);
+        let target = w2_tabs[1].clone(); // middle tab
+
+        // close_other_tabs should only affect Window 2.
+        let resp = core.process(ProtocolRequest::new(Request::TabsCloseOther {
+            tab_id: target.clone(),
+        }));
+        assert_eq!(resp.response, Response::Bool(true));
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // Window 1 tab should still exist.
+        assert!(s.tabs.iter().any(|t| t.id == w1_tab));
+        // Window 2 should have only the target tab + pinned (none pinned here).
+        let w2_id = &s.windows.last().unwrap().id;
+        let w2_remaining: Vec<_> = s.tabs.iter().filter(|t| t.window_id == *w2_id).collect();
+        assert_eq!(w2_remaining.len(), 1);
+        assert_eq!(w2_remaining[0].id, target);
+    }
+
+    #[test]
+    fn close_tabs_to_right_scoped_to_window() {
+        let mut core = BrowserCore::new();
+        // Window 1 – 1 tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://w1.com".into()),
+            active: true,
+        }));
+        assert!(resp.ok);
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s1) = snap.response else {
+            panic!()
+        };
+        let w1_tab = s1.tabs.last().unwrap().id.clone();
+
+        // Window 2 – 3 tabs
+        let (_w2_id, w2_tabs) = create_window_with_tabs(&mut core, 3);
+        let target = w2_tabs[0].clone(); // first tab in window 2
+
+        let resp = core.process(ProtocolRequest::new(Request::TabsCloseToRight {
+            tab_id: target.clone(),
+        }));
+        assert_eq!(resp.response, Response::Bool(true));
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // Window 1 tab should still exist.
+        assert!(s.tabs.iter().any(|t| t.id == w1_tab));
+        // Window 2 should have only the target tab.
+        let w2_id = &s.windows.last().unwrap().id;
+        let w2_remaining: Vec<_> = s.tabs.iter().filter(|t| t.window_id == *w2_id).collect();
+        assert_eq!(w2_remaining.len(), 1);
+        assert_eq!(w2_remaining[0].id, target);
+    }
+
+    #[test]
+    fn move_tab_only_within_same_window() {
+        let mut core = BrowserCore::new();
+        let (w2_id, w2_tabs) = create_window_with_tabs(&mut core, 3);
+        let target = w2_tabs[0].clone();
+
+        // Move to index 2 (should stay in window 2).
+        let resp = core.process(ProtocolRequest::new(Request::TabsMove {
+            tab_id: target.clone(),
+            to_index: 2,
+        }));
+        assert_eq!(resp.response, Response::Bool(true));
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let w2_tabs_now: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
+        // The target tab should now be last (index 2).
+        assert_eq!(w2_tabs_now.last().unwrap().id, target);
+        // Total tab count unchanged.
+        assert_eq!(s.tabs.len(), 3); // default window has no tabs + 3 w2
+    }
+
+    #[test]
+    fn move_tab_to_window_deactivates_others() {
+        let mut core = BrowserCore::new();
+        let (_, w2_tabs) = create_window_with_tabs(&mut core, 2);
+
+        // Move a tab from w2 into a new window via TabsMoveToNewWindow.
+        let resp = core.process(ProtocolRequest::new(Request::TabsMoveToNewWindow {
+            tab_id: w2_tabs[0].clone(),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // The moved tab should be active in its new window.
+        let moved = s.tabs.iter().find(|t| t.id == w2_tabs[0]).unwrap();
+        assert!(moved.is_active, "moved tab should be active in new window");
+        // The remaining tab in w2 should still be active in w2.
+        let w2_remaining = s.tabs.iter().find(|t| t.id == w2_tabs[1]).unwrap();
+        assert!(
+            w2_remaining.is_active,
+            "remaining tab in w2 should be active"
+        );
+        // Exactly 2 active tabs total (one per window).
+        let active_count = s.tabs.iter().filter(|t| t.is_active).count();
+        assert_eq!(active_count, 2, "one active tab per window");
+    }
+
+    #[test]
+    fn close_and_reopen_window_preserves_tabs() {
+        let mut core = BrowserCore::new();
+        let (w2_id, _w2_tabs) = create_window_with_tabs(&mut core, 2);
+
+        // Close window 2.
+        let resp = core.process(ProtocolRequest::new(Request::WindowsClose {
+            window_id: Some(w2_id.clone()),
+        }));
+        assert_eq!(resp.response, Response::Bool(true));
+
+        // Window 2's tabs should be gone from core.
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert!(!s.windows.iter().any(|w| w.id == w2_id));
+        assert!(!s.tabs.iter().any(|t| t.window_id == w2_id));
+
+        // Reopen the window.
+        let resp = core.process(ProtocolRequest::new(Request::WindowsReopenClosed));
+        assert_eq!(resp.response, Response::Bool(true));
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let reopened_tabs: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
+        assert_eq!(reopened_tabs.len(), 2);
+        assert!(s.windows.iter().any(|w| w.id == w2_id));
+    }
+
+    #[test]
+    fn only_one_active_tab_per_window() {
+        let mut core = BrowserCore::new();
+        let (_, w2_tabs) = create_window_with_tabs(&mut core, 3);
+
+        // Activate each tab in sequence and verify only one is active.
+        for tab_id in &w2_tabs {
+            let resp = core.process(ProtocolRequest::new(Request::TabsActivate {
+                tab_id: tab_id.clone(),
+            }));
+            assert!(resp.ok);
+        }
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // Only one active tab total (all in same window, default window has no tabs).
+        let active_count = s.tabs.iter().filter(|t| t.is_active).count();
+        assert_eq!(active_count, 1, "only one tab should be active");
     }
 }

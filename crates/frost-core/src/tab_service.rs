@@ -126,12 +126,17 @@ impl TabService {
     }
 
     pub fn close_other_tabs(&mut self, tab_id: &str) -> Vec<TabState> {
-        if !self.contains(tab_id) {
+        let Some(window_id) = self
+            .tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.window_id.clone())
+        else {
             return Vec::new();
-        }
+        };
         let mut closed = Vec::new();
         self.tabs.retain(|tab| {
-            let keep = tab.id == tab_id || tab.is_pinned;
+            let keep = tab.id == tab_id || tab.is_pinned || tab.window_id != window_id;
             if !keep {
                 closed.push(tab.clone());
             }
@@ -142,16 +147,38 @@ impl TabService {
     }
 
     pub fn close_tabs_to_right(&mut self, tab_id: &str) -> Vec<TabState> {
-        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
+        let Some(window_id) = self
+            .tabs
+            .iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.window_id.clone())
+        else {
             return Vec::new();
         };
+        // Find the index of the target tab within its window.
+        let window_start = self
+            .tabs
+            .iter()
+            .position(|t| t.window_id == window_id)
+            .unwrap();
+        let local_index = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.window_id == window_id)
+            .position(|(_i, t)| t.id == tab_id)
+            .unwrap();
         let mut closed = Vec::new();
         self.tabs = self
             .tabs
             .drain(..)
             .enumerate()
             .filter_map(|(i, tab)| {
-                let keep = i <= index || tab.is_pinned;
+                if tab.window_id != window_id {
+                    return Some(tab);
+                }
+                let local_i = i - window_start;
+                let keep = local_i <= local_index || tab.is_pinned;
                 if keep {
                     Some(tab)
                 } else {
@@ -167,9 +194,31 @@ impl TabService {
         let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return false;
         };
+        let window_id = self.tabs[index].window_id.clone();
+        // Collect indices of tabs in the same window.
+        let window_indices: Vec<usize> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.window_id == window_id)
+            .map(|(i, _)| i)
+            .collect();
+        let local_pos = window_indices.iter().position(|&i| i == index).unwrap();
+        let local_to = to_index.min(window_indices.len() - 1);
+        if local_pos == local_to {
+            return true; // no-op
+        }
+        // Remove the tab and insert at the new local position.
         let tab = self.tabs.remove(index);
-        let to_index = to_index.min(self.tabs.len());
-        self.tabs.insert(to_index, tab);
+        // Recalculate window_indices after removal (all indices shifted if > index).
+        let window_indices_after: Vec<usize> =
+            window_indices.into_iter().filter(|&i| i != index).collect();
+        let insert_at = if local_to >= window_indices_after.len() {
+            self.tabs.len()
+        } else {
+            window_indices_after[local_to]
+        };
+        self.tabs.insert(insert_at, tab);
         true
     }
 
@@ -178,6 +227,14 @@ impl TabService {
             return false;
         };
         tab.window_id = window_id.to_owned();
+        tab.is_active = false;
+        // Deactivate all tabs in the target window, then activate only this one.
+        for t in self.tabs.iter_mut() {
+            if t.window_id == window_id && t.id != tab_id {
+                t.is_active = false;
+            }
+        }
+        let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
         tab.is_active = true;
         true
     }

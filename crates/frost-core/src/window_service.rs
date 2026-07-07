@@ -55,12 +55,14 @@ impl WindowService {
         self.active_window_id.as_deref()
     }
 
-    pub fn attach_tab(&mut self, window_id: &str, tab_id: &str) {
+    pub fn attach_tab(&mut self, window_id: &str, tab_id: &str, activate: bool) {
         if let Some(window) = self.windows.iter_mut().find(|w| w.id == window_id) {
             if !window.tab_ids.iter().any(|id| id == tab_id) {
                 window.tab_ids.push(tab_id.to_owned());
             }
-            window.active_tab_id = Some(tab_id.to_owned());
+            if activate {
+                window.active_tab_id = Some(tab_id.to_owned());
+            }
         }
     }
 
@@ -78,7 +80,7 @@ impl WindowService {
 
     pub fn move_tab_to_window(&mut self, tab_id: &str, window_id: &str) {
         self.detach_tab(tab_id);
-        self.attach_tab(window_id, tab_id);
+        self.attach_tab(window_id, tab_id, true);
     }
 
     pub fn set_active_tab(&mut self, tab_id: &str) {
