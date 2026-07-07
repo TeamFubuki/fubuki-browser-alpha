@@ -1,9 +1,14 @@
 import { createStore } from 'solid-js/store';
 import {
+  fromFrostTab,
   invokeBridge,
+  normalizeAppState,
   onBridgeEvent,
+  type BookmarkRecord,
   type BrowserState,
   type EventMap,
+  type FrostTabState,
+  type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
 
@@ -40,33 +45,107 @@ const initialState: BrowserState & { status: string } = {
 
 export const [browserState, setBrowserState] = createStore(initialState);
 
-let pendingRefresh: Promise<void> | undefined;
-let refreshCounter = 0;
-let lastStatus = 'Ready';
+// --- Lightweight targeted refresh (no full snapshot) ---
 
-export async function refreshState(status = 'Ready') {
-  lastStatus = status;
-  if (pendingRefresh) {
-    return pendingRefresh;
+let bookmarksPending = false;
+let historyPending = false;
+
+async function refreshBookmarks() {
+  if (bookmarksPending) return;
+  bookmarksPending = true;
+  try {
+    const list = await invokeBridge('bookmarks.list');
+    setBrowserState('bookmarks', list as BookmarkRecord[]);
+  } catch {
+    // ignore
+  } finally {
+    bookmarksPending = false;
   }
-  const myCounter = ++refreshCounter;
-  const statusAtStart = lastStatus;
-  pendingRefresh = invokeBridge('app.getState')
-    .then((state) => {
-      // Only apply if no newer refresh has started
-      if (myCounter === refreshCounter) {
-        setBrowserState({ ...state, status: statusAtStart });
-      }
-    })
-    .catch((error) => {
-      console.error('[Fubuki] Failed to refresh state:', error);
-      setBrowserState({ status: 'Error' });
-    })
-    .finally(() => {
-      pendingRefresh = undefined;
-    });
-  return pendingRefresh;
 }
+
+async function refreshHistory() {
+  if (historyPending) return;
+  historyPending = true;
+  try {
+    const list = await invokeBridge('history.list');
+    setBrowserState('history', list as HistoryRecord[]);
+  } catch {
+    // ignore
+  } finally {
+    historyPending = false;
+  }
+}
+
+// --- Full snapshot refresh (used only on startup and app.stateChanged) ---
+
+let pendingFullRefresh: Promise<void> | undefined;
+let fullRefreshCounter = 0;
+
+/**
+ * Full snapshot refresh — only for startup and rare edge cases.
+ * Calls app.snapshot (1 bridge call). Commands are cached separately.
+ */
+export async function refreshFullState(status = 'Ready') {
+  if (pendingFullRefresh) return pendingFullRefresh;
+  const myCounter = ++fullRefreshCounter;
+  pendingFullRefresh = (async () => {
+    try {
+      const snapshot = await invokeBridge('app.snapshot');
+      const state = normalizeAppState(snapshot);
+      if (myCounter !== fullRefreshCounter) return;
+
+      // Only update slices that actually changed
+      if (state.activeTabId !== browserState.activeTabId) {
+        setBrowserState('activeTabId', state.activeTabId);
+      }
+      if (state.windowId !== browserState.windowId) {
+        setBrowserState('windowId', state.windowId);
+      }
+      if (state.isPrivate !== browserState.isPrivate) {
+        setBrowserState('isPrivate', state.isPrivate);
+      }
+      if (state.bridgeVersion !== browserState.bridgeVersion) {
+        setBrowserState('bridgeVersion', state.bridgeVersion);
+      }
+      if (state.tabs !== browserState.tabs) {
+        setBrowserState('tabs', state.tabs);
+      }
+      if (state.windows !== browserState.windows) {
+        setBrowserState('windows', state.windows);
+      }
+      if (state.settings !== browserState.settings) {
+        setBrowserState('settings', state.settings);
+      }
+      if (state.downloads !== browserState.downloads) {
+        setBrowserState('downloads', state.downloads);
+      }
+      if (state.history !== browserState.history) {
+        setBrowserState('history', state.history);
+      }
+      if (state.bookmarks !== browserState.bookmarks) {
+        setBrowserState('bookmarks', state.bookmarks);
+      }
+      if (state.permissions !== browserState.permissions) {
+        setBrowserState('permissions', state.permissions);
+      }
+      if (state.commands !== browserState.commands) {
+        setBrowserState('commands', state.commands);
+      }
+      setBrowserState('status', status);
+    } catch (error) {
+      console.error('[Fubuki] Full state refresh failed:', error);
+      setBrowserState('status', 'Error');
+    }
+  })().finally(() => {
+    pendingFullRefresh = undefined;
+  });
+  return pendingFullRefresh;
+}
+
+// Keep backward-compatible alias
+export const refreshState = refreshFullState;
+
+// --- Accessors ---
 
 export function activeTab(): Tab | undefined {
   return browserState.tabs.find((tab) => tab.id === browserState.activeTabId);
@@ -84,6 +163,8 @@ export function activeTabId(): string {
 export function currentLanguage(): string {
   return browserState.settings.language;
 }
+
+// --- Actions ---
 
 export async function toggleBookmark(): Promise<void> {
   const tab = activeTab();
@@ -103,7 +184,8 @@ export async function toggleBookmark(): Promise<void> {
         faviconUrl: tab.faviconUrl || '',
       });
     }
-    await refreshState('bookmarks.changed');
+    // Only refresh bookmarks, not the full state
+    await refreshBookmarks();
   } catch (error) {
     console.error('[Fubuki] Failed to toggle bookmark:', error);
   }
@@ -112,11 +194,14 @@ export async function toggleBookmark(): Promise<void> {
 export function toggleSidebar(): void {
   const next =
     browserState.settings.sidebarVisible === 'hide' ? 'show' : 'hide';
+  // Update optimistically — no bridge refresh needed for UI state
+  setBrowserState('settings', 'sidebarVisible', next);
   void invokeBridge('settings.set', { key: 'sidebarVisible', value: next })
-    .then(() => refreshState('settings.saved'))
-    .catch((error) =>
-      console.error('[Fubuki] Failed to toggle sidebar:', error),
-    );
+    .catch((error) => {
+      console.error('[Fubuki] Failed to toggle sidebar:', error);
+      // Revert on failure
+      setBrowserState('settings', 'sidebarVisible', next === 'show' ? 'hide' : 'show');
+    });
 }
 
 export function navigateInternal(url: string): void {
@@ -129,33 +214,152 @@ export function navigateInternal(url: string): void {
   );
 }
 
+// --- Event binding ---
+
 export function bindNativeEvents() {
-  const refreshEvents: Array<keyof EventMap> = [
-    'tabs.created',
-    'tabs.updated',
-    'tabs.closed',
-    'tabs.activated',
-    'navigation.started',
-    'navigation.finished',
-    'navigation.failed',
-    'downloads.updated',
-    'download.changed',
-    'bookmark.changed',
-    'history.changed',
-    'setting.changed',
-    'permission.changed',
-    'window.created',
-    'window.closed',
-    'window.focused',
-    'app.stateChanged',
+  // All tab/window events are handled by direct store patches — zero bridge calls.
+  const disposers = [
+    // --- Tab lifecycle (direct patches) ---
+    onBridgeEvent('tab.created', (tab) => {
+      const nextTab = fromFrostTab(tab);
+      if (nextTab.isActive) {
+        setBrowserState('tabs', (item) => item.id !== nextTab.id, {
+          isActive: false,
+        });
+      }
+      setBrowserState('tabs', (tabs) => [
+        ...tabs.filter((item) => item.id !== nextTab.id),
+        nextTab,
+      ]);
+      if (nextTab.isActive) {
+        setBrowserState('activeTabId', nextTab.id);
+      }
+    }),
+
+    onBridgeEvent('tab.updated', (patch) => {
+      const tabPatch = toTabPatch(patch);
+      if (tabPatch) {
+        setBrowserState('tabs', (tab) => tab.id === patch.tabId, (tab) => ({
+          ...tab,
+          ...tabPatch,
+        }));
+      }
+    }),
+
+    onBridgeEvent('tab.closed', ({ tabId }) => {
+      const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
+      setBrowserState('tabs', remaining);
+      if (browserState.activeTabId === tabId) {
+        setBrowserState('activeTabId', remaining[0]?.id ?? '');
+      }
+    }),
+
+    onBridgeEvent('tab.activated', ({ tabId }) => {
+      setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
+      setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
+      setBrowserState('activeTabId', tabId);
+    }),
+
+    // --- Window lifecycle (direct patches) ---
+    onBridgeEvent('window.created', (windowState) => {
+      if (windowState) {
+        setBrowserState('windows', (w) => [
+          ...w,
+          {
+            id: windowState.id,
+            private: windowState.isPrivate,
+            activeTabId: windowState.activeTabId ?? '',
+            tabs: [],
+          },
+        ]);
+      }
+    }),
+
+    onBridgeEvent('window.closed', () => {
+      // Windows changed — need full refresh to reconcile tabs
+      void refreshFullState('window.closed');
+    }),
+
+    onBridgeEvent('window.focused', () => {
+      // Window focus changed — need full refresh to get active window/tabs
+      void refreshFullState('window.focused');
+    }),
+
+    // --- Settings (direct patch) ---
+    onBridgeEvent('setting.changed', ({ key, value }) => {
+      if (
+        typeof key === 'string' &&
+        typeof value === 'string' &&
+        isSettingsKey(key)
+      ) {
+        setBrowserState('settings', key, value);
+      }
+    }),
+
+    // --- Bookmarks / History (targeted single-endpoint refresh) ---
+    onBridgeEvent('bookmark.changed', () => {
+      void refreshBookmarks();
+    }),
+
+    onBridgeEvent('history.changed', () => {
+      void refreshHistory();
+    }),
+
+    onBridgeEvent('permission.changed', () => {
+      // Permissions are rarely needed in the sidebar — skip refresh.
+      // Will be available on next full refresh (startup, settings page).
+    }),
+
+    // --- Downloads (targeted refresh) ---
+    onBridgeEvent('downloads.updated', () => {
+      void refreshFullState('downloads.updated');
+    }),
+
+    onBridgeEvent('download.changed', () => {
+      void refreshFullState('download.changed');
+    }),
+
+    // --- Full app state changed (edge cases) ---
+    onBridgeEvent('app.stateChanged', () => {
+      void refreshFullState('app.stateChanged');
+    }),
   ];
 
-  const disposers = refreshEvents.map((eventName) =>
-    onBridgeEvent(eventName, () => {
-      void refreshState(eventName);
-    }),
-  );
+  // Fire-and-forget initial state load
+  void refreshFullState('Ready');
 
-  void refreshState('Ready');
   return () => disposers.forEach((dispose) => dispose());
+}
+
+// --- Helpers ---
+
+function toTabPatch(
+  patch: Partial<FrostTabState> & { tabId: string },
+): Partial<Tab> | null {
+  // Fast path: check if any field actually changed
+  const keys = Object.keys(patch) as Array<string>;
+  let hasChanges = false;
+  for (const key of keys) {
+    if (key !== 'tabId' && key !== 'windowId') {
+      hasChanges = true;
+      break;
+    }
+  }
+  if (!hasChanges) return null;
+
+  const next: Partial<Tab> = {};
+  if (patch.title !== undefined) next.title = patch.title;
+  if (patch.url !== undefined) next.url = patch.url;
+  if (patch.faviconUrl !== undefined) next.faviconUrl = patch.faviconUrl;
+  if (patch.errorText !== undefined) next.errorText = patch.errorText;
+  if (patch.zoomLevel !== undefined) next.zoomLevel = patch.zoomLevel;
+  if (patch.isLoading !== undefined) next.isLoading = patch.isLoading;
+  if (patch.canGoBack !== undefined) next.canGoBack = patch.canGoBack;
+  if (patch.canGoForward !== undefined) next.canGoForward = patch.canGoForward;
+  if (patch.isPinned !== undefined) next.isPinned = patch.isPinned;
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function isSettingsKey(key: string): key is keyof BrowserState['settings'] {
+  return key in browserState.settings;
 }

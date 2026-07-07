@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 
 // browserStore の関数を直接インポートするのではなく、
 // 同じロジックを検証するためのヘルパーをテストする。

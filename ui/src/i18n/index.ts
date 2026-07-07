@@ -13,9 +13,15 @@ export function systemLanguage(): Language {
   return language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
 }
 
+let cachedSetting: string | undefined;
+let cachedLang: Language = 'en';
+
 export function resolveLanguage(setting: string | undefined): Language {
+  if (setting === cachedSetting) return cachedLang;
+  cachedSetting = setting;
   const normalized = normalizeLanguage(setting);
-  return normalized === 'system' ? systemLanguage() : normalized;
+  cachedLang = normalized === 'system' ? systemLanguage() : normalized;
+  return cachedLang;
 }
 
 export function translate(key: I18nKey, language: Language): string {

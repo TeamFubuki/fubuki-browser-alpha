@@ -36,6 +36,7 @@ set(FUBUKI_SOURCES
   src/browser/BrowserDataStore.cc
   src/browser/Tab.cc
   src/browser/TabManager.cc
+  src/bridge/FrostBridge.cc
   src/bridge/NativeBridge.cc
   src/commands/CommandRegistry.cc
   src/events/EventBus.cc
@@ -51,7 +52,32 @@ set(FUBUKI_HELPER_SOURCES
 
 add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" libcef_dll_wrapper)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(FUBUKI_RUST_PROFILE "debug")
+  set(FUBUKI_CARGO_PROFILE_ARG "")
+else()
+  set(FUBUKI_RUST_PROFILE "release")
+  set(FUBUKI_CARGO_PROFILE_ARG "--release")
+endif()
+set(FUBUKI_FROST_FFI_LIB "${CMAKE_SOURCE_DIR}/../target/${FUBUKI_RUST_PROFILE}/libfrost_ffi.a")
+add_custom_command(
+  OUTPUT "${FUBUKI_FROST_FFI_LIB}"
+  COMMAND ${CMAKE_COMMAND} -E env "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}" cargo build -p frost-ffi ${FUBUKI_CARGO_PROFILE_ARG}
+  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
+  DEPENDS
+    "${CMAKE_SOURCE_DIR}/../Cargo.toml"
+    "${CMAKE_SOURCE_DIR}/../crates/frost-ffi/src/lib.rs"
+    "${CMAKE_SOURCE_DIR}/../crates/frost-core/src/lib.rs"
+    "${CMAKE_SOURCE_DIR}/../crates/frost-protocol/src/lib.rs"
+    "${CMAKE_SOURCE_DIR}/../crates/frost-store/src/lib.rs"
+  VERBATIM
+)
+add_custom_target(frost_ffi ALL DEPENDS "${FUBUKI_FROST_FFI_LIB}")
+add_library(frost_ffi_static STATIC IMPORTED GLOBAL)
+set_target_properties(frost_ffi_static PROPERTIES IMPORTED_LOCATION "${FUBUKI_FROST_FFI_LIB}")
+
 add_executable(FubukiBrowserAlpha MACOSX_BUNDLE ${FUBUKI_SOURCES})
+add_dependencies(FubukiBrowserAlpha frost_ffi)
 set_target_properties(FubukiBrowserAlpha PROPERTIES
   OUTPUT_NAME "Fubuki Browser Alpha"
   MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist.in"
@@ -73,7 +99,7 @@ target_compile_options(FubukiBrowserAlpha PRIVATE
   -Wno-gnu-zero-variadic-macro-arguments
 )
 target_link_options(FubukiBrowserAlpha PRIVATE ${CEF_LINKER_FLAGS})
-target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3 "-framework QuartzCore")
+target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper frost_ffi_static ${CEF_STANDARD_LIBS} sqlite3 "-framework QuartzCore")
 
 set(FUBUKI_APP_BUNDLE "$<TARGET_BUNDLE_DIR:FubukiBrowserAlpha>")
 COPY_MAC_FRAMEWORK(FubukiBrowserAlpha "${CEF_BINARY_DIR}" "${FUBUKI_APP_BUNDLE}")

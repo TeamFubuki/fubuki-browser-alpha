@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { commands, invokeBridge } from './bridge/fubuki';
+import { commands, tabs } from './bridge/fubuki';
 import BrowserShell from './components/BrowserShell';
 import CommandPalette from './components/commandPalette/CommandPalette';
 import { resolveLanguage } from './i18n';
@@ -9,10 +9,12 @@ import {
   bindNativeEvents,
   browserState,
   navigateInternal,
-  refreshState,
   toggleBookmark,
   toggleSidebar,
 } from './stores/browserStore';
+
+// Cached DOM references
+let omniboxInput: HTMLInputElement | null = null;
 
 function onKeyDown(event: KeyboardEvent) {
   const command = event.metaKey || event.ctrlKey;
@@ -26,9 +28,9 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (key === 'l') {
-    const input = document.querySelector<HTMLInputElement>('.omnibox-input');
-    input?.focus();
-    input?.select();
+    if (!omniboxInput) omniboxInput = document.querySelector('.omnibox-input');
+    omniboxInput?.focus();
+    omniboxInput?.select();
     event.preventDefault();
     return;
   }
@@ -43,12 +45,12 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (key === 't' && event.shiftKey) {
-    void commands.execute('tabs.reopenClosed');
+    void tabs.reopenClosed();
     event.preventDefault();
     return;
   }
   if (key === 't') {
-    void commands.execute('tabs.create');
+    void tabs.create();
     event.preventDefault();
     return;
   }
@@ -92,16 +94,16 @@ function onKeyDown(event: KeyboardEvent) {
     void commands.execute('windows.close');
     event.preventDefault();
   } else if (key === 'w') {
-    void commands.execute('tabs.close', { tabId: tab.id });
+    void tabs.close(tab.id);
     event.preventDefault();
   } else if (key === 'r') {
-    void invokeBridge('tabs.reload', { tabId: tab.id });
+    void tabs.reload(tab.id);
     event.preventDefault();
   } else if (event.key === '[') {
-    void invokeBridge('tabs.goBack', { tabId: tab.id });
+    void tabs.goBack(tab.id);
     event.preventDefault();
   } else if (event.key === ']') {
-    void invokeBridge('tabs.goForward', { tabId: tab.id });
+    void tabs.goForward(tab.id);
     event.preventDefault();
   }
 }
@@ -115,36 +117,27 @@ export default function App() {
 
   createEffect(() => {
     const appearance = browserState.settings.appearance || 'system';
-
-    document.documentElement.dataset.theme =
+    const root = document.documentElement;
+    
+    root.dataset.theme =
       appearance === 'dark' || (appearance === 'system' && systemDark())
         ? 'dark'
         : 'light';
 
-    document.documentElement.dataset.sidebar =
+    root.dataset.sidebar =
       quietMode() || browserState.settings.sidebarVisible === 'hide'
         ? 'hide'
         : 'show';
 
-    document.documentElement.dataset.quietMode = quietMode() ? 'true' : 'false';
-    document.documentElement.lang = resolveLanguage(
-      browserState.settings.language,
-    );
-    document.documentElement.dataset.language =
-      browserState.settings.language || 'system';
+    root.dataset.quietMode = quietMode() ? 'true' : 'false';
+    root.lang = resolveLanguage(browserState.settings.language);
+    root.dataset.language = browserState.settings.language || 'system';
 
-    if (document.documentElement.dataset.sidebarResizing !== 'true') {
+    if (root.dataset.sidebarResizing !== 'true') {
       const width = clampSidebarWidth(
         Number(browserState.settings.sidebarWidth) || DEFAULT_SIDEBAR_WIDTH,
       );
-      document.documentElement.style.setProperty(
-        '--sidebar-width',
-        `${width}px`,
-      );
-      document.documentElement.style.setProperty(
-        '--sidebar-width',
-        `${width}px`,
-      );
+      root.style.setProperty('--sidebar-width', `${width}px`);
     }
   });
 

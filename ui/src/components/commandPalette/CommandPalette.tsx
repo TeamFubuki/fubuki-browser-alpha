@@ -170,7 +170,9 @@ export default function CommandPalette(props: Props) {
           onMouseDown={(event) => event.stopPropagation()}
         >
           <input
-            ref={inputRef}
+            ref={(element) => {
+              inputRef = element;
+            }}
             class="command-palette-input"
             value={query()}
             placeholder={t('commandPalette.placeholder', currentLanguage())}

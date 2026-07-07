@@ -10,6 +10,9 @@ native/Makefile
 native/cmake_install.cmake
 native/*.app/
 
+# Rust build artifacts
+target/
+
 # UI build artifacts
 ui/dist/
 ui/node_modules/
@@ -18,9 +21,27 @@ ui/node_modules/
 third_party/cef/
 .cache/
 
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
 # Logs
 *.log
 pnpm-debug.log*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Test coverage
+coverage/
+
+# OS files
+Thumbs.db

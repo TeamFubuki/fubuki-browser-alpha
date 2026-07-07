@@ -2,12 +2,28 @@ import { createEffect, createSignal } from 'solid-js';
 import { tabs } from '../bridge/fubuki';
 import { t } from '../i18n';
 import { browserState } from '../stores/browserStore';
-import { normalizeOmniboxInput } from '../utils/navigation';
+import {
+  normalizeOmniboxInput,
+  shouldTreatAsSearch,
+} from '../utils/navigation';
+
+function buildSearchUrl(query: string): string {
+  const engine = browserState.settings.searchEngine || 'google';
+  const custom = browserState.settings.customSearchUrl ||
+    'https://www.google.com/search?q={query}';
+  const encoded = encodeURIComponent(query);
+  if (engine === 'duckduckgo')
+    return `https://duckduckgo.com/?q=${encoded}`;
+  if (engine === 'bing')
+    return `https://www.bing.com/search?q=${encoded}`;
+  if (engine === 'custom') return custom.replace('{query}', encoded);
+  return `https://www.google.com/search?q=${encoded}`;
+}
 
 export default function Omnibox() {
   const [draft, setDraft] = createSignal('');
   const [focused, setFocused] = createSignal(false);
-  const [isComposing, setIsComposing] = createSignal(false);
+  let composing = false;
   let lastSyncedTabId = '';
 
   createEffect(() => {
@@ -22,13 +38,20 @@ export default function Omnibox() {
   });
 
   const submit = () => {
-    if (isComposing()) return;
-    const tab = browserState.tabs.find(
-      (item) => item.id === browserState.activeTabId,
-    );
-    const input = normalizeOmniboxInput(draft()).value;
-    if (!tab || !input) return;
-    void tabs.navigate(tab.id, input);
+    if (composing) return;
+    const raw = draft().trim();
+    if (!raw) return;
+
+    const input = normalizeOmniboxInput(raw);
+    const url =
+      input.kind === 'search' ? buildSearchUrl(input.value) : input.value;
+
+    const tabId = browserState.activeTabId;
+    if (tabId) {
+      void tabs.navigate(tabId, url);
+    } else {
+      void tabs.create(url);
+    }
   };
 
   let inputRef: HTMLInputElement | undefined;
@@ -38,12 +61,13 @@ export default function Omnibox() {
       class="omnibox"
       onSubmit={(event) => {
         event.preventDefault();
-        if (isComposing()) return;
         submit();
       }}
     >
       <input
-        ref={inputRef}
+        ref={(el) => {
+          inputRef = el;
+        }}
         class="omnibox-input"
         value={draft()}
         placeholder={t(
@@ -61,16 +85,22 @@ export default function Omnibox() {
           setFocused(true);
           inputRef?.select();
         }}
-        onBlur={() => setFocused(false)}
+        onBlur={() => {
+          setFocused(false);
+          composing = false;
+        }}
         onInput={(event) => setDraft(event.currentTarget.value)}
-        onCompositionStart={() => setIsComposing(true)}
+        onCompositionStart={() => {
+          composing = true;
+        }}
         onCompositionEnd={(event) => {
-          setIsComposing(false);
+          composing = false;
           setDraft(event.currentTarget.value);
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.isComposing || isComposing())) {
+          if (event.key === 'Enter' && !composing) {
             event.preventDefault();
+            submit();
           }
         }}
       />

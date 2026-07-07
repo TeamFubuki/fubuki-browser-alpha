@@ -1,0 +1,14 @@
+pub mod event;
+pub mod request;
+pub mod response;
+pub mod state;
+
+pub use event::{Event, EventEnvelope, SettingChanged, TabActivated, TabClosed, TabPatch};
+pub use request::{ProtocolRequest, Request};
+pub use response::{ProtocolResponse, Response};
+pub use state::{
+    AppState, BookmarkRecord, BrowserCommand, DownloadRecord, HistoryRecord, PermissionRecord,
+    TabState, WindowState,
+};
+
+pub const PROTOCOL_VERSION: u16 = 0;

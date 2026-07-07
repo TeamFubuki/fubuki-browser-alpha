@@ -17,31 +17,28 @@ permissions:
   contents: read
 
 env:
-  PNPM_VERSION: "11.9.0"
-  NODE_VERSION: "24"
+  PNPM_VERSION: "11"
+  NODE_VERSION: "22"
 
 jobs:
   ui-check:
     name: UI check
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     defaults:
       run:
         working-directory: ui
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
-          run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -51,20 +48,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: |
-          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.lint ? 0 : 1)"; then
-            pnpm run lint
-          else
-            echo "No lint script. Skipping."
-          fi
-
-      - name: Format check
-        run: |
-          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts['format:check'] ? 0 : 1)"; then
-            pnpm run format:check
-          else
-            echo "No format:check script. Skipping."
-          fi
+        run: pnpm run lint
 
       - name: Typecheck & Build
         run: pnpm run build
@@ -72,19 +56,43 @@ jobs:
       - name: Tests
         run: pnpm run test
 
+  rust-check:
+    name: Rust check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --all
+
   native-test:
     name: Native test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Install CMake
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake
+        uses: lukka/get-cmake@latest
 
       - name: Configure
         run: cmake -S native/tests -B native/tests/build -DCMAKE_BUILD_TYPE=Debug
@@ -99,10 +107,9 @@ jobs:
     name: Repository hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Merge conflict markers
         run: |
@@ -111,10 +118,11 @@ jobs:
             --exclude-dir=node_modules \
             --exclude-dir=dist \
             --exclude-dir=build \
+            --exclude-dir=target \
             --exclude-dir=third_party \
             --exclude='pnpm-lock.yaml' \
             -E '^(<<<<<<<|=======|>>>>>>>)' .; then
-            echo "Merge conflict markers found."
+            echo "::error::Merge conflict markers found."
             exit 1
           fi
 
@@ -124,7 +132,7 @@ jobs:
           while IFS= read -r file; do
             size=$(wc -c < "$file")
             if [ "$size" -gt $((20 * 1024 * 1024)) ]; then
-              echo "Large file: $file ($size bytes)"
+              echo "::warning::Large file: $file ($size bytes)"
               failed=1
             fi
           done < <(
@@ -133,6 +141,7 @@ jobs:
               ! -path './ui/node_modules/*' \
               ! -path './node_modules/*' \
               ! -path './third_party/*' \
-              ! -path './native/build/*'
+              ! -path './native/build/*' \
+              ! -path './target/*'
           )
           exit "$failed"

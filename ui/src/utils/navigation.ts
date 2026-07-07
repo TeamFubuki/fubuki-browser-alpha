@@ -9,7 +9,7 @@ export function containsWhitespace(value: string): boolean {
 }
 
 export function containsNonAscii(value: string): boolean {
-  return /[^\u0000-\u007f]/.test(value);
+  return Array.from(value).some((char) => char.charCodeAt(0) > 0x7f);
 }
 
 function stripPathQueryFragment(value: string): string {

@@ -166,8 +166,8 @@ private:
   EventBus &eventBus_;
   TabManager &tabManager_;
   CommandRegistry commands_;
-  std::unique_ptr<NativeBridge> bridge_;
   BrowserDataStore *dataStore_ = nullptr;
+  std::unique_ptr<NativeBridge> bridge_;
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
   std::vector<ClosedTab> closedTabs_;

@@ -716,6 +716,59 @@ std::string NewTabHtml() {
 
 }  // namespace
 
+// PageCache implementation
+
+PageCache &PageCache::Instance() {
+  static PageCache instance;
+  return instance;
+}
+
+bool PageCache::Get(const std::string &url, std::string &html) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = cache_.find(url);
+  if (it == cache_.end()) {
+    return false;
+  }
+  if (std::chrono::steady_clock::now() > it->second.first.expiresAt) {
+    order_.erase(it->second.second);
+    cache_.erase(it);
+    return false;
+  }
+  order_.splice(order_.begin(), order_, it->second.second);
+  html = it->second.first.html;
+  return true;
+}
+
+void PageCache::Set(const std::string &url, std::string html,
+                    std::chrono::seconds ttl) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = cache_.find(url);
+  if (it != cache_.end()) {
+    order_.erase(it->second.second);
+    cache_.erase(it);
+  }
+  if (cache_.size() >= kMaxEntries) {
+    auto last = std::prev(order_.end());
+    cache_.erase(last->first);
+    order_.erase(last);
+  }
+  order_.emplace_front(url, html);
+  cache_[url] = {{std::move(html), std::chrono::steady_clock::now() + ttl},
+                  order_.begin()};
+}
+
+void PageCache::Invalidate(const std::string &prefix) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (auto it = order_.begin(); it != order_.end();) {
+    if (it->first.find(prefix) == 0) {
+      cache_.erase(it->first);
+      it = order_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 FubukiSchemeHandler::FubukiSchemeHandler(std::string uiDistPath)
     : uiDistPath_(std::move(uiDistPath)) {}
 
@@ -757,26 +810,120 @@ bool FubukiSchemeHandler::Read(void *data_out, int bytes_to_read,
 
 void FubukiSchemeHandler::Cancel() {}
 
+std::string ExtractQueryParam(const std::string &url,
+                              const std::string &key) {
+  const size_t qpos = url.find('?');
+  if (qpos == std::string::npos) return "";
+  const std::string query = url.substr(qpos + 1);
+  const std::string needle = key + "=";
+  size_t start = 0;
+  while (start < query.size()) {
+    const size_t pos = query.find(needle, start);
+    if (pos == std::string::npos) return "";
+    if (pos == 0 || query[pos - 1] == '&') {
+      const size_t valueStart = pos + needle.size();
+      const size_t ampersand = query.find('&', valueStart);
+      return query.substr(valueStart,
+                          ampersand == std::string::npos
+                              ? std::string::npos
+                              : ampersand - valueStart);
+    }
+    start = pos + 1;
+  }
+  return "";
+}
+
+std::string SearchRedirectUrl(const std::string &query) {
+  if (query.empty()) return "";
+  const std::string engine = Setting("searchEngine", "google");
+  const std::string customUrl =
+      Setting("customSearchUrl", "https://www.google.com/search?q={query}");
+  std::string encoded = CefURIEncode(query, false).ToString();
+  if (engine == "duckduckgo")
+    return "https://duckduckgo.com/?q=" + encoded;
+  if (engine == "bing")
+    return "https://www.bing.com/search?q=" + encoded;
+  if (engine == "custom") {
+    std::string url = customUrl;
+    const size_t pos = url.find("{query}");
+    if (pos != std::string::npos) url.replace(pos, 7, encoded);
+    return url;
+  }
+  return "https://www.google.com/search?q=" + encoded;
+}
+
 bool FubukiSchemeHandler::LoadRequest(const std::string &url) {
   offset_ = 0;
+  auto &cache = PageCache::Instance();
+
+  // Handle new tab search: fubuki://newtab/search?q=...
+  if (url.rfind("fubuki://newtab/search", 0) == 0) {
+    const std::string query = ExtractQueryParam(url, "q");
+    const std::string redirect = SearchRedirectUrl(query);
+    if (!redirect.empty()) {
+      // Use meta refresh for safe redirect (avoids JS injection)
+      const std::string html =
+          "<!doctype html><meta http-equiv=\"refresh\" content=\"0;url=" +
+          redirect + "\">";
+      LoadText(html, "text/html", 200);
+      return true;
+    }
+    // Empty query — just show new tab
+  }
+
   if (url.rfind("fubuki://newtab/", 0) == 0) {
-    LoadText(NewTabHtml(), "text/html", 200);
+    std::string html;
+    if (cache.Get(url, html)) {
+      LoadText(std::move(html), "text/html", 200);
+    } else {
+      html = NewTabHtml();
+      cache.Set(url, html);
+      LoadText(std::move(html), "text/html", 200);
+    }
     return true;
   }
   if (url.rfind("fubuki://bookmarks/", 0) == 0) {
-    LoadText(BookmarksHtml(), "text/html", 200);
+    std::string html;
+    if (cache.Get(url, html)) {
+      LoadText(std::move(html), "text/html", 200);
+    } else {
+      html = BookmarksHtml();
+      cache.Set(url, html);
+      LoadText(std::move(html), "text/html", 200);
+    }
     return true;
   }
   if (url.rfind("fubuki://downloads/", 0) == 0) {
-    LoadText(DownloadsHtml(), "text/html", 200);
+    std::string html;
+    if (cache.Get(url, html)) {
+      LoadText(std::move(html), "text/html", 200);
+    } else {
+      html = DownloadsHtml();
+      cache.Set(url, html);
+      LoadText(std::move(html), "text/html", 200);
+    }
     return true;
   }
   if (url.rfind("fubuki://history/", 0) == 0) {
-    LoadText(HistoryHtml(), "text/html", 200);
+    std::string html;
+    if (cache.Get(url, html)) {
+      LoadText(std::move(html), "text/html", 200);
+    } else {
+      html = HistoryHtml();
+      cache.Set(url, html);
+      LoadText(std::move(html), "text/html", 200);
+    }
     return true;
   }
   if (url.rfind("fubuki://settings", 0) == 0) {
-    LoadText(SettingsHtml(), "text/html", 200);
+    std::string html;
+    if (cache.Get(url, html)) {
+      LoadText(std::move(html), "text/html", 200);
+    } else {
+      html = SettingsHtml();
+      cache.Set(url, html, std::chrono::seconds{2});
+      LoadText(std::move(html), "text/html", 200);
+    }
     return true;
   }
   if (url.rfind("fubuki://debug/", 0) == 0) {

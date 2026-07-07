@@ -10,6 +10,7 @@
   overflow: hidden;
   background: var(--bg);
   pointer-events: none;
+  contain: layout style;
   transition: grid-template-columns 0.16s ease;
 }
 
@@ -36,4 +37,5 @@
   background: var(--content-bg);
   border-top: 1px solid var(--line);
   pointer-events: none;
+  contain: layout style paint;
 }

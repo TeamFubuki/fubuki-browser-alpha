@@ -3,5 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-rm -rf "$ROOT_DIR/native/build" "$ROOT_DIR/ui/dist"
-echo "Removed native/build and ui/dist"
+echo "Cleaning build artifacts..."
+
+rm -rf "$ROOT_DIR/native/build"
+rm -rf "$ROOT_DIR/ui/dist"
+rm -rf "$ROOT_DIR/target"
+rm -rf "$ROOT_DIR/.cache"
+
+echo "Removed: native/build, ui/dist, target, .cache"

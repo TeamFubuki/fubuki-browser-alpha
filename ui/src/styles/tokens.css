@@ -24,6 +24,8 @@
   color: var(--text);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 :root[data-theme='dark'] {
@@ -64,6 +66,7 @@ button,
 input,
 select {
   font: inherit;
+  -webkit-tap-highlight-color: transparent;
 }
 
 input,
@@ -76,6 +79,7 @@ button {
   appearance: none;
   border: 0;
   cursor: default;
+  background: transparent;
 }
 
 button:focus-visible,

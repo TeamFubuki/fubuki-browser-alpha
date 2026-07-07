@@ -5,7 +5,6 @@ import type {
   EventMap,
   Settings,
   Tab,
-  BrowserState,
 } from '../bridge/fubuki';
 
 describe('BridgeMethodMap types', () => {
@@ -122,14 +121,14 @@ describe('EventMap types', () => {
     }>();
   });
 
-  it('has void payloads for state change events', () => {
+  it('has typed payloads for state change events', () => {
     type TabsCreated = EventMap['tabs.created'];
     type TabsUpdated = EventMap['tabs.updated'];
     type BookmarkChanged = EventMap['bookmark.changed'];
 
     expectTypeOf<TabsCreated>().toBeVoid();
     expectTypeOf<TabsUpdated>().toBeVoid();
-    expectTypeOf<BookmarkChanged>().toBeVoid();
+    expectTypeOf<BookmarkChanged>().toMatchTypeOf<{ url?: string } | void>();
   });
 });
 

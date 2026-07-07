@@ -1,5 +1,5 @@
 import { createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { invokeBridge, page } from '../bridge/fubuki';
+import { page, tabs } from '../bridge/fubuki';
 import { t } from '../i18n';
 import {
   activeTab,
@@ -18,12 +18,6 @@ export default function TopBar() {
   const isLoading = createMemo(() => currentTab()?.isLoading ?? false);
   const canGoBack = createMemo(() => currentTab()?.canGoBack ?? false);
   const canGoForward = createMemo(() => currentTab()?.canGoForward ?? false);
-  const tabUrl = createMemo(() => currentTab()?.url);
-
-  const isDisabledUrl = createMemo(() => {
-    const url = tabUrl();
-    return !url || url.startsWith('fubuki://') || url.startsWith('data:');
-  });
 
   onMount(() => {
     const showFind = () => setFindOpen(true);
@@ -48,11 +42,7 @@ export default function TopBar() {
         title={t('common.back', lang())}
         aria-label={t('common.back', lang())}
         disabled={!canGoBack()}
-        onClick={() =>
-          void invokeBridge('tabs.goBack', {
-            tabId: browserState.activeTabId,
-          })
-        }
+        onClick={() => void tabs.goBack(browserState.activeTabId)}
       >
         <span aria-hidden="true">←</span>
       </button>
@@ -61,11 +51,7 @@ export default function TopBar() {
         title={t('common.forward', lang())}
         aria-label={t('common.forward', lang())}
         disabled={!canGoForward()}
-        onClick={() =>
-          void invokeBridge('tabs.goForward', {
-            tabId: browserState.activeTabId,
-          })
-        }
+        onClick={() => void tabs.goForward(browserState.activeTabId)}
       >
         <span aria-hidden="true">→</span>
       </button>
@@ -79,9 +65,9 @@ export default function TopBar() {
         }
         disabled={!currentTab()}
         onClick={() =>
-          void invokeBridge(isLoading() ? 'tabs.stop' : 'tabs.reload', {
-            tabId: browserState.activeTabId,
-          })
+          void (isLoading()
+            ? tabs.stop(browserState.activeTabId)
+            : tabs.reload(browserState.activeTabId))
         }
       >
         <span aria-hidden="true">{isLoading() ? '×' : '↻'}</span>
@@ -102,7 +88,7 @@ export default function TopBar() {
             ? t('action.removeBookmark', lang())
             : t('action.addBookmark', lang())
         }
-        disabled={isDisabledUrl()}
+        disabled={!currentTab()}
         onClick={() => void toggleBookmark()}
       >
         <span aria-hidden="true">{isBookmarked() ? '★' : '☆'}</span>
