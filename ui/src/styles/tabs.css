@@ -38,16 +38,25 @@
   width: 100%;
   height: 28px;
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 4px;
   padding: 0 8px;
-  background: var(--content-bg);
+  background: transparent;
+  border: 1px solid var(--md-outline, rgb(68 71 78 / 0.38));
   color: var(--text);
   font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
   contain: layout style;
-  transition:
-    border-color 0.14s ease,
-    background-color 0.14s ease;
+}
+
+.tab-search:hover {
+  border-color: var(--md-on-surface, var(--text));
+}
+
+.tab-search:focus {
+  border-color: var(--md-primary, var(--accent));
+  border-width: 2px;
+  padding: 0 7px;
 }
 
 .tab-search-toggle {
@@ -59,9 +68,6 @@
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  transition:
-    background-color 0.14s ease,
-    color 0.14s ease;
 }
 
 .tab-search-toggle:hover {
@@ -84,8 +90,6 @@
   height: 28px;
   border-radius: 7px;
   contain: layout style;
-  transition:
-    background-color 0.14s ease;
 }
 
 .pinned-tab:hover,
@@ -111,7 +115,6 @@
 }
 
 .vertical-tab-list::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted) 40%, transparent);
   background-clip: padding-box;
@@ -127,9 +130,6 @@
   border-radius: 7px;
   color: var(--muted);
   contain: layout style;
-  transition:
-    background-color 0.14s ease,
-    color 0.14s ease;
 }
 
 .vertical-tab:hover {
@@ -139,7 +139,6 @@
 .vertical-tab.active {
   background: var(--active);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .tab-activate {
@@ -181,10 +180,6 @@
   color: var(--muted);
   font-size: 12px;
   opacity: 0;
-  transition:
-    opacity 0.12s ease,
-    background-color 0.14s ease,
-    color 0.14s ease;
 }
 
 .vertical-tab:hover .tab-close,
@@ -227,21 +222,14 @@
 }
 
 .tab-icon.loading {
-  border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
-  border-top-color: var(--accent);
   border-radius: 999px;
+  background:
+    radial-gradient(circle at center, var(--sidebar-bg) 52%, transparent 53%),
+    conic-gradient(var(--accent), color-mix(in srgb, var(--muted) 35%, transparent));
   animation: tab-spin 0.85s linear infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tab-search,
-  .tab-search-toggle,
-  .pinned-tab,
-  .vertical-tab,
-  .tab-close {
-    transition: none;
-  }
-}
+
 
 @keyframes tab-spin {
   to {

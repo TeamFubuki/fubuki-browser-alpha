@@ -45,6 +45,8 @@
 
 * {
   box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
 }
 
 html,
@@ -64,27 +66,62 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   -webkit-tap-highlight-color: transparent;
 }
 
 input,
-select {
+select,
+textarea {
   user-select: text;
+}
+
+button,
+input,
+select,
+textarea {
+  border: 0;
+  background: transparent;
 }
 
 button {
   -webkit-app-region: no-drag;
   appearance: none;
-  border: 0;
   cursor: default;
+}
+
+input[type],
+select,
+textarea {
+  border: 1px solid var(--md-outline, rgb(68 71 78 / 0.38));
+  border-radius: 4px;
+  padding: 16px;
+  height: 56px;
+  color: var(--md-on-surface, var(--text));
   background: transparent;
 }
 
+input[type]:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--md-on-surface, var(--text));
+}
+
+input[type]:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--md-primary, var(--accent));
+  border-width: 2px;
+  padding: 15px;
+  outline: none;
+}
+
 button:focus-visible,
-input:focus-visible,
-select:focus-visible {
+input:not([type]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);
   outline-offset: 1px;
 }
