@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "automation/AutomationController.h"
 #include "browser/BrowserDataStore.h"
 #include "browser/TabManager.h"
 #include "events/EventBus.h"
@@ -47,6 +48,9 @@ public:
   const EventBus &Events() const {
     return eventBus_;
   }
+  AutomationController &Automation() {
+    return automation_;
+  }
 
 private:
   struct WindowContext {
@@ -60,6 +64,7 @@ private:
   std::filesystem::path profilePath_;
   BrowserDataStore store_;
   EventBus eventBus_;
+  AutomationController automation_;
   std::vector<std::unique_ptr<WindowContext>> windows_;
   std::vector<CefRefPtr<CefDictionaryValue>> closedWindows_;
   BrowserWindow *activeWindow_ = nullptr;

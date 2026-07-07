@@ -26,6 +26,10 @@ list(REMOVE_ITEM FUBUKI_CEF_COMPILER_FLAGS -Werror)
 
 set(FUBUKI_SOURCES
   src/main.cc
+  src/automation/AutomationController.cc
+  src/automation/AutomationIpcServer.cc
+  src/automation/BrowserAutomation.cc
+  src/automation/PageAutomation.mm
   src/app/FubukiApp.cc
   src/cef/FubukiCefApp.cc
   src/cef/FubukiClient.cc

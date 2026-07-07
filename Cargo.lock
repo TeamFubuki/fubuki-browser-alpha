@@ -119,6 +119,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fubuki-mcp-server"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"

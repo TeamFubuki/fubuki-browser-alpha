@@ -927,7 +927,8 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       key != "toolbarDensity" && key != "sidebarVisible" && key != "sidebarWidth" &&
       key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
       key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload" &&
-      key != "defaultZoomLevel" && key != "closeWindowWithLastTab" && key != "privateSearchEngine") {
+      key != "defaultZoomLevel" && key != "closeWindowWithLastTab" && key != "privateSearchEngine" &&
+      key != "automation.mcp.enabled" && key != "automation.mcp.confirmSensitive") {
     return false;
   }
   std::string savedValue = value;
@@ -939,6 +940,9 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     }
   }
   dataStore_->SetSetting(key, savedValue);
+  if (key.rfind("automation.mcp.", 0) == 0) {
+    app_.Automation().RefreshFromSettings();
+  }
   if (key == "sidebarWidth") {
     liveSidebarWidth_ = 0.0;
   }
@@ -959,6 +963,9 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
 
 bool BrowserWindow::ResetSetting(const std::string& key) {
   dataStore_->ResetSetting(key);
+  if (key.rfind("automation.mcp.", 0) == 0) {
+    app_.Automation().RefreshFromSettings();
+  }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   fubuki::PageCache::Instance().Invalidate("fubuki://settings");

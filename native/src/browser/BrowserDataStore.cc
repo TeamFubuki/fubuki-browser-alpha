@@ -78,6 +78,8 @@ void BrowserDataStore::Load() {
   EnsureDefaultSetting("newTabBackgroundMode", "unsplash");
   EnsureDefaultSetting("newTabBackgroundColor", "#f8fafd");
   EnsureDefaultSetting("newTabBackgroundUrl", "");
+  EnsureDefaultSetting("automation.mcp.enabled", "off");
+  EnsureDefaultSetting("automation.mcp.confirmSensitive", "on");
   RefreshCaches();
 }
 
@@ -511,6 +513,10 @@ std::string BrowserDataStore::DefaultSetting(const std::string &key) const {
     return "#f8fafd";
   if (key == "newTabBackgroundUrl")
     return "";
+  if (key == "automation.mcp.enabled")
+    return "off";
+  if (key == "automation.mcp.confirmSensitive")
+    return "on";
   return "";
 }
 

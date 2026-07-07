@@ -24,8 +24,10 @@ ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
 }  // namespace
 
 BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
-    : profilePath_(std::move(profilePath)), store_(profilePath_) {
+    : profilePath_(std::move(profilePath)), store_(profilePath_),
+      automation_(*this) {
   store_.Load();
+  automation_.RefreshFromSettings();
   store_.Log("info", "BrowserAppController initialized");
 }
 

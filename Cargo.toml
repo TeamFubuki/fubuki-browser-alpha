@@ -5,6 +5,7 @@ members = [
   "crates/frost-ffi",
   "crates/frost-protocol",
   "crates/frost-store",
+  "crates/fubuki-mcp-server",
 ]
 resolver = "3"
 
