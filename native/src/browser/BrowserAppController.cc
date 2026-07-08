@@ -5,6 +5,7 @@
 #include "browser/BrowserWindow.h"
 #include "include/base/cef_callback.h"
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 
@@ -49,6 +50,97 @@ void BrowserAppController::Start() {
   }
   if (!restored) {
     NewWindow(false, nullptr);
+  }
+  StartHostCommandPoller();
+}
+
+namespace {
+
+// Self-rescheduling host command poller. Runs on the CEF UI thread and drains
+// FrostEngine HostCommands at a fixed cadence.
+void PollHostCommands(BrowserAppController *app) {
+  if (app) {
+    app->DispatchHostCommands();
+  }
+  CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, app), 16);
+}
+
+}  // namespace
+
+void BrowserAppController::StartHostCommandPoller() {
+  CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, this), 16);
+}
+
+void BrowserAppController::DispatchHostCommands() {
+  for (const auto &context : windows_) {
+    BrowserWindow *window = context->window.get();
+    if (!window) {
+      continue;
+    }
+    NativeBridge *bridge = window->Bridge();
+    if (!bridge) {
+      continue;
+    }
+    std::string commandJson;
+    while (bridge->PollHostCommandJson(commandJson)) {
+      if (commandJson.empty()) {
+        continue;
+      }
+      CefRefPtr<CefValue> value =
+          CefParseJSON(commandJson, JSON_PARSER_ALLOW_TRAILING_COMMAS);
+      if (!value || value->GetType() != VTYPE_DICTIONARY) {
+        continue;
+      }
+      CefRefPtr<CefDictionaryValue> envelope = value->GetDictionary();
+      const std::string commandId =
+          envelope->HasKey("id") ? envelope->GetString("id").ToString() : "";
+      const std::string command = envelope->HasKey("command")
+                                      ? envelope->GetString("command").ToString()
+                                      : "";
+      CefRefPtr<CefDictionaryValue> payload =
+          envelope->HasKey("payload") &&
+                  envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+              ? envelope->GetDictionary("payload")
+              : CefDictionaryValue::Create();
+
+      bool ok = true;
+      std::string error;
+      if (command == "window.create") {
+        const bool isPrivate =
+            payload->HasKey("isPrivate") && payload->GetBool("isPrivate");
+        ok = NewWindow(isPrivate, nullptr) != nullptr;
+        if (!ok) {
+          error = "failed to create window";
+        }
+      } else if (command == "window.close") {
+        const std::string targetWindowId =
+            payload->HasKey("windowId") ? payload->GetString("windowId").ToString() : "";
+        if (targetWindowId == window->WindowId()) {
+          ok = window->CloseWindow();
+        } else {
+          ok = true;
+        }
+        if (!ok) {
+          error = "failed to close window";
+        }
+      } else {
+        // Delegate page/overlay/permission commands to the owning window.
+        window->ExecuteHostCommand(commandJson);
+        continue;
+      }
+
+      std::string result = "{\"version\":0,\"commandId\":\"";
+      result += commandId;
+      result += "\",\"ok\":";
+      result += ok ? "true" : "false";
+      if (!ok) {
+        result += ",\"error\":\"";
+        result += error;
+        result += "\"";
+      }
+      result += "}";
+      bridge->PushHostCommandResultJson(result);
+    }
   }
 }
 

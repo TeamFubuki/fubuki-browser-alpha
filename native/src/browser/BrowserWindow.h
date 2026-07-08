@@ -83,6 +83,14 @@ public:
                           double overlayHeight = 560.0);
   bool HandleSettingsUrl(const std::string &tabId, const std::string &url);
   bool HandleNewTabSearchUrl(const std::string &tabId, const std::string &url);
+  // Polls pending HostCommands from FrostEngine and executes them, routing
+  // host side effects (page/window I/O) back as HostEvents/results.
+  void PollAndExecuteHostCommands();
+  // Executes a single HostCommand JSON envelope. Returns true if the command
+  // was recognized and dispatched (regardless of host-side success).
+  bool ExecuteHostCommand(const std::string &commandJson);
+  // Pushes a HostEvent JSON envelope back to FrostEngine.
+  bool PushHostEventJson(const std::string &eventJson);
   std::string DownloadPathFor(const std::string &suggestedName) const;
 
   void SetUiBrowser(CefRefPtr<CefBrowser> browser);

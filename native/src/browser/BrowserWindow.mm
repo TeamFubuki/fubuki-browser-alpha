@@ -1053,6 +1053,169 @@ bool BrowserWindow::HandleNewTabSearchUrl(const std::string& tabId, const std::s
   return Navigate(tabId, query);
 }
 
+namespace {
+
+// Builds a HostCommandResult JSON envelope for the given command id.
+std::string HostCommandResultJson(const std::string& commandId, bool ok,
+                                  const std::string& error) {
+  std::string json = "{\"version\":0,\"commandId\":\"";
+  json += commandId;
+  json += "\",\"ok\":";
+  json += ok ? "true" : "false";
+  if (!ok) {
+    json += ",\"error\":\"";
+    json += error;
+    json += "\"";
+  }
+  json += "}";
+  return json;
+}
+
+// Builds a HostEvent JSON envelope from a flat key/value map.
+std::string HostEventJson(const std::string& event,
+                          const std::map<std::string, std::string>& fields) {
+  std::string json = "{\"version\":0,\"event\":\"";
+  json += event;
+  json += "\",\"payload\":{";
+  bool first = true;
+  for (const auto& kv : fields) {
+    if (!first) {
+      json += ",";
+    }
+    first = false;
+    json += "\"";
+    json += kv.first;
+    json += "\":\"";
+    json += kv.second;
+    json += "\"";
+  }
+  json += "}}";
+  return json;
+}
+
+std::string JsonString(const CefRefPtr<CefDictionaryValue>& dict,
+                       const std::string& key, const std::string& fallback = "") {
+  return dict->HasKey(key) ? dict->GetString(key).ToString() : fallback;
+}
+
+bool JsonBool(const CefRefPtr<CefDictionaryValue>& dict, const std::string& key) {
+  return dict->HasKey(key) && dict->GetBool(key);
+}
+
+}  // namespace
+
+bool BrowserWindow::PushHostEventJson(const std::string& eventJson) {
+  return bridge_->PushHostEventJson(eventJson);
+}
+
+bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
+  CefRefPtr<CefValue> value = CefParseJSON(commandJson, JSON_PARSER_ALLOW_TRAILING_COMMAS);
+  if (!value || value->GetType() != VTYPE_DICTIONARY) {
+    return false;
+  }
+  CefRefPtr<CefDictionaryValue> envelope = value->GetDictionary();
+  const std::string commandId = JsonString(envelope, "id");
+  const std::string command = JsonString(envelope, "command");
+  CefRefPtr<CefDictionaryValue> payload =
+      envelope->HasKey("payload") &&
+              envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+          ? envelope->GetDictionary("payload")
+          : CefDictionaryValue::Create();
+
+  bool ok = false;
+  std::string error;
+  if (command == "page.create") {
+    const std::string tabId = JsonString(payload, "tabId");
+    const std::string url = JsonString(payload, "url");
+    ok = !tabId.empty() && CreateTab(url.empty() ? "fubuki://newtab/" : url, true);
+    if (ok) {
+      PushHostEventJson(HostEventJson("page.created",
+                                      {{"tabId", tabId},
+                                       {"windowId", windowId_},
+                                       {"url", url}}));
+    } else {
+      error = "failed to create page";
+    }
+  } else if (command == "page.close") {
+    ok = CloseTab(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.navigate") {
+    ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.reload") {
+    ok = Reload(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.stop") {
+    ok = Stop(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.goBack") {
+    ok = GoBack(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.goForward") {
+    ok = GoForward(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "window.create") {
+    // Window creation is owned by the app controller; acknowledge only.
+    ok = true;
+  } else if (command == "window.close") {
+    // Window close is owned by the app controller; acknowledge only.
+    ok = true;
+  } else if (command == "devtools.open") {
+    ok = OpenDevTools();
+    if (!ok) {
+      error = "failed to open devtools";
+    }
+  } else if (command == "ui.overlay.set") {
+    const bool active = JsonBool(payload, "active");
+    const double width =
+        payload->HasKey("width") ? payload->GetDouble("width") : 392.0;
+    const double height =
+        payload->HasKey("height") ? payload->GetDouble("height") : 560.0;
+    ok = SetUiOverlayActive(active, width, height);
+    if (!ok) {
+      error = "failed to set overlay";
+    }
+  } else if (command == "permission.changed") {
+    ok = SetPermission(JsonString(payload, "origin"),
+                       JsonString(payload, "permission"),
+                       JsonString(payload, "value"));
+    if (!ok) {
+      error = "failed to set permission";
+    }
+  } else {
+    // file.open / file.reveal / browsingData.clear are not yet routed to host
+    // I/O in this build; acknowledge to avoid stale commands.
+    ok = true;
+  }
+
+  return bridge_->PushHostCommandResultJson(
+      HostCommandResultJson(commandId, ok, error));
+}
+
+void BrowserWindow::PollAndExecuteHostCommands() {
+  if (!bridge_) {
+    return;
+  }
+  std::string commandJson;
+  while (bridge_->PollHostCommandJson(commandJson)) {
+    if (!commandJson.empty()) {
+      ExecuteHostCommand(commandJson);
+    }
+  }
+}
+
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
   std::string directory = dataStore_->Settings()->GetString("downloadDirectory");
   if (directory.empty()) {
@@ -1091,6 +1254,7 @@ void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefB
 void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& title) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, title, tab->url, tab->isLoading, tab->canGoBack, tab->canGoForward);
+    PushHostEventJson(HostEventJson("page.titleChanged", {{"tabId", tabId}, {"title", title}}));
   }
 }
 
@@ -1100,6 +1264,7 @@ void BrowserWindow::OnTabUrl(const std::string& tabId, const std::string& url) {
       tab->isPendingPopup = false;
     }
     UpdateTabPatch(tabId, tab->title, url, tab->isLoading, tab->canGoBack, tab->canGoForward);
+    PushHostEventJson(HostEventJson("page.urlChanged", {{"tabId", tabId}, {"url", url}}));
   }
 }
 
@@ -1108,12 +1273,19 @@ void BrowserWindow::OnTabFavicon(const std::string& tabId, const std::string& fa
     Tab patch = *tab;
     patch.faviconUrl = faviconUrl;
     tabManager_.UpdateTab(tabId, patch);
+    PushHostEventJson(HostEventJson("page.faviconChanged", {{"tabId", tabId}, {"faviconUrl", faviconUrl}}));
   }
 }
 
 void BrowserWindow::OnTabLoadingState(const std::string& tabId, bool isLoading, bool canGoBack, bool canGoForward) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, tab->title, tab->url, isLoading, canGoBack, canGoForward);
+    PushHostEventJson(HostEventJson("page.loadingChanged",
+                                    {{"tabId", tabId}, {"isLoading", isLoading ? "true" : "false"}}));
+    PushHostEventJson(HostEventJson("page.navigationStateChanged",
+                                    {{"tabId", tabId},
+                                     {"canGoBack", canGoBack ? "true" : "false"},
+                                     {"canGoForward", canGoForward ? "true" : "false"}}));
   }
 }
 
@@ -1138,6 +1310,7 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
     Tab patch = *tab;
     patch.errorText = message;
     tabManager_.UpdateTab(tabId, patch);
+    PushHostEventJson(HostEventJson("page.loadFailed", {{"tabId", tabId}, {"errorText", message}}));
     if (!privateWindow_) {
       dataStore_->Log("error", "Navigation failed: " + tab->url + " - " + message);
       app_.PersistSession();
@@ -1178,6 +1351,11 @@ void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string&
   if (state != "in_progress") {
     dataStore_->Log("info", "Download " + state + ": " + path);
   }
+  PushHostEventJson(HostEventJson("download.updated",
+                                  {{"url", url},
+                                   {"path", path},
+                                   {"state", state},
+                                   {"percent", std::to_string(percent)}}));
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());

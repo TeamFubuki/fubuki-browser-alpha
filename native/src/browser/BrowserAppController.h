@@ -29,6 +29,10 @@ public:
   bool RequestNewPrivateWindow();
   bool CloseActiveWindow();
   bool ReopenClosedWindow();
+  // Polls FrostEngine HostCommands and executes them. Window lifecycle
+  // commands are handled here; page/overlay commands are delegated to the
+  // owning BrowserWindow.
+  void DispatchHostCommands();
   void NotifyWindowFocused(BrowserWindow *window);
   void NotifyWindowClosed(BrowserWindow *window);
   void PersistSession();

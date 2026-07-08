@@ -146,8 +146,10 @@ where
                     }
                 }
                 recv(host_result_rx) -> message => {
-                    if let Ok(result) = message {
-                        let _ = core.process_host_command_result(result);
+                    if let Ok(result) = message
+                        && let Err(e) = core.process_host_command_result(result)
+                    {
+                        eprintln!("[frost-engine] host command failed: {e}");
                     }
                 }
             }

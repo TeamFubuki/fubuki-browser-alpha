@@ -206,9 +206,11 @@ where
                     active,
                 );
                 self.windows.attach_tab(&window_id, &tab.id, true);
-                self.adapter
-                    .create_page(&tab.id, &window_id, &tab.url)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_page(&tab.id, &window_id, &tab.url) {
+                    self.windows.detach_tab(&tab.id);
+                    self.tabs.remove_tab(&tab.id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
@@ -253,9 +255,11 @@ where
                     return Ok(Response::Bool(false));
                 };
                 self.windows.attach_tab(&tab.window_id, &tab.id, true);
-                self.adapter
-                    .create_page(&tab.id, &tab.window_id, &tab.url)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_page(&tab.id, &tab.window_id, &tab.url) {
+                    self.windows.detach_tab(&tab.id);
+                    self.tabs.remove_tab(&tab.id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
@@ -268,9 +272,14 @@ where
                 let created = tab.clone();
                 self.tabs.upsert_tab(tab);
                 self.windows.attach_tab(&window_id, &created.id, true);
-                self.adapter
+                if let Err(e) = self
+                    .adapter
                     .create_page(&created.id, &window_id, &created.url)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                {
+                    self.windows.detach_tab(&created.id);
+                    self.tabs.remove_tab(&created.id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 self.emit(Event::TabCreated(created));
                 Ok(Response::Bool(true))
             }
@@ -312,12 +321,18 @@ where
                 if !self.tabs.contains(&tab_id) {
                     return Ok(Response::Bool(false));
                 }
+                let previous_window = self.tabs.get_tab(&tab_id).map(|tab| tab.window_id.clone());
                 let window_id = self.windows.create_window(false);
                 self.tabs.move_tab_to_window(&tab_id, &window_id);
                 self.windows.move_tab_to_window(&tab_id, &window_id);
-                self.adapter
-                    .create_window(&window_id, false)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_window(&window_id, false) {
+                    self.tabs
+                        .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
+                    self.windows
+                        .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
+                    self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -377,9 +392,10 @@ where
             Request::WindowsList => Ok(Response::WindowsList(self.windows.list())),
             Request::WindowsCreate => {
                 let window_id = self.windows.create_window(false);
-                self.adapter
-                    .create_window(&window_id, false)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_window(&window_id, false) {
+                    self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -387,9 +403,10 @@ where
             }
             Request::WindowsCreatePrivate => {
                 let window_id = self.windows.create_window(true);
-                self.adapter
-                    .create_window(&window_id, true)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_window(&window_id, true) {
+                    self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -1232,6 +1249,32 @@ mod tests {
             Some(Event::TabUpdated(TabPatch { tab_id: updated, title: Some(title), .. }))
                 if updated == &tab_id && title == "Example Domain"
         ));
+    }
+
+    #[test]
+    fn host_command_result_ok_is_noop() {
+        let mut core = BrowserCore::new();
+        let result = HostCommandResultEnvelope {
+            version: frost_protocol::PROTOCOL_VERSION,
+            command_id: "cmd-1".into(),
+            ok: true,
+            error: None,
+        };
+        assert!(core.process_host_command_result(result).is_ok());
+    }
+
+    #[test]
+    fn host_command_result_error_is_core_error() {
+        let mut core = BrowserCore::new();
+        let result = HostCommandResultEnvelope {
+            version: frost_protocol::PROTOCOL_VERSION,
+            command_id: "cmd-2".into(),
+            ok: false,
+            error: Some("host blew up".into()),
+        };
+        let err = core.process_host_command_result(result).unwrap_err();
+        assert!(err.to_string().contains("cmd-2"));
+        assert!(err.to_string().contains("host blew up"));
     }
 
     #[test]
