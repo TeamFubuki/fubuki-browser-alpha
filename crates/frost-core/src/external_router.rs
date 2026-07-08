@@ -4,7 +4,7 @@
 //! command layer through [`ExternalCommand`] and declared [`ExternalCapability`]
 //! values. Every command is gated by a capability check, subject to a per-origin
 //! rate limit, and produces an audit event before it is routed to the owned
-//! services or emitted as a [`HostCommand`].
+//! services or emitted as a [`frost_protocol::HostCommand`].
 //!
 //! This module is the single entry point for external commands so that no
 //! external client can reach CEF / NSWindow or the host directly.
@@ -82,8 +82,10 @@ struct RateBucket {
 impl RateBucket {
     fn record(&mut self) -> bool {
         let now = Instant::now();
-        self.timestamps
-            .retain(|t| now.checked_duration_since(*t).is_some_and(|d| d <= RATE_WINDOW));
+        self.timestamps.retain(|t| {
+            now.checked_duration_since(*t)
+                .is_some_and(|d| d <= RATE_WINDOW)
+        });
         if self.timestamps.len() >= DEFAULT_RATE_LIMIT as usize {
             return false;
         }
@@ -162,8 +164,9 @@ where
         policy: &mut ExternalPolicy,
     ) -> ExternalOutcome {
         let command = envelope.command.clone();
-        let capability = policy_for(&command).capability;
-        let destructive = policy_for(&command).destructive;
+        let cmd_policy = policy_for(&command);
+        let capability = cmd_policy.capability;
+        let destructive = cmd_policy.destructive;
         let origin = envelope.id.clone();
 
         if !policy.is_granted(&origin, &capability) {
@@ -227,22 +230,14 @@ where
                         url,
                         active,
                     });
-                let response = self.process(request);
-                match response.response {
-                    frost_protocol::Response::Bool(true) => Ok(serde_json::json!({ "ok": true })),
-                    _ => Err(CoreError::Message("tab create failed".into())),
-                }
+                Self::bool_response_or_error(self.process(request), "tab create failed")
             }
             ExternalCommand::TabClose { tab_id } => {
                 let request =
                     frost_protocol::ProtocolRequest::new(frost_protocol::Request::TabsClose {
                         tab_id,
                     });
-                let response = self.process(request);
-                match response.response {
-                    frost_protocol::Response::Bool(true) => Ok(serde_json::json!({ "ok": true })),
-                    _ => Err(CoreError::Message("tab close failed".into())),
-                }
+                Self::bool_response_or_error(self.process(request), "tab close failed")
             }
             ExternalCommand::NavigationOpen { tab_id, input } => {
                 let request =
@@ -250,11 +245,7 @@ where
                         tab_id,
                         input,
                     });
-                let response = self.process(request);
-                match response.response {
-                    frost_protocol::Response::Bool(true) => Ok(serde_json::json!({ "ok": true })),
-                    _ => Err(CoreError::Message("navigation failed".into())),
-                }
+                Self::bool_response_or_error(self.process(request), "navigation failed")
             }
             ExternalCommand::BookmarkSave {
                 title,
@@ -281,16 +272,28 @@ where
                 Ok(serde_json::json!({ "ok": true }))
             }
             ExternalCommand::DebugOpenDevTools { tab_id } => {
-                let request = frost_protocol::ProtocolRequest::new(
-                    frost_protocol::Request::UiSetOverlayActive {
-                        active: false,
-                        width: None,
-                        height: None,
-                    },
-                );
-                let _ = self.process(request);
-                Ok(serde_json::json!({ "tabId": tab_id }))
+                // DevTools is a host/CEF concern. The engine must not reach into
+                // CEF directly, and there is no HostCommand for it yet, so we
+                // surface a clear error instead of performing a misleading action.
+                Err(CoreError::Message(format!(
+                    "devtools open for tab '{}' is not supported via external router",
+                    tab_id.as_deref().unwrap_or("<none>")
+                )))
             }
+        }
+    }
+
+    /// Maps a [`frost_protocol::ProtocolResponse`] to a JSON outcome, treating both a non-`Bool(true)`
+    /// response and an explicit `Error` response as a failure so callers get a
+    /// clear result rather than a silent `false`.
+    fn bool_response_or_error(
+        response: frost_protocol::ProtocolResponse,
+        label: &str,
+    ) -> CoreResult<serde_json::Value> {
+        match response.response {
+            frost_protocol::Response::Bool(true) => Ok(serde_json::json!({ "ok": true })),
+            frost_protocol::Response::Error(msg) => Err(CoreError::Message(msg)),
+            _ => Err(CoreError::Message(label.into())),
         }
     }
 
