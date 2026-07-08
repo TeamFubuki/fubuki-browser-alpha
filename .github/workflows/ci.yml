@@ -19,6 +19,8 @@ permissions:
 env:
   PNPM_VERSION: "11"
   NODE_VERSION: "22"
+  # Run the heavy macOS-native build only when merging into main or manual dispatch.
+  RUN_MACOS: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   ui-check:
@@ -214,6 +216,8 @@ jobs:
     name: macOS native build (CEF)
     runs-on: macos-15
     timeout-minutes: 60
+    # Heavy native build: only on main merge or manual dispatch, not per-PR.
+    if: ${{ env.RUN_MACOS == 'true' }}
     env:
       BUILD_TYPE: release
       CEF_ROOT: ${{ github.workspace }}/third_party/cef
