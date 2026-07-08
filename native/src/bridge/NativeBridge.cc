@@ -613,4 +613,8 @@ bool NativeBridge::PushHostCommandResultJson(const std::string &resultJson) {
   return frostBridge_.PushHostCommandResultJson(resultJson);
 }
 
+bool NativeBridge::PushHostEventJson(const std::string &eventJson) {
+  return frostBridge_.PushHostEventJson(eventJson);
+}
+
 }  // namespace fubuki

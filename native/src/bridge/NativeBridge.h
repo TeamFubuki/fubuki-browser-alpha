@@ -37,6 +37,8 @@ public:
   bool PollHostCommandJson(std::string &commandJson);
   // Pushes a host command result envelope back to FrostEngine.
   bool PushHostCommandResultJson(const std::string &resultJson);
+  // Pushes a host event envelope back to FrostEngine.
+  bool PushHostEventJson(const std::string &eventJson);
 
 private:
   using MethodHandler =

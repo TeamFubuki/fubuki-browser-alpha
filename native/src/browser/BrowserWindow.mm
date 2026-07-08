@@ -1133,8 +1133,7 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   const std::string commandId = JsonString(envelope, "id");
   const std::string command = JsonString(envelope, "command");
   CefRefPtr<CefDictionaryValue> payload =
-      envelope->HasKey("payload") &&
-              envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+      envelope->HasKey("payload")
           ? envelope->GetDictionary("payload")
           : CefDictionaryValue::Create();
 
