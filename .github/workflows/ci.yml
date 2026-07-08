@@ -50,6 +50,9 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      - name: Format check
+        run: pnpm run format --check
+
       - name: Typecheck & Build
         run: pnpm run build
 
@@ -78,10 +81,32 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test --all
+        run: cargo test --workspace
+
+  rust-ffi:
+    name: Rust FFI build (frost-ffi staticlib)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-ffi-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release static library
+        run: cargo build -p frost-ffi --release
+
+      - name: Verify static archive produced
+        run: test -f target/release/libfrost_ffi.a
 
   rust-audit:
     name: Rust security audit
@@ -166,7 +191,7 @@ jobs:
         run: pnpm audit --audit-level=high
 
   native-test:
-    name: Native test
+    name: Native unit test (headless)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -185,6 +210,75 @@ jobs:
       - name: Run tests
         run: cd native/tests/build && ctest --output-on-failure
 
+  macos-build:
+    name: macOS native build (CEF)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      BUILD_TYPE: release
+      CEF_ROOT: ${{ github.workspace }}/third_party/cef
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install build tools
+        run: brew install cmake llvm
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-macos-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache CEF binaries & archive
+        id: cef-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/cef
+            third_party/cef
+          key: cef-${{ runner.os }}-${{ hashFiles('scripts/fetch_cef.sh') }}
+
+      - name: Fetch CEF
+        run: make cef
+
+      - name: Install UI dependencies & build
+        run: |
+          cd ui
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Configure native build
+        run: make configure
+
+      - name: Build native app (incl. frost-ffi)
+        run: make native
+
+      - name: Run native unit tests
+        run: make test-native
+
+      - name: Verify app bundle
+        run: test -d "native/build/Fubuki Browser Alpha.app"
+
   repository-check:
     name: Repository hygiene
     runs-on: ubuntu-latest
@@ -202,6 +296,7 @@ jobs:
             --exclude-dir=build \
             --exclude-dir=target \
             --exclude-dir=third_party \
+            --exclude-dir=.cache \
             --exclude='pnpm-lock.yaml' \
             -E '^(<<<<<<<|=======|>>>>>>>)' .; then
             echo "::error::Merge conflict markers found."
@@ -224,6 +319,9 @@ jobs:
               ! -path './node_modules/*' \
               ! -path './third_party/*' \
               ! -path './native/build/*' \
-              ! -path './target/*'
+              ! -path './native/tests/build/*' \
+              ! -path './target/*' \
+              ! -path './.cache/*' \
+              ! -name '.DS_Store'
           )
           exit "$failed"
