@@ -317,6 +317,21 @@ std::string ActionLink(const std::string &key, const std::string &value,
          "&return=" + CefURIEncode(returnUrl, false).ToString();
 }
 
+std::string HiddenInput(const std::string &name, const std::string &value) {
+  return "<input type=\"hidden\" name=\"" + HtmlEscape(name) + "\" value=\"" +
+         HtmlEscape(value) + "\">";
+}
+
+std::string ActionForm(const std::string &key, const std::string &value,
+                       const std::string &returnUrl, const std::string &label,
+                       const std::string &classes) {
+  return "<form method=\"post\" action=\"fubuki://settings/set\" "
+         "style=\"display:inline\">" +
+         HiddenInput("key", key) + HiddenInput("value", value) +
+         HiddenInput("return", returnUrl) + "<button class=\"" +
+         HtmlEscape(classes) + "\">" + HtmlEscape(label) + "</button></form>";
+}
+
 std::string FileName(const std::string &path, const std::string &url) {
   const std::string source = path.empty() ? url : path;
   const size_t slash = source.find_last_of("/\\");
@@ -341,9 +356,9 @@ std::string BookmarksHtml() {
            << HtmlEscape(record.title.empty() ? record.url : record.title)
            << "</div><div class=\"meta\">" << HtmlEscape(record.url)
            << "</div></a>"
-           << "<a class=\"button danger\" href=\""
-           << ActionLink("removeBookmark", record.url, "fubuki://bookmarks/")
-           << "\">" << Label("Delete") << "</a></div>";
+           << ActionForm("removeBookmark", record.url, "fubuki://bookmarks/",
+                         Label("Delete"), "button danger")
+           << "</div>";
     }
     body << "</div>";
   }
@@ -353,10 +368,10 @@ std::string BookmarksHtml() {
 std::string DownloadsHtml() {
   std::ostringstream body;
   const auto records = QueryRecords("downloads", 50);
-  body << "<div class=\"segmented\" style=\"margin-bottom:12px\"><a "
-          "class=\"chip danger\" href=\""
-       << ActionLink("clearData", "downloads", "fubuki://downloads/") << "\">"
-       << Label("Clear downloads") << "</a></div>";
+  body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
+       << ActionForm("clearData", "downloads", "fubuki://downloads/",
+                     Label("Clear downloads"), "chip danger")
+       << "</div>";
   if (records.empty()) {
     body << "<p class=\"empty\">" << Label("No downloads") << "</p>";
   } else {
@@ -368,15 +383,12 @@ std::string DownloadsHtml() {
            << "</div><div class=\"meta\">"
            << HtmlEscape(record.path.empty() ? record.url : record.path)
            << "</div></div><span class=\"segmented\">"
-           << "<a class=\"chip\" href=\""
-           << ActionLink("openDownload", record.path, "fubuki://downloads/")
-           << "\">" << Label("Open") << "</a>"
-           << "<a class=\"chip\" href=\""
-           << ActionLink("revealDownload", record.path, "fubuki://downloads/")
-           << "\">" << Label("Reveal") << "</a>"
-           << "<a class=\"chip danger\" href=\""
-           << ActionLink("removeDownload", record.path, "fubuki://downloads/")
-           << "\">" << Label("Remove") << "</a>"
+           << ActionForm("openDownload", record.path, "fubuki://downloads/",
+                         Label("Open"), "chip")
+           << ActionForm("revealDownload", record.path, "fubuki://downloads/",
+                         Label("Reveal"), "chip")
+           << ActionForm("removeDownload", record.path, "fubuki://downloads/",
+                         Label("Remove"), "chip danger")
            << "</span></article><div class=\"meta\" style=\"padding:0 10px 6px "
               "42px\">"
            << HtmlEscape(record.state.empty() ? "unknown" : record.state) << " "
@@ -397,15 +409,14 @@ std::string HistoryHtml() {
           "document.querySelectorAll('[data-history-row]')) "
           "row.style.display=row.textContent.toLowerCase().includes(this.value."
           "toLowerCase())?'grid':'none'\"></form>";
-  body << "<div class=\"segmented\" style=\"margin-bottom:12px\"><a "
-          "class=\"chip danger\" href=\""
-       << ActionLink("clearHistoryRange", "lastHour", "fubuki://history/")
-       << "\">" << Label("Clear last hour")
-       << "</a><a class=\"chip danger\" href=\""
-       << ActionLink("clearHistoryRange", "today", "fubuki://history/") << "\">"
-       << Label("Clear today") << "</a><a class=\"chip danger\" href=\""
-       << ActionLink("clearHistoryRange", "all", "fubuki://history/") << "\">"
-       << Label("Clear all") << "</a></div>";
+  body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
+       << ActionForm("clearHistoryRange", "lastHour", "fubuki://history/",
+                     Label("Clear last hour"), "chip danger")
+       << ActionForm("clearHistoryRange", "today", "fubuki://history/",
+                     Label("Clear today"), "chip danger")
+       << ActionForm("clearHistoryRange", "all", "fubuki://history/",
+                     Label("Clear all"), "chip danger")
+       << "</div>";
   if (records.empty()) {
     body << "<p class=\"empty\">" << Label("No history") << "</p>";
   } else {
@@ -428,9 +439,10 @@ std::string HistoryHtml() {
            << HtmlEscape(record.title.empty() ? record.url : record.title)
            << "</span><span class=\"meta\">"
            << HtmlEscape(record.createdAt + " · " + record.url)
-           << "</span></a><a class=\"button danger\" href=\""
-           << ActionLink("removeHistory", record.url, "fubuki://history/")
-           << "\">" << Label("Delete") << "</a></div>";
+           << "</span></a>"
+           << ActionForm("removeHistory", record.url, "fubuki://history/",
+                         Label("Delete"), "button danger")
+           << "</div>";
     }
     body << "</div>";
   }
@@ -494,9 +506,10 @@ std::string SettingsHtml() {
       << HtmlEscape(Setting("homeUrl", "https://example.com"))
       << "\" placeholder=\"" << Label("Home page URL")
       << "\"><button class=\"button\">" << Label("Save")
-      << "</button><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "startupBehavior", "fubuki://settings/")
-      << "\">" << Label("Reset") << "</a></form></div>"
+      << "</button></form>"
+      << ActionForm("resetSetting", "startupBehavior", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
       << "<div id=\"appearance\" class=\"field\" data-setting-section><span>"
       << Label("Appearance")
       << "</span><div class=\"section-kicker\">Use a flat system, light, or "
@@ -504,9 +517,10 @@ std::string SettingsHtml() {
       << chip("appearance", appearance, "system", Label("System"))
       << chip("appearance", appearance, "light", Label("Light"))
       << chip("appearance", appearance, "dark", Label("Dark"))
-      << "</div><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "appearance", "fubuki://settings/") << "\">"
-      << Label("Reset") << "</a></div>"
+      << "</div>"
+      << ActionForm("resetSetting", "appearance", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
       << "<div id=\"language\" class=\"field\" data-setting-section><span>"
       << Label("Language")
       << "</span><div class=\"section-kicker\">Choose UI language. System "
@@ -515,9 +529,10 @@ std::string SettingsHtml() {
       << chip("language", language, "system", Label("System"))
       << chip("language", language, "ja", Label("Japanese"))
       << chip("language", language, "en", Label("English"))
-      << "</div><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "language", "fubuki://settings/") << "\">"
-      << Label("Reset") << "</a></div>"
+      << "</div>"
+      << ActionForm("resetSetting", "language", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
       << "<div id=\"tabs\" class=\"field\" data-setting-section><span>"
       << Label("Tabs")
       << "</span><div class=\"section-kicker\">Tune the new tab destination "
@@ -530,9 +545,10 @@ std::string SettingsHtml() {
          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
       << HtmlEscape(Setting("defaultZoomLevel", "0")) << "\" placeholder=\""
       << Label("Default zoom level") << "\"><button class=\"button\">"
-      << Label("Save") << "</button><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "defaultZoomLevel", "fubuki://settings/")
-      << "\">" << Label("Reset") << "</a></form></div>"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "defaultZoomLevel", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
       << "<div id=\"windows\" class=\"field\" data-setting-section><span>"
       << Label("Windows")
       << "</span><div class=\"section-kicker\">Control browser chrome "
@@ -545,9 +561,10 @@ std::string SettingsHtml() {
          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
       << HtmlEscape(Setting("sidebarWidth", "196")) << "\" placeholder=\""
       << Label("Sidebar width") << "\"><button class=\"button\">"
-      << Label("Save") << "</button><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "sidebarWidth", "fubuki://settings/")
-      << "\">" << Label("Reset sidebar width") << "</a></form></div>"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "sidebarWidth", "fubuki://settings/",
+                    Label("Reset sidebar width"), "button")
+      << "</div>"
       << "<div id=\"search\" class=\"field\" data-setting-section><span>"
       << Label("Search")
       << "</span><div class=\"section-kicker\">Set the engine used from the "
@@ -563,28 +580,24 @@ std::string SettingsHtml() {
       << HtmlEscape(customSearchUrl)
       << "\" placeholder=\"https://example.com/search?q={query}\"><button "
          "class=\"button\">"
-      << Label("Save") << "</button><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "searchEngine", "fubuki://settings/")
-      << "\">" << Label("Reset") << "</a></form></div>"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "searchEngine", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
       << "<div id=\"privacy\" class=\"field\" data-setting-section><span>"
       << Label("Privacy")
       << "</span><div class=\"section-kicker\">Clear local browsing records "
          "and web storage.</div><div class=\"segmented\">"
-      << "<a class=\"chip danger\" href=\""
-      << ActionLink("clearData", "history", "fubuki://settings/") << "\">"
-      << Label("History") << "</a>"
-      << "<a class=\"chip danger\" href=\""
-      << ActionLink("clearData", "cookies", "fubuki://settings/")
-      << "\">Cookies</a>"
-      << "<a class=\"chip danger\" href=\""
-      << ActionLink("clearData", "cache", "fubuki://settings/")
-      << "\">Cache</a>"
-      << "<a class=\"chip danger\" href=\""
-      << ActionLink("clearData", "downloads", "fubuki://settings/") << "\">"
-      << Label("Downloads") << "</a>"
-      << "<a class=\"chip danger\" href=\""
-      << ActionLink("clearData", "all", "fubuki://settings/") << "\">"
-      << Label("Clear all") << "</a>"
+      << ActionForm("clearData", "history", "fubuki://settings/",
+                    Label("History"), "chip danger")
+      << ActionForm("clearData", "cookies", "fubuki://settings/", "Cookies",
+                    "chip danger")
+      << ActionForm("clearData", "cache", "fubuki://settings/", "Cache",
+                    "chip danger")
+      << ActionForm("clearData", "downloads", "fubuki://settings/",
+                    Label("Downloads"), "chip danger")
+      << ActionForm("clearData", "all", "fubuki://settings/",
+                    Label("Clear all"), "chip danger")
       << "</div></div>"
       << "<div id=\"downloads\" class=\"field\" data-setting-section><span>"
       << Label("Downloads section")
@@ -600,9 +613,10 @@ std::string SettingsHtml() {
          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
       << HtmlEscape(Setting("downloadDirectory", "")) << "\" placeholder=\""
       << Label("Download directory") << "\"><button class=\"button\">"
-      << Label("Save") << "</button><a class=\"button\" href=\""
-      << ActionLink("resetSetting", "downloadDirectory", "fubuki://settings/")
-      << "\">" << Label("Reset") << "</a></form></div>"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "downloadDirectory", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
       << "<div class=\"field\" data-setting-section><span>Shortcuts</span><div "
          "class=\"meta\">Cmd+T, Cmd+N, Cmd+Shift+N, Cmd+W, Cmd+Shift+T, Cmd+L, "
          "Cmd+R, Cmd+F, Cmd+,, Cmd+Plus, Cmd+Minus, Cmd+0</div></div>"
@@ -610,10 +624,7 @@ std::string SettingsHtml() {
       << Label("Developer")
       << "</span><div class=\"section-kicker\">Inspect the app shell and "
          "internal diagnostics.</div><div class=\"segmented\"><a "
-         "class=\"chip\" href=\""
-      << ActionLink("openDevTools", "1", "fubuki://settings/") << "\">"
-      << Label("Open DevTools")
-      << "</a><a class=\"chip\" href=\"fubuki://debug/\">"
+         "class=\"chip\" href=\"fubuki://debug/\">"
       << Label("Debug page") << "</a></div></div>"
       << "</section></div>";
   return PageChrome("Settings", body.str());
@@ -690,9 +701,10 @@ std::string DebugHtml() {
   }
   body << "</div></div>";
   body << "<div class=\"field\"><span>" << Label("Actions")
-       << "</span><div class=\"segmented\"><a class=\"chip\" href=\""
-       << ActionLink("openDevTools", "1", "fubuki://debug/") << "\">"
-       << Label("Open DevTools") << "</a></div></div>";
+       << "</span><div class=\"segmented\">"
+       << ActionForm("openDevTools", "1", "fubuki://debug/",
+                     Label("Open DevTools"), "chip")
+       << "</div></div>";
   body << "</section>";
   return PageChrome("Debug", body.str());
 }

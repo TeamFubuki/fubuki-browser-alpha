@@ -20,6 +20,9 @@ public:
 
   std::string ProcessJson(const std::string &requestJson);
   bool PollEventJson(std::string &eventJson);
+  bool PollHostCommandJson(std::string &commandJson);
+  bool PushHostEventJson(const std::string &eventJson);
+  bool PushHostCommandResultJson(const std::string &resultJson);
 
 private:
   void *handle_ = nullptr;

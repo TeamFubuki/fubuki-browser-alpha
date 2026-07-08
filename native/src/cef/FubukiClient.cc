@@ -61,6 +61,73 @@ bool IsFubukiInternalUrl(const std::string &url) {
   return StartsWith(url, "fubuki://");
 }
 
+std::string DecodeFormValue(const std::string &value) {
+  return CefURIDecode(value, true,
+                      static_cast<cef_uri_unescape_rule_t>(
+                          UU_SPACES | UU_PATH_SEPARATORS |
+                          UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+                          UU_REPLACE_PLUS_WITH_SPACE))
+      .ToString();
+}
+
+std::string FormParam(const std::string &encoded, const std::string &key) {
+  size_t start = 0;
+  while (start <= encoded.size()) {
+    const size_t end = encoded.find('&', start);
+    const std::string pair =
+        encoded.substr(start, end == std::string::npos ? std::string::npos
+                                                       : end - start);
+    const size_t equals = pair.find('=');
+    const std::string name =
+        equals == std::string::npos ? pair : pair.substr(0, equals);
+    if (DecodeFormValue(name) == key) {
+      const std::string value =
+          equals == std::string::npos ? "" : pair.substr(equals + 1);
+      return DecodeFormValue(value);
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return "";
+}
+
+std::string QueryString(const std::string &url) {
+  const size_t queryStart = url.find('?');
+  return queryStart == std::string::npos ? "" : url.substr(queryStart + 1);
+}
+
+bool IsDestructiveSettingsAction(const std::string &key) {
+  return key == "removeBookmark" || key == "removeHistory" ||
+         key == "removeDownload" || key == "openDownload" ||
+         key == "revealDownload" || key == "openDevTools" ||
+         key == "clearData" || key == "clearHistoryRange" ||
+         key == "resetSetting";
+}
+
+std::string PostBody(CefRefPtr<CefRequest> request) {
+  if (!request || !request->GetPostData()) {
+    return "";
+  }
+  std::vector<CefRefPtr<CefPostDataElement>> elements;
+  request->GetPostData()->GetElements(elements);
+  std::string body;
+  for (auto element : elements) {
+    if (!element || element->GetType() != PDE_TYPE_BYTES) {
+      continue;
+    }
+    const size_t size = element->GetBytesCount();
+    if (size == 0) {
+      continue;
+    }
+    const size_t offset = body.size();
+    body.resize(offset + size);
+    element->GetBytes(size, body.data() + offset);
+  }
+  return body;
+}
+
 std::string BrowserAppearance(BrowserWindow *window) {
   if (!window) {
     return "system";
@@ -363,7 +430,19 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>,
         !IsTrustedSettingsActionSource(frame->GetURL().ToString())) {
       return true;
     }
-    window_->HandleSettingsUrl(tabId_, url);
+    const std::string method = request->GetMethod().ToString();
+    const std::string query =
+        method == "POST" ? PostBody(request) : QueryString(url);
+    const std::string key = FormParam(query, "key");
+    if (method != "POST" && IsDestructiveSettingsAction(key)) {
+      if (!window_->IsPrivate()) {
+        window_->Store().Log("warning",
+                             "Blocked destructive settings action over GET: " +
+                                 key);
+      }
+      return true;
+    }
+    window_->HandleSettingsUrl(tabId_, "fubuki://settings/set?" + query);
     return true;
   }
   if (StartsWith(url, "fubuki://newtab/search")) {

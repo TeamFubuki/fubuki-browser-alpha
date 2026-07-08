@@ -22,12 +22,12 @@ Each component has its own `Cargo.toml` / `package.json` version and changelog. 
 Fubuki Browser UI (SolidJS)
     ↓  Frost Protocol (JSON-RPC over CEF message router)
 FrostEngine Core (Rust)
-    ↓  EngineAdapter trait
+    ↓  HostCommand / HostEvent (versioned JSON)
 CEF / macOS Host (C++)
 ```
 
 - **FrostEngine Core** owns all browser state (tabs, windows, settings, session). It is implemented in Rust and has no dependency on CEF or macOS.
-- **CEF / macOS Host** is a thin rendering and input layer. It creates NSWindows, manages CEF browser instances, and forwards CEF callbacks to the engine. It holds no browser state of its own.
+- **CEF / macOS Host** is a thin rendering and input layer. It creates NSWindows, manages CEF browser instances, executes `HostCommand`s, and forwards CEF callbacks as `HostEvent`s. It should not own logical browser state.
 - **Frost Protocol** is a typed request/response/event protocol. The UI sends `Request` messages and receives `Response` messages. State changes are pushed as `Event` messages.
 - **Fubuki Browser UI** is the SolidJS application loaded in the UI browser (`fubuki://app/`). It communicates exclusively through Frost Protocol.
 
@@ -85,15 +85,30 @@ Defines typed `Request`, `Response`, `Event`, and state schemas (`TabState`, `Wi
 2. After that, differential `Event` messages update the UI store incrementally.
 3. Full resync via `app.snapshot` only on state inconsistency or recovery.
 
-## EngineAdapter (`crates/frost-engine-api`)
+## Host Boundary (`crates/frost-protocol`, `crates/frost-engine-api`)
 
 Defines the boundary between FrostEngine Core and the host:
 
-- `EngineAdapter` — open, navigate, reload, close pages; create and close windows.
-- `PageAdapter` — receive page-level callbacks (title change, URL change, loading state, favicon).
-- `WindowHost` — manage NSWindow lifecycle.
+- `HostCommand` — versioned JSON commands emitted by FrostEngine for host side effects such as page creation, navigation, reload, stop, and window lifecycle.
+- `HostEvent` — versioned JSON events sent back by the host for page title, URL, favicon, loading state, navigation state, downloads, permissions, and window focus/closure.
+- `HostCommandResult` — completion/failure status for a previously emitted host command.
+- `EngineAdapter` — Rust-side abstraction used by `BrowserCore`; the production FFI adapter serializes calls into `HostCommand`s.
 
-The CEF/macOS Host implements these traits. Future hosts (e.g., a headless server, a different browser engine) would implement the same traits.
+Future hosts (e.g., a headless server, a different browser engine) should implement the JSON host boundary rather than reaching into `BrowserCore` internals.
+
+## External Automation Boundary
+
+External automation and MCP-style clients connect at FrostEngine's command layer through `ExternalCommand` and declared capabilities:
+
+- `read_state`
+- `tab_control`
+- `navigation`
+- `bookmarks`
+- `history`
+- `downloads`
+- `debug`
+
+Destructive external commands must pass capability checks and produce audit events before they are routed to services or host commands.
 
 ## Persistence (`crates/frost-store`)
 
@@ -114,10 +129,13 @@ The host is responsible for:
 - Creating and managing `NSWindow` instances
 - Creating CEF browser instances for the UI and each tab
 - Handling the `fubuki://` scheme
-- Forwarding CEF callbacks (title, URL, loading state, favicon, downloads) to the engine via `PageAdapter`
-- Receiving `EngineAdapter` calls from the engine to perform CEF operations
+- Executing `HostCommand`s received from FrostEngine
+- Forwarding CEF callbacks (title, URL, loading state, favicon, downloads) to the engine as `HostEvent`s
+- Returning `HostCommandResult` for host side effects
 
 The host holds no browser state. It is a pure I/O layer.
+
+Destructive internal-page actions must not execute from URL GET navigation. Internal pages use POST actions for destructive operations, and the host rejects destructive `fubuki://settings/set?...` GET requests.
 
 ## Legacy (pre-FrostEngine)
 

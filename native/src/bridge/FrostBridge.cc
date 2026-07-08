@@ -8,6 +8,10 @@ void *frost_engine_new_with_store(const char *path);
 void frost_engine_free(void *handle);
 char *frost_engine_process_json(void *handle, const char *request_json);
 char *frost_engine_poll_event_json(void *handle);
+char *frost_engine_poll_host_command_json(void *handle);
+bool frost_engine_push_host_event_json(void *handle, const char *event_json);
+bool frost_engine_push_host_command_result_json(void *handle,
+                                                const char *result_json);
 void frost_engine_string_free(char *value);
 }
 
@@ -50,6 +54,24 @@ bool FrostBridge::PollEventJson(std::string &eventJson) {
   }
   eventJson = TakeFrostString(frost_engine_poll_event_json(handle_));
   return !eventJson.empty();
+}
+
+bool FrostBridge::PollHostCommandJson(std::string &commandJson) {
+  if (!handle_) {
+    return false;
+  }
+  commandJson = TakeFrostString(frost_engine_poll_host_command_json(handle_));
+  return !commandJson.empty();
+}
+
+bool FrostBridge::PushHostEventJson(const std::string &eventJson) {
+  return handle_ &&
+         frost_engine_push_host_event_json(handle_, eventJson.c_str());
+}
+
+bool FrostBridge::PushHostCommandResultJson(const std::string &resultJson) {
+  return handle_ &&
+         frost_engine_push_host_command_result_json(handle_, resultJson.c_str());
 }
 
 }  // namespace fubuki

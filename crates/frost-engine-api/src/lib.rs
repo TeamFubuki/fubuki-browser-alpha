@@ -13,9 +13,10 @@ pub trait EngineAdapter {
     fn close_page(&mut self, tab_id: &str) -> EngineResult<()>;
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()>;
     fn reload(&mut self, tab_id: &str) -> EngineResult<()>;
+    fn stop(&mut self, tab_id: &str) -> EngineResult<()>;
     fn go_back(&mut self, tab_id: &str) -> EngineResult<()>;
     fn go_forward(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn create_window(&mut self, window_id: &str) -> EngineResult<()>;
+    fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<()>;
     fn close_window(&mut self, window_id: &str) -> EngineResult<()>;
 }
 
@@ -56,6 +57,10 @@ impl EngineAdapter for NoopEngineAdapter {
         Ok(())
     }
 
+    fn stop(&mut self, _: &str) -> EngineResult<()> {
+        Ok(())
+    }
+
     fn go_back(&mut self, _: &str) -> EngineResult<()> {
         Ok(())
     }
@@ -64,7 +69,7 @@ impl EngineAdapter for NoopEngineAdapter {
         Ok(())
     }
 
-    fn create_window(&mut self, _: &str) -> EngineResult<()> {
+    fn create_window(&mut self, _: &str, _: bool) -> EngineResult<()> {
         Ok(())
     }
 

@@ -2,10 +2,13 @@ use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 use std::thread::JoinHandle;
 
-use crossbeam_channel::{Receiver, Sender};
-use frost_core::BrowserCore;
+use crossbeam_channel::{Receiver, Sender, select};
+use frost_core::{BrowserCore, HostCommandAdapter};
 use frost_engine_api::EngineAdapter;
-use frost_protocol::{EventEnvelope, ProtocolRequest, ProtocolResponse};
+use frost_protocol::{
+    EventEnvelope, HostCommandEnvelope, HostCommandResultEnvelope, HostEventEnvelope,
+    ProtocolRequest, ProtocolResponse,
+};
 use frost_store::{
     BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
     SettingsRepository,
@@ -15,6 +18,9 @@ pub struct FrostEngineHandle {
     request_tx: Sender<ProtocolRequest>,
     response_rx: Receiver<ProtocolResponse>,
     event_rx: Receiver<EventEnvelope>,
+    host_command_rx: Receiver<HostCommandEnvelope>,
+    host_event_tx: Sender<HostEventEnvelope>,
+    host_result_tx: Sender<HostCommandResultEnvelope>,
     join_handle: Option<JoinHandle<()>>,
 }
 
@@ -45,9 +51,22 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
     let (request_tx, request_rx) = crossbeam_channel::unbounded();
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
+    let (host_command_tx, host_command_rx) = crossbeam_channel::unbounded();
+    let (host_event_tx, host_event_rx) = crossbeam_channel::unbounded();
+    let (host_result_tx, host_result_rx) = crossbeam_channel::unbounded();
 
     let join_handle = if path.is_null() {
-        spawn_core(BrowserCore::new(), event_tx, request_rx, response_tx)
+        spawn_core(
+            BrowserCore::with_adapter_and_settings(
+                HostCommandAdapter::new(host_command_tx),
+                frost_core::InMemoryStore::default(),
+            ),
+            event_tx.clone(),
+            request_rx.clone(),
+            response_tx.clone(),
+            host_event_rx,
+            host_result_rx,
+        )
     } else {
         let path = unsafe { CStr::from_ptr(path) }
             .to_str()
@@ -55,12 +74,27 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
             .to_owned();
         match frost_store::SqliteStore::open(path) {
             Ok(store) => spawn_core(
-                BrowserCore::with_adapter_and_settings(frost_engine_api::NoopEngineAdapter, store),
-                event_tx,
-                request_rx,
-                response_tx,
+                BrowserCore::with_adapter_and_settings(
+                    HostCommandAdapter::new(host_command_tx.clone()),
+                    store,
+                ),
+                event_tx.clone(),
+                request_rx.clone(),
+                response_tx.clone(),
+                host_event_rx.clone(),
+                host_result_rx.clone(),
             ),
-            Err(_) => spawn_core(BrowserCore::new(), event_tx, request_rx, response_tx),
+            Err(_) => spawn_core(
+                BrowserCore::with_adapter_and_settings(
+                    HostCommandAdapter::new(host_command_tx.clone()),
+                    frost_core::InMemoryStore::default(),
+                ),
+                event_tx.clone(),
+                request_rx.clone(),
+                response_tx.clone(),
+                host_event_rx.clone(),
+                host_result_rx.clone(),
+            ),
         }
     };
 
@@ -68,6 +102,9 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         request_tx,
         response_rx,
         event_rx,
+        host_command_rx,
+        host_event_tx,
+        host_result_tx,
         join_handle: Some(join_handle),
     }))
 }
@@ -77,6 +114,8 @@ fn spawn_core<A, S>(
     event_tx: Sender<EventEnvelope>,
     request_rx: Receiver<ProtocolRequest>,
     response_tx: Sender<ProtocolResponse>,
+    host_event_rx: Receiver<HostEventEnvelope>,
+    host_result_rx: Receiver<HostCommandResultEnvelope>,
 ) -> JoinHandle<()>
 where
     A: EngineAdapter + Send + 'static,
@@ -89,7 +128,31 @@ where
         + 'static,
 {
     core.set_event_sender(event_tx);
-    std::thread::spawn(move || core.run(request_rx, response_tx))
+    std::thread::spawn(move || {
+        loop {
+            select! {
+                recv(request_rx) -> message => {
+                    let Ok(request) = message else {
+                        break;
+                    };
+                    let response = core.process(request);
+                    if response_tx.send(response).is_err() {
+                        break;
+                    }
+                }
+                recv(host_event_rx) -> message => {
+                    if let Ok(event) = message {
+                        let _ = core.process_host_event(event);
+                    }
+                }
+                recv(host_result_rx) -> message => {
+                    if let Ok(result) = message {
+                        let _ = core.process_host_command_result(result);
+                    }
+                }
+            }
+        }
+    })
 }
 
 /// # Safety
@@ -166,6 +229,79 @@ pub unsafe extern "C" fn frost_engine_poll_event_json(
             Ok(event) => into_c_string(serde_json::to_string(&event).unwrap_or_default()),
             Err(_) => ptr::null_mut(),
         }
+    }
+}
+
+/// # Safety
+///
+/// - `handle` must be a valid pointer obtained from `frost_engine_new`.
+/// - Returns a null pointer if no host command is available.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_poll_host_command_json(
+    handle: *mut FrostEngineHandle,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let handle = &*handle;
+        match handle.host_command_rx.try_recv() {
+            Ok(command) => into_c_string(serde_json::to_string(&command).unwrap_or_default()),
+            Err(_) => ptr::null_mut(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// - `handle` must be a valid pointer obtained from `frost_engine_new`.
+/// - `event_json` must be a valid null-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_push_host_event_json(
+    handle: *mut FrostEngineHandle,
+    event_json: *const c_char,
+) -> bool {
+    if handle.is_null() || event_json.is_null() {
+        return false;
+    }
+
+    unsafe {
+        let event_text = match CStr::from_ptr(event_json).to_str() {
+            Ok(text) => text,
+            Err(_) => return false,
+        };
+        let event = match serde_json::from_str::<HostEventEnvelope>(event_text) {
+            Ok(event) => event,
+            Err(_) => return false,
+        };
+        (&*handle).host_event_tx.send(event).is_ok()
+    }
+}
+
+/// # Safety
+///
+/// - `handle` must be a valid pointer obtained from `frost_engine_new`.
+/// - `result_json` must be a valid null-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_push_host_command_result_json(
+    handle: *mut FrostEngineHandle,
+    result_json: *const c_char,
+) -> bool {
+    if handle.is_null() || result_json.is_null() {
+        return false;
+    }
+
+    unsafe {
+        let result_text = match CStr::from_ptr(result_json).to_str() {
+            Ok(text) => text,
+            Err(_) => return false,
+        };
+        let result = match serde_json::from_str::<HostCommandResultEnvelope>(result_text) {
+            Ok(result) => result,
+            Err(_) => return false,
+        };
+        (&*handle).host_result_tx.send(result).is_ok()
     }
 }
 
