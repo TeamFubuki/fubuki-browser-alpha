@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "oxlint src/",
     "lint:fix": "oxlint src/ --fix",
-    "format": "oxfmt src/ --write"
+    "format": "oxfmt src/ --write",
+    "format:check": "oxfmt src/ --check"
   },
   "dependencies": {
     "solid-js": "^1.9.13"

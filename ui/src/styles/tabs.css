@@ -84,8 +84,7 @@
   height: 28px;
   border-radius: 7px;
   contain: layout style;
-  transition:
-    background-color 0.14s ease;
+  transition: background-color 0.14s ease;
 }
 
 .pinned-tab:hover,

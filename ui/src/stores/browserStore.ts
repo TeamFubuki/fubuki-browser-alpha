@@ -6,7 +6,6 @@ import {
   onBridgeEvent,
   type BookmarkRecord,
   type BrowserState,
-  type EventMap,
   type FrostTabState,
   type HistoryRecord,
   type Tab,
@@ -196,12 +195,18 @@ export function toggleSidebar(): void {
     browserState.settings.sidebarVisible === 'hide' ? 'show' : 'hide';
   // Update optimistically — no bridge refresh needed for UI state
   setBrowserState('settings', 'sidebarVisible', next);
-  void invokeBridge('settings.set', { key: 'sidebarVisible', value: next })
-    .catch((error) => {
-      console.error('[Fubuki] Failed to toggle sidebar:', error);
-      // Revert on failure
-      setBrowserState('settings', 'sidebarVisible', next === 'show' ? 'hide' : 'show');
-    });
+  void invokeBridge('settings.set', {
+    key: 'sidebarVisible',
+    value: next,
+  }).catch((error) => {
+    console.error('[Fubuki] Failed to toggle sidebar:', error);
+    // Revert on failure
+    setBrowserState(
+      'settings',
+      'sidebarVisible',
+      next === 'show' ? 'hide' : 'show',
+    );
+  });
 }
 
 export function navigateInternal(url: string): void {
@@ -239,10 +244,14 @@ export function bindNativeEvents() {
     onBridgeEvent('tab.updated', (patch) => {
       const tabPatch = toTabPatch(patch);
       if (tabPatch) {
-        setBrowserState('tabs', (tab) => tab.id === patch.tabId, (tab) => ({
-          ...tab,
-          ...tabPatch,
-        }));
+        setBrowserState(
+          'tabs',
+          (tab) => tab.id === patch.tabId,
+          (tab) => ({
+            ...tab,
+            ...tabPatch,
+          }),
+        );
       }
     }),
 

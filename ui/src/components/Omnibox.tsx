@@ -2,20 +2,16 @@ import { createEffect, createSignal } from 'solid-js';
 import { tabs } from '../bridge/fubuki';
 import { t } from '../i18n';
 import { browserState } from '../stores/browserStore';
-import {
-  normalizeOmniboxInput,
-  shouldTreatAsSearch,
-} from '../utils/navigation';
+import { normalizeOmniboxInput } from '../utils/navigation';
 
 function buildSearchUrl(query: string): string {
   const engine = browserState.settings.searchEngine || 'google';
-  const custom = browserState.settings.customSearchUrl ||
+  const custom =
+    browserState.settings.customSearchUrl ||
     'https://www.google.com/search?q={query}';
   const encoded = encodeURIComponent(query);
-  if (engine === 'duckduckgo')
-    return `https://duckduckgo.com/?q=${encoded}`;
-  if (engine === 'bing')
-    return `https://www.bing.com/search?q=${encoded}`;
+  if (engine === 'duckduckgo') return `https://duckduckgo.com/?q=${encoded}`;
+  if (engine === 'bing') return `https://www.bing.com/search?q=${encoded}`;
   if (engine === 'custom') return custom.replace('{query}', encoded);
   return `https://www.google.com/search?q=${encoded}`;
 }

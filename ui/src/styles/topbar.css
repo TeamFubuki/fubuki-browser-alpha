@@ -99,8 +99,7 @@
   background: var(--surface);
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.14);
   contain: layout style;
-  transition:
-    opacity 0.14s ease;
+  transition: opacity 0.14s ease;
 }
 
 .find-bar input {

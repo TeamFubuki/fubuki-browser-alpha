@@ -142,7 +142,8 @@ export default function VerticalTabList() {
                 }}
                 onDragOver={(event) => {
                   event.preventDefault();
-                  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                  if (event.dataTransfer)
+                    event.dataTransfer.dropEffect = 'move';
                   setDragOverId(tab.id);
                 }}
                 onDragLeave={() => setDragOverId(null)}
