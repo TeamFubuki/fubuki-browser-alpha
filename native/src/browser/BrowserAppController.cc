@@ -116,8 +116,7 @@ void BrowserAppController::DispatchHostCommands() {
 
       if (command == "window.create") {
         CefRefPtr<CefDictionaryValue> payload =
-            envelope->HasKey("payload") &&
-                    envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+            envelope->HasKey("payload")
                 ? envelope->GetDictionary("payload")
                 : CefDictionaryValue::Create();
         const bool isPrivate =
@@ -127,8 +126,7 @@ void BrowserAppController::DispatchHostCommands() {
                                                                 ok ? "" : "failed to create window"));
       } else if (command == "window.close") {
         CefRefPtr<CefDictionaryValue> payload =
-            envelope->HasKey("payload") &&
-                    envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+            envelope->HasKey("payload")
                 ? envelope->GetDictionary("payload")
                 : CefDictionaryValue::Create();
         const std::string targetWindowId =

@@ -605,4 +605,12 @@ std::string NativeBridge::WriteValue(CefRefPtr<CefValue> value) const {
   return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
 }
 
+bool NativeBridge::PollHostCommandJson(std::string &commandJson) {
+  return frostBridge_.PollHostCommandJson(commandJson);
+}
+
+bool NativeBridge::PushHostCommandResultJson(const std::string &resultJson) {
+  return frostBridge_.PushHostCommandResultJson(resultJson);
+}
+
 }  // namespace fubuki

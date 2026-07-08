@@ -32,6 +32,11 @@ public:
   void SyncFrostFromHost();
   std::string GetStateJson() const;
   CefRefPtr<CefDictionaryValue> TabToDictionary(const Tab &tab) const;
+  // Host command channel fed by FrostEngine. Returns true and fills
+  // |commandJson| when a pending host command is available.
+  bool PollHostCommandJson(std::string &commandJson);
+  // Pushes a host command result envelope back to FrostEngine.
+  bool PushHostCommandResultJson(const std::string &resultJson);
 
 private:
   using MethodHandler =

@@ -33,6 +33,8 @@ public:
   // commands are handled here; page/overlay commands are delegated to the
   // owning BrowserWindow.
   void DispatchHostCommands();
+  // Starts the self-rescheduling host command poller on the CEF UI thread.
+  void StartHostCommandPoller();
   void NotifyWindowFocused(BrowserWindow *window);
   void NotifyWindowClosed(BrowserWindow *window);
   void PersistSession();
