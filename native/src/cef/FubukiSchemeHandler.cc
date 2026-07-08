@@ -310,13 +310,6 @@ html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#2529
   return html.str();
 }
 
-std::string ActionLink(const std::string &key, const std::string &value,
-                       const std::string &returnUrl) {
-  return "fubuki://settings/set?key=" + key +
-         "&value=" + CefURIEncode(value, false).ToString() +
-         "&return=" + CefURIEncode(returnUrl, false).ToString();
-}
-
 std::string HiddenInput(const std::string &name, const std::string &value) {
   return "<input type=\"hidden\" name=\"" + HtmlEscape(name) + "\" value=\"" +
          HtmlEscape(value) + "\">";
@@ -463,10 +456,8 @@ std::string SettingsHtml() {
 
   auto chip = [](const std::string &key, const std::string &current,
                  const std::string &value, const std::string &label) {
-    return "<a class=\"chip" +
-           std::string(current == value ? " selected" : "") + "\" href=\"" +
-           ActionLink(key, value, "fubuki://settings/") + "\">" +
-           HtmlEscape(label) + "</a>";
+    return ActionForm(key, value, "fubuki://settings/", label,
+                      "chip" + std::string(current == value ? " selected" : ""));
   };
 
   std::ostringstream body;
@@ -867,6 +858,20 @@ std::string SearchRedirectUrl(const std::string &query) {
 bool FubukiSchemeHandler::LoadRequest(const std::string &url) {
   offset_ = 0;
   auto &cache = PageCache::Instance();
+
+  // Destructive internal-page actions must never execute from a URL GET.
+  // `fubuki://settings/set?...` is only honored when submitted as a POST form
+  // body (see SettingsHtml), never from a navigation/link click. Reject any
+  // GET-style query-string invocation to avoid CSRF-style state changes.
+  if (url.rfind("fubuki://settings/set", 0) == 0) {
+    const std::string html =
+        "<!doctype html><meta charset=\"utf-8\"><title>Rejected</title>"
+        "<body style=\"font:14px -apple-system,sans-serif;padding:24px\">"
+        "<h1>Action rejected</h1><p>Settings changes must be submitted through "
+        "the UI, not a URL request.</p></body>";
+    LoadText(html, "text/html", 403);
+    return true;
+  }
 
   // Handle new tab search: fubuki://newtab/search?q=...
   if (url.rfind("fubuki://newtab/search", 0) == 0) {

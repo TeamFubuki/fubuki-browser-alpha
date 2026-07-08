@@ -19,15 +19,6 @@ CefRefPtr<CefValue> BoolValue(bool value) {
   return result;
 }
 
-CefRefPtr<CefListValue> CopyListOrEmpty(CefRefPtr<CefListValue> value) {
-  return value ? value->Copy() : CefListValue::Create();
-}
-
-CefRefPtr<CefDictionaryValue>
-CopyDictionaryOrEmpty(CefRefPtr<CefDictionaryValue> value) {
-  return value ? value->Copy(false) : CefDictionaryValue::Create();
-}
-
 }  // namespace
 
 NativeBridge::NativeBridge(BrowserWindow &window)
@@ -37,27 +28,11 @@ NativeBridge::NativeBridge(BrowserWindow &window)
 }
 
 void NativeBridge::RegisterMethods() {
-  methods_["app.getState"] = [this](CefRefPtr<CefDictionaryValue>) {
-    return StateValue();
-  };
-
   methods_["app.snapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
-    SyncFrostFromHost();
     return FrostInvoke("app.snapshot", CefDictionaryValue::Create());
   };
 
-  methods_["frost.coreSnapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
-    const std::string response =
-        frostBridge_.ProcessJson("{\"version\":0,\"method\":\"app.snapshot\"}");
-    auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
-    if (!parsed) {
-      return ErrorValue("FrostEngine returned invalid JSON");
-    }
-    return parsed;
-  };
-
   methods_["tabs.list"] = [this](CefRefPtr<CefDictionaryValue>) {
-    SyncFrostFromHost();
     return FrostInvoke("tabs.list", CefDictionaryValue::Create());
   };
 
@@ -175,7 +150,6 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["windows.list"] = [this](CefRefPtr<CefDictionaryValue>) {
-    SyncFrostFromHost();
     return FrostInvoke("windows.list", CefDictionaryValue::Create());
   };
 
@@ -453,7 +427,6 @@ CefRefPtr<CefValue> NativeBridge::HostBackedFrostInvoke(
   const bool ok = hostOperation();
   if (ok) {
     (void)FrostInvoke(method, params);
-    SyncFrostFromHost();
   }
   return BoolValue(ok);
 }
@@ -473,10 +446,6 @@ void NativeBridge::EmitToUi(const std::string &eventName,
   if (auto ui = window_.UiBrowser()) {
     ui->GetMainFrame()->ExecuteJavaScript(script, "fubuki://app/", 0);
   }
-}
-
-std::string NativeBridge::GetStateJson() const {
-  return WriteValue(StateValue());
 }
 
 CefRefPtr<CefValue> NativeBridge::ErrorValue(const std::string &message) const {
@@ -518,87 +487,6 @@ NativeBridge::WindowToFrostDictionary(const BrowserWindow &window) const {
   dict->SetBool("isPrivate", window.IsPrivate());
   dict->SetList("tabIds", tabIds);
   return dict;
-}
-
-CefRefPtr<CefValue> NativeBridge::FrostStateValue() const {
-  auto state = CefDictionaryValue::Create();
-  auto windows = CefListValue::Create();
-  auto tabs = CefListValue::Create();
-  const auto windowSnapshot = window_.App().Windows();
-  size_t tabIndex = 0;
-
-  for (size_t i = 0; i < windowSnapshot.size(); ++i) {
-    const auto *browserWindow = windowSnapshot[i];
-    windows->SetDictionary(i, WindowToFrostDictionary(*browserWindow));
-    for (const auto &tab : browserWindow->Tabs().GetTabs()) {
-      auto item = TabToDictionary(tab);
-      item->SetString("windowId", browserWindow->WindowId());
-      tabs->SetDictionary(tabIndex++, item);
-    }
-  }
-
-  state->SetInt("protocolVersion", 0);
-  state->SetString("activeWindowId", window_.WindowId());
-  state->SetList("windows", windows);
-  state->SetList("tabs", tabs);
-  state->SetList("history", CopyListOrEmpty(window_.Store().History()));
-  state->SetList("bookmarks", CopyListOrEmpty(window_.Store().Bookmarks()));
-  state->SetList("downloads", CopyListOrEmpty(window_.Store().Downloads()));
-  state->SetList("permissions", CopyListOrEmpty(window_.Store().Permissions()));
-  state->SetDictionary("settings", CopyDictionaryOrEmpty(window_.Store().Settings()));
-
-  auto value = CefValue::Create();
-  value->SetDictionary(state);
-  return value;
-}
-
-void NativeBridge::SyncFrostFromHost() {
-  auto params = CefDictionaryValue::Create();
-  params->SetValue("state", FrostStateValue());
-  (void)FrostInvoke("host.syncSnapshot", params);
-}
-
-CefRefPtr<CefValue> NativeBridge::StateValue() const {
-  auto state = CefDictionaryValue::Create();
-  auto tabs = CefListValue::Create();
-  const auto snapshot = window_.Tabs().GetTabs();
-  for (size_t i = 0; i < snapshot.size(); ++i) {
-    tabs->SetDictionary(i, TabToDictionary(snapshot[i]));
-  }
-  auto windows = CefListValue::Create();
-  const auto windowSnapshot = window_.App().Windows();
-  for (size_t i = 0; i < windowSnapshot.size(); ++i) {
-    windows->SetDictionary(i, windowSnapshot[i]->SessionSnapshot());
-  }
-  auto events = CefListValue::Create();
-  const auto recentEvents = window_.App().Events().RecentEvents();
-  for (size_t i = 0; i < recentEvents.size(); ++i) {
-    auto item = CefDictionaryValue::Create();
-    item->SetString("name", recentEvents[i].name);
-    item->SetString("windowId", recentEvents[i].windowId);
-    item->SetString("tabId", recentEvents[i].tabId);
-    item->SetString("message", recentEvents[i].message);
-    events->SetDictionary(i, item);
-  }
-  state->SetString("bridgeVersion", "1");
-  state->SetString("windowId", window_.WindowId());
-  state->SetBool("isPrivate", window_.IsPrivate());
-  state->SetString("activeTabId", window_.Tabs().GetActiveTabId());
-  state->SetString("profilePath", window_.Store().ProfilePath());
-  state->SetList("tabs", tabs);
-  state->SetList("windows", windows);
-  state->SetList("history", CopyListOrEmpty(window_.Store().History()));
-  state->SetList("bookmarks", CopyListOrEmpty(window_.Store().Bookmarks()));
-  state->SetList("downloads", CopyListOrEmpty(window_.Store().Downloads()));
-  state->SetList("permissions", CopyListOrEmpty(window_.Store().Permissions()));
-  state->SetList("logs", CopyListOrEmpty(window_.Store().Logs()));
-  state->SetList("commands", window_.Commands().List());
-  state->SetList("recentEvents", events);
-  state->SetDictionary("settings",
-                       CopyDictionaryOrEmpty(window_.Store().Settings()));
-  auto value = CefValue::Create();
-  value->SetDictionary(state);
-  return value;
 }
 
 std::string NativeBridge::WriteValue(CefRefPtr<CefValue> value) const {

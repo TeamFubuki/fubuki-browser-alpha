@@ -1,9 +1,12 @@
 mod bookmark_service;
 mod download_service;
+mod external_router;
 mod history_service;
 mod settings_service;
 mod tab_service;
 mod window_service;
+
+pub use external_router::{ExternalPolicy, ExternalResponse};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,8 +18,8 @@ use frost_protocol::{
     Request, Response, SettingChanged, TabActivated, TabClosed, TabPatch,
 };
 use frost_store::{
-    BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
-    SettingsRepository,
+    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRepository,
+    PermissionRepository, SessionRepository, SettingsRepository,
 };
 use thiserror::Error;
 
@@ -142,7 +145,10 @@ where
         + BookmarkRepository
         + HistoryRepository
         + DownloadRepository
-        + PermissionRepository,
+        + PermissionRepository
+        + LogRepository
+        + SessionRepository
+        + ClearRepository,
 {
     pub fn with_adapter_and_settings(adapter: A, repository: S) -> Self {
         let mut windows = WindowService::new();
@@ -547,13 +553,16 @@ where
             }
             Request::DataClear { target } => {
                 let target = target.unwrap_or_else(|| "all".into());
+                if target == "bookmarks" || target == "all" {
+                    let _ = self.repository.clear_bookmarks();
+                    self.emit(Event::BookmarkChanged { url: String::new() });
+                }
                 if target == "history" || target == "all" {
                     let _ = HistoryService::clear_range(&self.repository, "all");
                     self.emit(Event::HistoryChanged { url: None });
                 }
                 if target == "downloads" || target == "all" {
-                    // DownloadRepository intentionally has targeted removal;
-                    // clearing all remains host-backed until a clear trait is added.
+                    let _ = self.repository.clear_downloads();
                     self.emit(Event::DownloadChanged {
                         url: None,
                         path: None,
@@ -1152,6 +1161,42 @@ impl PermissionRepository for InMemoryStore {
         let before = permissions.len();
         permissions.retain(|p| !(p.origin == origin && p.permission == permission));
         Ok(permissions.len() != before)
+    }
+}
+
+impl frost_store::LogRepository for InMemoryStore {
+    fn add_log(&self, _level: &str, _message: &str) -> frost_store::StoreResult<()> {
+        Ok(())
+    }
+
+    fn list_logs(&self, _limit: usize) -> frost_store::StoreResult<Vec<frost_store::LogRecord>> {
+        Ok(Vec::new())
+    }
+
+    fn clear_logs(&self) -> frost_store::StoreResult<()> {
+        Ok(())
+    }
+}
+
+impl frost_store::SessionRepository for InMemoryStore {
+    fn get_session(&self) -> frost_store::StoreResult<Option<String>> {
+        Ok(None)
+    }
+
+    fn set_session(&self, _json: &str) -> frost_store::StoreResult<()> {
+        Ok(())
+    }
+}
+
+impl frost_store::ClearRepository for InMemoryStore {
+    fn clear_bookmarks(&self) -> frost_store::StoreResult<()> {
+        self.bookmarks.borrow_mut().clear();
+        Ok(())
+    }
+
+    fn clear_downloads(&self) -> frost_store::StoreResult<()> {
+        self.downloads.borrow_mut().clear();
+        Ok(())
     }
 }
 

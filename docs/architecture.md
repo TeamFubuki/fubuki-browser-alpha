@@ -137,15 +137,19 @@ The host holds no browser state. It is a pure I/O layer.
 
 Destructive internal-page actions must not execute from URL GET navigation. Internal pages use POST actions for destructive operations, and the host rejects destructive `fubuki://settings/set?...` GET requests.
 
-## Legacy (pre-FrostEngine)
+## Migration Status
 
-The current codebase (`native/src/browser/`, `native/src/bridge/`) will be incrementally migrated:
+The legacy native state ownership has been migrated to FrostEngine:
 
-- `BrowserWindow` → thin CEF host, state management removed
-- `NativeBridge` → thin Frost Protocol entry point
-- `TabManager` → replaced by `TabService`
-- `BrowserDataStore` → replaced by `frost-store`
-- `BrowserAppController` → window management moves to `WindowService`
-- `CommandRegistry` → command schema defined in `frost-protocol`
+| Component | Status |
+|---|---|
+| `BrowserDataStore` (SQLite + CefListValue caches) | **Removed.** Replaced by `frost-store` via the `FrostStore` FFI wrapper (`native/src/browser/FrostStore.*`). Settings, logs, bookmarks, history, downloads, permissions, and session all live in the engine-owned SQLite database. |
+| `NativeBridge` `host.syncSnapshot` reverse sync | **Removed.** FrostEngine is the single source of truth; the host no longer pushes a synthesized snapshot back into the engine. |
+| Legacy bridge methods (`app.getState`, `frost.coreSnapshot`) | **Removed.** UI and native both go through Frost Protocol request/response only. |
+| Destructive `fubuki://settings/set?...` GET | **Rejected.** The scheme handler returns HTTP 403 for any GET-style `settings/set` navigation; settings changes only fire from POST form submissions. |
+| `TabManager` | Retained as a CEF browser-instance manager (per the host's responsibility for CEF lifecycle). Logical tab state (existence, active, ordering) is owned by `TabService`; the host reflects CEF callbacks into the engine via `HostEvent`s and reads state back through `app.snapshot`. |
+| `BrowserAppController` | Still owns NSWindow lifecycle on the host; window logical state is mirrored into `WindowService` via `HostCommand`/`HostEvent`. |
+| `CommandRegistry` | Command schema is defined in `frost-protocol`; native registry remains a thin dispatcher. |
+| External / MCP boundary | Implemented in `frost-core::external_router` with capability gating, audit events, and a rate limiter. Native reaches it through `FrostBridge::GrantExternal` / `ProcessExternalJson`. |
 
 See `docs/frost-engine-plan.md` for the detailed migration plan.

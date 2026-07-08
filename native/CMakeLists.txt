@@ -33,7 +33,7 @@ set(FUBUKI_SOURCES
   src/cef/FubukiSchemeHandler.cc
   src/browser/BrowserAppController.cc
   src/browser/BrowserWindow.mm
-  src/browser/BrowserDataStore.cc
+  src/browser/FrostStore.cc
   src/browser/Tab.cc
   src/browser/TabManager.cc
   src/bridge/FrostBridge.cc

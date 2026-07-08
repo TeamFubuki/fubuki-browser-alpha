@@ -133,7 +133,7 @@ std::string BrowserAppearance(BrowserWindow *window) {
     return "system";
   }
   const std::string appearance =
-      window->Store().Settings()->GetString("appearance");
+      window->Store().GetSetting("appearance");
   if (appearance == "light" || appearance == "dark") {
     return appearance;
   }
@@ -375,7 +375,7 @@ bool FubukiClient::OnBeforeDownload(
   }
   const std::string path = window_->DownloadPathFor(suggested_name.ToString());
   const bool askBeforeDownload =
-      window_->Store().Settings()->GetString("askBeforeDownload") == "on";
+      window_->Store().GetSetting("askBeforeDownload") == "on";
   window_->OnDownloadStarted(download_item->GetURL().ToString(), path);
   callback->Continue(path, askBeforeDownload);
   return true;

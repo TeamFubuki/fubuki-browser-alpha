@@ -43,6 +43,29 @@ pub trait PermissionRepository {
     fn remove_permission(&self, origin: &str, permission: &str) -> StoreResult<bool>;
 }
 
+/// Application log storage. Native host writes diagnostic logs here so that
+/// they survive in the engine-owned SQLite database rather than a second,
+/// host-owned store.
+pub trait LogRepository {
+    fn add_log(&self, level: &str, message: &str) -> StoreResult<()>;
+    fn list_logs(&self, limit: usize) -> StoreResult<Vec<LogRecord>>;
+    fn clear_logs(&self) -> StoreResult<()>;
+}
+
+/// Session snapshot persistence (window/tab layout for restore on launch).
+pub trait SessionRepository {
+    fn get_session(&self) -> StoreResult<Option<String>>;
+    fn set_session(&self, json: &str) -> StoreResult<()>;
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogRecord {
+    pub level: String,
+    pub message: String,
+    pub created_at: String,
+}
+
 pub struct SqliteStore {
     conn: Connection,
 }
@@ -103,10 +126,26 @@ impl SqliteStore {
               created_at TEXT NOT NULL,
               UNIQUE(origin, permission)
             );
+            CREATE TABLE IF NOT EXISTS logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              level TEXT NOT NULL,
+              message TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              snapshot TEXT NOT NULL
+            );
             ",
         )?;
         Ok(())
     }
+}
+
+/// Bulk-clear operations used by the `data.clear` command.
+pub trait ClearRepository {
+    fn clear_bookmarks(&self) -> StoreResult<()>;
+    fn clear_downloads(&self) -> StoreResult<()>;
 }
 
 impl BookmarkRepository for SqliteStore {
@@ -295,6 +334,73 @@ impl SettingsRepository for SqliteStore {
             ",
             params![key, value],
         )?;
+        Ok(())
+    }
+}
+
+impl LogRepository for SqliteStore {
+    fn add_log(&self, level: &str, message: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO logs(level,message,created_at) VALUES (?1,?2,?3)",
+            params![level, message, now_text()],
+        )?;
+        self.conn.execute(
+            "DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 300)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn list_logs(&self, limit: usize) -> StoreResult<Vec<LogRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT level,message,created_at FROM logs ORDER BY id DESC LIMIT ?")?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(LogRecord {
+                level: row.get(0)?,
+                message: row.get(1)?,
+                created_at: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    fn clear_logs(&self) -> StoreResult<()> {
+        self.conn.execute("DELETE FROM logs", [])?;
+        Ok(())
+    }
+}
+
+impl SessionRepository for SqliteStore {
+    fn get_session(&self) -> StoreResult<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT snapshot FROM session WHERE id = 1")?;
+        let mut rows = stmt.query([])?;
+        Ok(rows
+            .next()?
+            .map(|row| row.get::<_, String>(0))
+            .transpose()?)
+    }
+
+    fn set_session(&self, json: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO session(id,snapshot) VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET snapshot = excluded.snapshot",
+            params![json],
+        )?;
+        Ok(())
+    }
+}
+
+impl ClearRepository for SqliteStore {
+    fn clear_bookmarks(&self) -> StoreResult<()> {
+        self.conn.execute("DELETE FROM bookmarks", [])?;
+        Ok(())
+    }
+
+    fn clear_downloads(&self) -> StoreResult<()> {
+        self.conn.execute("DELETE FROM downloads", [])?;
         Ok(())
     }
 }

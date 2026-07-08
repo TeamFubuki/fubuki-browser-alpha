@@ -87,6 +87,10 @@ CEF / macOS Host (C++)
 - `fubuki://app/` のみが Frost Protocol ブリッジにアクセス可能
 - ブリッジは Frost Protocol v0 に従う（`docs/architecture.md` 参照）
 - 機能追加時は `frost-protocol` に Request/Response 型を追加する
+- Native は論理状態を所有しない。`BrowserDataStore` は削除され、永続化はエンジン所有の `frost-store`（SQLite）へ `FrostStore` FFI 経由で委譲する
+- `host.syncSnapshot` 等の逆向き同期は行わない。FrostEngine が source of truth
+- External / MCP クライアントは `frost-core::external_router` 経由で接続し、capability ゲート・audit・rate limit を通す。CEF/NSWindow へ直接触れてはならない
+- destructive action は URL GET や UI 内リンクで発火させない。`fubuki://settings/set?...` の GET は scheme handler で 403 拒否する
 
 ### アーキテクチャ原則
 

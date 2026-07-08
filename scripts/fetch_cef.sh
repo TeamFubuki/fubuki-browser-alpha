@@ -81,10 +81,16 @@ if not candidates:
     raise SystemExit(f"No standard CEF archive found for {platform} channel={channel}")
 
 _, version, name = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
+# Resolve the archive entry to read its checksum from the index.
+archive_entry = next(
+    (f for f in version.get("files", []) if f.get("name") == name),
+    {},
+)
 json.dump({
     "cef_file": name,
     "cef_version": version.get("cef_version", ""),
     "chromium_version": version.get("chromium_version", ""),
+    "cef_sha1": archive_entry.get("sha1", ""),
 }, sys.stdout)
 PY
 
@@ -96,18 +102,47 @@ CEF_FILE="$(json_get cef_file)"
 CEF_URL="${BASE_URL%/}/$CEF_FILE"
 CEF_VERSION="$(json_get cef_version)"
 CHROMIUM_VERSION="$(json_get chromium_version)"
+CEF_SHA1="$(json_get cef_sha1)"
 rm -f "$selection_file"
 
 archive="$CACHE_DIR/$CEF_FILE"
 echo "Selected CEF: $CEF_VERSION / Chromium $CHROMIUM_VERSION"
 echo "Archive: $CEF_FILE"
 
+compute_sha1() {
+  local file="$1"
+  shasum -a 1 -b "$file" 2>/dev/null | cut -d' ' -f1
+}
+
+verify_archive() {
+  local file="$1" expected="$2"
+  if [[ -z "$expected" ]]; then
+    echo "Warning: no checksum published for $file; skipping verification" >&2
+    return 0
+  fi
+  local actual
+  actual="$(compute_sha1 "$file")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Checksum mismatch for $file" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    return 1
+  fi
+  echo "Checksum verified: $actual"
+  return 0
+}
+
 if [[ ! -f "$archive" ]]; then
   echo "Downloading $CEF_URL"
   curl -fL --retry 3 --retry-delay 2 -o "$archive.tmp" "$CEF_URL"
   mv "$archive.tmp" "$archive"
+  if ! verify_archive "$archive" "$CEF_SHA1"; then
+    rm -f "$archive"
+    exit 1
+  fi
 else
   echo "Using cached archive $archive"
+  verify_archive "$archive" "$CEF_SHA1" || exit 1
 fi
 
 tmp_dir="$(mktemp -d "$CACHE_DIR/extract.XXXXXX")"

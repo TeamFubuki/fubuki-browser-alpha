@@ -24,6 +24,12 @@ public:
   bool PushHostEventJson(const std::string &eventJson);
   bool PushHostCommandResultJson(const std::string &resultJson);
 
+  // External / MCP automation boundary. Grants capabilities to a caller
+  // origin and routes external commands through the engine policy layer.
+  bool GrantExternal(const std::string &origin,
+                     const std::string &capabilitiesJson);
+  std::string ProcessExternalJson(const std::string &commandJson);
+
 private:
   void *handle_ = nullptr;
 };

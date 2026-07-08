@@ -350,13 +350,12 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager, 
     : app_(app),
       eventBus_(app.Events()),
       tabManager_(tabManager),
-      dataStore_(&app.Store()),
       bridge_(std::make_unique<NativeBridge>(*this)),
       windowId_(std::move(windowId)),
       privateWindow_(privateWindow) {
   gActiveBrowserWindow = this;
   if (!privateWindow_) {
-    dataStore_->Log("info", "BrowserWindow initialized");
+    Store().AddLog("info", "BrowserWindow initialized");
   }
   if (privateWindow_) {
     CefRequestContextSettings settings;
@@ -400,11 +399,11 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
     }
   }
   if (!restored) {
-    const std::string startupBehavior = dataStore_->Settings()->GetString("startupBehavior");
-    const std::string homeUrl = dataStore_->Settings()->GetString("homeUrl").empty()
-                                    ? dataStore_->Settings()->GetString("homepage").ToString()
-                                    : dataStore_->Settings()->GetString("homeUrl").ToString();
-    std::string startUrl = dataStore_->Settings()->GetString("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
+    const std::string startupBehavior = Store().GetSetting("startupBehavior");
+    const std::string homeUrl = Store().GetSetting("homeUrl").empty()
+                                    ? Store().GetSetting("homepage")
+                                    : Store().GetSetting("homeUrl");
+    std::string startUrl = Store().GetSetting("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
     if (startupBehavior == "homePage") {
       startUrl = homeUrl;
     }
@@ -423,8 +422,8 @@ bool BrowserWindow::CloseWindow() {
 
 bool BrowserWindow::CreateTab(const std::string& input, bool active) {
   const std::string url = NormalizeNavigationInput(input,
-                                                   dataStore_->Settings()->GetString("searchEngine"),
-                                                   dataStore_->Settings()->GetString("customSearchUrl"));
+                                                   Store().GetSetting("searchEngine"),
+                                                   Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active);
   CreateTabBrowser(tab);
   ResizeViews();
@@ -438,8 +437,8 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
 bool BrowserWindow::CreateTabWithId(const std::string& input,
                                     const std::string& tabId, bool active) {
   const std::string url = NormalizeNavigationInput(input,
-                                                   dataStore_->Settings()->GetString("searchEngine"),
-                                                   dataStore_->Settings()->GetString("customSearchUrl"));
+                                                   Store().GetSetting("searchEngine"),
+                                                   Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active, tabId);
   CreateTabBrowser(tab);
   ResizeViews();
@@ -596,8 +595,8 @@ bool BrowserWindow::Navigate(const std::string& tabId, const std::string& input)
     return false;
   }
   tab->browser->GetMainFrame()->LoadURL(NormalizeNavigationInput(input,
-                                                                  dataStore_->Settings()->GetString("searchEngine"),
-                                                                  dataStore_->Settings()->GetString("customSearchUrl")));
+                                                                  Store().GetSetting("searchEngine"),
+                                                                  Store().GetSetting("customSearchUrl")));
   return true;
 }
 
@@ -636,11 +635,11 @@ bool BrowserWindow::GoForward(const std::string& tabId) {
 bool BrowserWindow::GoHome() {
   Tab* tab = tabManager_.GetActiveTab();
   if (!tab) {
-    return CreateTab(dataStore_->Settings()->GetString("homeUrl"), true);
+    return CreateTab(Store().GetSetting("homeUrl"), true);
   }
-  const std::string home = dataStore_->Settings()->GetString("homeUrl").empty()
-                               ? dataStore_->Settings()->GetString("homepage").ToString()
-                               : dataStore_->Settings()->GetString("homeUrl").ToString();
+  const std::string home = Store().GetSetting("homeUrl").empty()
+                               ? Store().GetSetting("homepage")
+                               : Store().GetSetting("homeUrl");
   return Navigate(tab->id, home);
 }
 
@@ -744,7 +743,7 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
   }
   if (commandDown && (character == 'b' || character == 'B')) {
-    const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
+    const std::string current = Store().GetSetting("sidebarVisible");
     return SetSetting("sidebarVisible", current == "hide" ? "show" : "hide");
   }
   if (commandDown && (character == 'd' || character == 'D')) {
@@ -826,15 +825,15 @@ bool BrowserWindow::AddActiveBookmark() {
   if (!tab) {
     return false;
   }
-  const bool ok = dataStore_->AddBookmark(tab->title, tab->url, tab->faviconUrl);
-  dataStore_->Log("info", "Bookmark added: " + tab->url);
+  const bool ok = Store().AddBookmark(tab->title, tab->url, tab->faviconUrl);
+  Store().AddLog("info", "Bookmark added: " + tab->url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
 bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
-  const bool ok = dataStore_->AddBookmark(title, url, faviconUrl);
+  const bool ok = Store().AddBookmark(title, url, faviconUrl);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
@@ -842,7 +841,7 @@ bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& ur
 }
 
 bool BrowserWindow::RemoveBookmark(const std::string& url) {
-  const bool ok = dataStore_->RemoveBookmark(url);
+  const bool ok = Store().RemoveBookmark(url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
@@ -850,7 +849,7 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
 }
 
 bool BrowserWindow::RemoveHistory(const std::string& url) {
-  const bool ok = dataStore_->RemoveHistory(url);
+  const bool ok = Store().RemoveHistory(url);
   eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   fubuki::PageCache::Instance().Invalidate("fubuki://history");
@@ -858,14 +857,14 @@ bool BrowserWindow::RemoveHistory(const std::string& url) {
 }
 
 bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& path) {
-  const bool ok = dataStore_->RemoveDownload(url, path);
+  const bool ok = Store().RemoveDownload(url, path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path.empty() ? url : path});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
 bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
-  if (path.empty() || !dataStore_->HasDownloadPath(path) || !std::filesystem::exists(path)) {
+  if (path.empty() || !Store().HasDownloadPath(path) || !std::filesystem::exists(path)) {
     return false;
   }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
@@ -873,7 +872,7 @@ bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
 }
 
 bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
-  if (path.empty() || !dataStore_->HasDownloadPath(path) || !std::filesystem::exists(path)) {
+  if (path.empty() || !Store().HasDownloadPath(path) || !std::filesystem::exists(path)) {
     return false;
   }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
@@ -884,13 +883,13 @@ bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
 bool BrowserWindow::ClearBrowsingData(const std::string& target) {
   bool ok = false;
   if (target == "bookmarks") {
-    ok = dataStore_->ClearBookmarks();
+    ok = Store().ClearBookmarks();
   } else if (target == "history") {
-    ok = dataStore_->ClearHistory();
+    ok = Store().ClearHistory();
   } else if (target == "downloads") {
-    ok = dataStore_->ClearDownloads();
+    ok = Store().ClearDownloads();
   } else if (target == "logs") {
-    ok = dataStore_->ClearLogs();
+    ok = Store().ClearLogs();
   } else if (target == "cookies" || target == "cache" || target == "siteData") {
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
@@ -915,11 +914,11 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     cookieManager->DeleteCookies("", "", nullptr);
     context->ClearHttpCache(nullptr);
-    ok = dataStore_->ClearHistory() && dataStore_->ClearDownloads() && dataStore_->ClearLogs();
+    ok = Store().ClearHistory() && Store().ClearDownloads() && Store().ClearLogs();
   }
   if (ok) {
     if (target != "logs" && target != "all") {
-      dataStore_->Log("info", "Browsing data cleared: " + target);
+      Store().AddLog("info", "Browsing data cleared: " + target);
     }
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
@@ -927,7 +926,7 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
 }
 
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
-  const bool ok = dataStore_->ClearHistoryRange(range);
+  const bool ok = Store().ClearHistoryRange(range);
   if (ok) {
     eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
@@ -953,7 +952,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
     }
   }
-  dataStore_->SetSetting(key, savedValue);
+  Store().SetSetting(key, savedValue);
   if (key == "sidebarWidth") {
     liveSidebarWidth_ = 0.0;
   }
@@ -961,7 +960,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     UpdateContentFrame();
   }
   if (!privateWindow_) {
-    dataStore_->Log("info", "Setting updated: " + key);
+    Store().AddLog("info", "Setting updated: " + key);
   }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   if (!privateWindow_) {
@@ -973,7 +972,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
 }
 
 bool BrowserWindow::ResetSetting(const std::string& key) {
-  dataStore_->ResetSetting(key);
+  Store().ResetSetting(key);
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   fubuki::PageCache::Instance().Invalidate("fubuki://settings");
@@ -981,7 +980,7 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
 }
 
 bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
-  const bool ok = dataStore_->SetPermission(origin, permission, value);
+  const bool ok = Store().SetPermission(origin, permission, value);
   if (ok) {
     eventBus_.Publish({EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
@@ -1233,7 +1232,7 @@ void BrowserWindow::PollAndExecuteHostCommands() {
 }
 
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
-  std::string directory = dataStore_->Settings()->GetString("downloadDirectory");
+  std::string directory = Store().GetSetting("downloadDirectory");
   if (directory.empty()) {
     const char* home = std::getenv("HOME");
     directory = home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
@@ -1258,7 +1257,7 @@ void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefB
   tabManager_.SetBrowser(tabId, browser);
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     try {
-      tab->zoomLevel = std::stod(dataStore_->Settings()->GetString("defaultZoomLevel").ToString());
+      tab->zoomLevel = std::stod(Store().GetSetting("defaultZoomLevel"));
     } catch (...) {
       tab->zoomLevel = 0.0;
     }
@@ -1314,7 +1313,7 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      dataStore_->AddHistory(tab->title, tab->url);
+      Store().AddHistory(tab->title, tab->url);
       app_.PersistSession();
     }
     eventBus_.Publish({EventType::NavigationFinished, "navigation.finished", *tab, windowId_, tabId, ""});
@@ -1328,7 +1327,7 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
     tabManager_.UpdateTab(tabId, patch);
     PushHostEventJson(HostEventJson("page.loadFailed", {{"tabId", tabId}, {"errorText", message}}));
     if (!privateWindow_) {
-      dataStore_->Log("error", "Navigation failed: " + tab->url + " - " + message);
+      Store().AddLog("error", "Navigation failed: " + tab->url + " - " + message);
       app_.PersistSession();
     }
     eventBus_.Publish({EventType::NavigationFailed, "navigation.failed", *tab, windowId_, tabId, message});
@@ -1351,8 +1350,8 @@ void BrowserWindow::OnDownloadStarted(const std::string& url, const std::string&
   if (privateWindow_) {
     return;
   }
-  dataStore_->AddDownload(url, path, "started");
-  dataStore_->Log("info", "Download started: " + path);
+  Store().AddDownload(url, path, "started");
+  Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
@@ -1363,9 +1362,9 @@ void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string&
   if (privateWindow_) {
     return;
   }
-  dataStore_->UpdateDownload(url, path, state, percent);
+  Store().UpdateDownload(url, path, state, percent);
   if (state != "in_progress") {
-    dataStore_->Log("info", "Download " + state + ": " + path);
+    Store().AddLog("info", "Download " + state + ": " + path);
   }
   PushHostEventJson(HostEventJson("download.updated",
                                   {{"url", url},
@@ -1392,7 +1391,7 @@ CefRefPtr<CefDictionaryValue> BrowserWindow::SessionSnapshot() const {
   snapshot->SetString("id", windowId_);
   snapshot->SetBool("private", privateWindow_);
   snapshot->SetString("activeTabId", tabManager_.GetActiveTabId());
-  snapshot->SetString("sidebarVisible", dataStore_->Settings()->GetString("sidebarVisible"));
+  snapshot->SetString("sidebarVisible", Store().GetSetting("sidebarVisible"));
   if (window_) {
     NSRect frame = [window_ frame];
     auto frameDict = CefDictionaryValue::Create();
@@ -1672,7 +1671,7 @@ void BrowserWindow::RegisterCommands() {
   });
   commands_.Register("app.toggleSidebar", "Toggle Sidebar", "UI", "Cmd+B", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
-    const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
+    const std::string current = Store().GetSetting("sidebarVisible");
     value->SetBool(SetSetting("sidebarVisible", current == "hide" ? "show" : "hide"));
     return value;
   });
@@ -1753,8 +1752,8 @@ void BrowserWindow::WireEvents() {
     payload->SetString("message", event.message);
     if (event.type == EventType::SettingChanged) {
       payload->SetString("key", event.message);
-      auto settings = dataStore_->Settings();
-      payload->SetString("value", settings && settings->HasKey(event.message) ? settings->GetString(event.message) : "");
+      const std::string value = Store().GetSetting(event.message);
+      payload->SetString("value", value);
     }
     if (event.type == EventType::BookmarkChanged || event.type == EventType::HistoryChanged) {
       payload->SetString("url", event.message);
@@ -1825,7 +1824,12 @@ void BrowserWindow::UpdateContentFrame() {
   if (!contentHostView_ || !uiHostView_) {
     return;
   }
-  const auto settings = dataStore_->Settings();
+  const std::string allSettingsJson = Store().GetAllSettings();
+  auto settingsValue = CefParseJSON(allSettingsJson, JSON_PARSER_RFC);
+  CefRefPtr<CefDictionaryValue> settings =
+      (settingsValue && settingsValue->GetType() == VTYPE_DICTIONARY)
+          ? settingsValue->GetDictionary()
+          : CefDictionaryValue::Create();
   const std::string sidebarState = settings->GetString("sidebarVisible");
   const bool sidebarVisible = sidebarState == "show";
   double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;

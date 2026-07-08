@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "bridge/NativeBridge.h"
-#include "browser/BrowserDataStore.h"
+#include "browser/FrostStore.h"
 #include "browser/TabManager.h"
 #include "commands/CommandRegistry.h"
 #include "events/EventBus.h"
@@ -127,11 +127,11 @@ public:
   const TabManager &Tabs() const {
     return tabManager_;
   }
-  BrowserDataStore &Store() {
-    return *dataStore_;
+  FrostStore &Store() {
+    return app_.Store();
   }
-  const BrowserDataStore &Store() const {
-    return *dataStore_;
+  const FrostStore &Store() const {
+    return app_.Store();
   }
   BrowserAppController &App() {
     return app_;
@@ -177,7 +177,6 @@ private:
   EventBus &eventBus_;
   TabManager &tabManager_;
   CommandRegistry commands_;
-  BrowserDataStore *dataStore_ = nullptr;
   std::unique_ptr<NativeBridge> bridge_;
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;

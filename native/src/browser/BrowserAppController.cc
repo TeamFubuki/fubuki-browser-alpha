@@ -25,17 +25,19 @@ ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
 }  // namespace
 
 BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
-    : profilePath_(std::move(profilePath)), store_(profilePath_) {
-  store_.Load();
-  store_.Log("info", "BrowserAppController initialized");
+    : profilePath_(std::move(profilePath)),
+      engine_(profilePath_.string() + "/frost-engine.sqlite3"),
+      store_(profilePath_,
+             engine_.IsAvailable() ? static_cast<void *>(&engine_)
+                                   : nullptr) {
+  store_.AddLog("info", "BrowserAppController initialized");
 }
 
 BrowserAppController::~BrowserAppController() = default;
 
 void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
-  const std::string startupBehavior =
-      store_.Settings()->GetString("startupBehavior");
+  const std::string startupBehavior = store_.GetSetting("startupBehavior");
   bool restored = false;
   if (startupBehavior == "restore") {
     restoring_ = true;
@@ -283,7 +285,7 @@ std::string BrowserAppController::NextWindowId() {
 
 CefRefPtr<CefListValue> BrowserAppController::RestoredWindows() const {
   auto empty = CefListValue::Create();
-  const std::string json = store_.Settings()->GetString("sessionJson");
+  const std::string json = store_.GetSetting("sessionJson");
   if (json.empty()) {
     return empty;
   }

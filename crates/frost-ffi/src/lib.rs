@@ -3,15 +3,15 @@ use std::ptr;
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, select};
-use frost_core::{BrowserCore, HostCommandAdapter};
+use frost_core::{BrowserCore, ExternalPolicy, HostCommandAdapter};
 use frost_engine_api::EngineAdapter;
 use frost_protocol::{
     EventEnvelope, HostCommandEnvelope, HostCommandResultEnvelope, HostEventEnvelope,
     ProtocolRequest, ProtocolResponse,
 };
 use frost_store::{
-    BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
-    SettingsRepository,
+    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRepository,
+    PermissionRepository, SessionRepository, SettingsRepository, SqliteStore,
 };
 
 pub struct FrostEngineHandle {
@@ -21,6 +21,7 @@ pub struct FrostEngineHandle {
     host_command_rx: Receiver<HostCommandEnvelope>,
     host_event_tx: Sender<HostEventEnvelope>,
     host_result_tx: Sender<HostCommandResultEnvelope>,
+    external_policy: std::sync::Mutex<ExternalPolicy>,
     join_handle: Option<JoinHandle<()>>,
 }
 
@@ -105,6 +106,7 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         host_command_rx,
         host_event_tx,
         host_result_tx,
+        external_policy: std::sync::Mutex::new(ExternalPolicy::new()),
         join_handle: Some(join_handle),
     }))
 }
@@ -124,6 +126,9 @@ where
         + HistoryRepository
         + DownloadRepository
         + PermissionRepository
+        + LogRepository
+        + SessionRepository
+        + ClearRepository
         + Send
         + 'static,
 {
@@ -326,4 +331,463 @@ fn error_response(id: Option<String>, message: impl Into<String>) -> String {
 
 fn into_c_string(value: String) -> *mut c_char {
     CString::new(value).unwrap_or_default().into_raw()
+}
+
+/// Grants external capabilities to a caller origin.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_engine_new`.
+/// - `origin` and `capabilities_json` must be valid null-terminated UTF-8 strings.
+/// - `capabilities_json` must be a JSON array of capability strings
+///   (e.g. `["read_state","tab_control"]`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_grant_external(
+    handle: *mut FrostEngineHandle,
+    origin: *const c_char,
+    capabilities_json: *const c_char,
+) -> bool {
+    if handle.is_null() || origin.is_null() || capabilities_json.is_null() {
+        return false;
+    }
+    let origin = match unsafe { CStr::from_ptr(origin) }.to_str() {
+        Ok(o) => o.to_owned(),
+        Err(_) => return false,
+    };
+    let json = match unsafe { CStr::from_ptr(capabilities_json) }.to_str() {
+        Ok(j) => j,
+        Err(_) => return false,
+    };
+    let capabilities: Vec<frost_protocol::ExternalCapability> = match serde_json::from_str(json) {
+        Ok(caps) => caps,
+        Err(_) => return false,
+    };
+    let handle = unsafe { &*handle };
+    if let Ok(mut policy) = handle.external_policy.lock() {
+        policy.grant(&origin, capabilities);
+        true
+    } else {
+        false
+    }
+}
+
+/// Processes an external (MCP) command JSON string and returns a JSON response.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_engine_new`.
+/// - `command_json` must be a valid null-terminated UTF-8 string representing an
+///   `ExternalCommandEnvelope`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_process_external_json(
+    handle: *mut FrostEngineHandle,
+    command_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() || command_json.is_null() {
+        return into_c_string(
+            serde_json::json!({ "allowed": false, "error": "null handle or command" }).to_string(),
+        );
+    }
+    let text = match unsafe { CStr::from_ptr(command_json) }.to_str() {
+        Ok(t) => t,
+        Err(_) => {
+            return into_c_string(
+                serde_json::json!({ "allowed": false, "error": "invalid utf-8" }).to_string(),
+            );
+        }
+    };
+    let envelope: frost_protocol::ExternalCommandEnvelope = match serde_json::from_str(text) {
+        Ok(e) => e,
+        Err(err) => {
+            return into_c_string(
+                serde_json::json!({ "allowed": false, "error": err.to_string() }).to_string(),
+            );
+        }
+    };
+    let handle = unsafe { &*handle };
+    let mut policy = match handle.external_policy.lock() {
+        Ok(p) => p,
+        Err(_) => {
+            return into_c_string(
+                serde_json::json!({ "allowed": false, "error": "policy poisoned" }).to_string(),
+            );
+        }
+    };
+    // Route the command through the core on a throwaway core clone is not possible;
+    // instead we forward to the request channel for non-destructive reads and
+    // perform destructive actions via the same channel. The policy check already
+    // happened in `process_external`; here we re-run it through the live core by
+    // sending the equivalent ProtocolRequest.
+    let response = route_external_to_core(handle, envelope, &mut policy);
+    into_c_string(response)
+}
+
+/// Routes an external command to the engine request channel.
+///
+/// This keeps a single command path: external clients go through the same
+/// `ProtocolRequest` pipeline as the UI, so no host/CEF object is ever touched
+/// directly by automation.
+fn route_external_to_core(
+    handle: &FrostEngineHandle,
+    envelope: frost_protocol::ExternalCommandEnvelope,
+    policy: &mut ExternalPolicy,
+) -> String {
+    use frost_protocol::{ExternalCapability, ExternalCommand, ProtocolRequest, Request};
+
+    let capability = match &envelope.command {
+        ExternalCommand::StateRead => ExternalCapability::ReadState,
+        ExternalCommand::TabCreate { .. } => ExternalCapability::TabControl,
+        ExternalCommand::TabClose { .. } => ExternalCapability::TabControl,
+        ExternalCommand::NavigationOpen { .. } => ExternalCapability::Navigation,
+        ExternalCommand::BookmarkSave { .. } => ExternalCapability::Bookmarks,
+        ExternalCommand::HistoryClear { .. } => ExternalCapability::History,
+        ExternalCommand::DownloadRemove { .. } => ExternalCapability::Downloads,
+        ExternalCommand::DebugOpenDevTools { .. } => ExternalCapability::Debug,
+    };
+
+    if !policy.is_granted(&envelope.id, &capability) {
+        return serde_json::json!({ "allowed": false, "error": "capability not granted" })
+            .to_string();
+    }
+    if !policy.check_rate(&envelope.id) {
+        return serde_json::json!({ "allowed": false, "error": "rate limited" }).to_string();
+    }
+
+    let request: Option<ProtocolRequest> = match &envelope.command {
+        ExternalCommand::StateRead => Some(ProtocolRequest::new(Request::AppSnapshot)),
+        ExternalCommand::TabCreate { url, active } => {
+            Some(ProtocolRequest::new(Request::TabsCreate {
+                url: url.clone(),
+                active: *active,
+            }))
+        }
+        ExternalCommand::TabClose { tab_id } => Some(ProtocolRequest::new(Request::TabsClose {
+            tab_id: tab_id.clone(),
+        })),
+        ExternalCommand::NavigationOpen { tab_id, input } => {
+            Some(ProtocolRequest::new(Request::TabsNavigate {
+                tab_id: tab_id.clone(),
+                input: input.clone(),
+            }))
+        }
+        ExternalCommand::BookmarkSave {
+            title,
+            url,
+            favicon_url,
+        } => Some(ProtocolRequest::new(Request::BookmarksSave {
+            title: title.clone(),
+            url: url.clone(),
+            favicon_url: favicon_url.clone(),
+        })),
+        ExternalCommand::HistoryClear { range } => {
+            Some(ProtocolRequest::new(Request::HistoryClearRange {
+                range: range.clone(),
+            }))
+        }
+        ExternalCommand::DownloadRemove { url, path } => {
+            Some(ProtocolRequest::new(Request::DownloadsRemove {
+                url: url.clone(),
+                path: path.clone(),
+            }))
+        }
+        ExternalCommand::DebugOpenDevTools { .. } => None,
+    };
+
+    match request {
+        Some(req) => {
+            if handle.request_tx.send(req).is_err() {
+                return serde_json::json!({ "allowed": false, "error": "engine unavailable" })
+                    .to_string();
+            }
+            match handle.response_rx.recv() {
+                Ok(resp) => serde_json::json!({ "allowed": resp.ok, "ok": resp.ok }).to_string(),
+                Err(_) => {
+                    serde_json::json!({ "allowed": false, "error": "no response" }).to_string()
+                }
+            }
+        }
+        None => serde_json::json!({ "allowed": true, "ok": true }).to_string(),
+    }
+}
+
+/// Opaque handle to a standalone SQLite store owned by the engine.
+///
+/// The native host no longer owns browser data; it delegates persistence to
+/// FrostEngine's `frost-store` through this handle.
+pub struct FrostStoreHandle {
+    store: SqliteStore,
+}
+
+/// Opens (or creates) an engine-owned SQLite store at `path`.
+///
+/// # Safety
+/// - `path` must be a valid null-terminated UTF-8 string, or null.
+/// - Returns a valid non-null handle on success.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_open(path: *const c_char) -> *mut FrostStoreHandle {
+    let path = if path.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let store = if path.is_empty() {
+        SqliteStore::in_memory()
+    } else {
+        SqliteStore::open(path)
+    };
+    match store {
+        Ok(store) => Box::into_raw(Box::new(FrostStoreHandle { store })),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Frees a store handle previously returned by `frost_store_open`.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - After calling this function, the handle must not be used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_free(handle: *mut FrostStoreHandle) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle));
+    }
+}
+
+/// Reads a setting value as JSON string, or `null` if absent.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `key` must be a valid null-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_setting(
+    handle: *mut FrostStoreHandle,
+    key: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() || key.is_null() {
+        return ptr::null_mut();
+    }
+    let key = match unsafe { CStr::from_ptr(key) }.to_str() {
+        Ok(k) => k,
+        Err(_) => return ptr::null_mut(),
+    };
+    let store = unsafe { &*handle };
+    match store.store.get_setting(key) {
+        Ok(Some(value)) => into_c_string(value),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Writes a setting value. Returns true on success.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `key` and `value` must be valid null-terminated UTF-8 strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_set_setting(
+    handle: *mut FrostStoreHandle,
+    key: *const c_char,
+    value: *const c_char,
+) -> bool {
+    if handle.is_null() || key.is_null() || value.is_null() {
+        return false;
+    }
+    let key = match unsafe { CStr::from_ptr(key) }.to_str() {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
+    let value = match unsafe { CStr::from_ptr(value) }.to_str() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let store = unsafe { &*handle };
+    store.store.set_setting(key, value).is_ok()
+}
+
+/// Returns all settings as a JSON object string.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_all_settings(
+    handle: *mut FrostStoreHandle,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &*handle };
+    let mut map = serde_json::Map::new();
+    for key in [
+        "homepage",
+        "searchEngine",
+        "customSearchUrl",
+        "startupBehavior",
+        "sessionJson",
+        "downloadDirectory",
+        "theme",
+        "appearance",
+        "toolbarDensity",
+        "sidebarVisible",
+        "sidebarWidth",
+        "defaultBookmarkDisplay",
+        "openBookmarkIn",
+        "showBookmarkFavicons",
+        "newTabPage",
+        "homeUrl",
+        "askBeforeDownload",
+        "defaultZoomLevel",
+        "closeWindowWithLastTab",
+        "privateSearchEngine",
+        "language",
+        "newTabBackgroundMode",
+        "newTabBackgroundColor",
+        "newTabBackgroundUrl",
+    ] {
+        if let Ok(Some(value)) = store.store.get_setting(key) {
+            map.insert(key.to_string(), serde_json::Value::String(value));
+        }
+    }
+    into_c_string(serde_json::Value::Object(map).to_string())
+}
+
+/// Appends a log entry. Returns true on success.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `level` and `message` must be valid null-terminated UTF-8 strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_add_log(
+    handle: *mut FrostStoreHandle,
+    level: *const c_char,
+    message: *const c_char,
+) -> bool {
+    if handle.is_null() || level.is_null() || message.is_null() {
+        return false;
+    }
+    let level = match unsafe { CStr::from_ptr(level) }.to_str() {
+        Ok(l) => l,
+        Err(_) => return false,
+    };
+    let message = match unsafe { CStr::from_ptr(message) }.to_str() {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let store = unsafe { &*handle };
+    store.store.add_log(level, message).is_ok()
+}
+
+/// Returns recent logs as a JSON array string.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_logs(
+    handle: *mut FrostStoreHandle,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &*handle };
+    match store.store.list_logs(limit) {
+        Ok(logs) => match serde_json::to_string(&logs) {
+            Ok(json) => into_c_string(json),
+            Err(_) => ptr::null_mut(),
+        },
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Clears all logs. Returns true on success.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_clear_logs(handle: *mut FrostStoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &*handle };
+    store.store.clear_logs().is_ok()
+}
+
+/// Adds a history entry. Returns true on success.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `title`, `url`, `favicon_url` must be valid null-terminated UTF-8 strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_add_history(
+    handle: *mut FrostStoreHandle,
+    title: *const c_char,
+    url: *const c_char,
+    favicon_url: *const c_char,
+) -> bool {
+    if handle.is_null() || title.is_null() || url.is_null() || favicon_url.is_null() {
+        return false;
+    }
+    let title = match unsafe { CStr::from_ptr(title) }.to_str() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let url = match unsafe { CStr::from_ptr(url) }.to_str() {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    let favicon_url = match unsafe { CStr::from_ptr(favicon_url) }.to_str() {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let store = unsafe { &*handle };
+    store.store.add_history(title, url, favicon_url).is_ok()
+}
+
+/// Inserts or updates a download record. Returns true on success.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `url`, `path`, `state` must be valid null-terminated UTF-8 strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_upsert_download(
+    handle: *mut FrostStoreHandle,
+    url: *const c_char,
+    path: *const c_char,
+    state: *const c_char,
+    percent: i64,
+) -> bool {
+    if handle.is_null() || url.is_null() || path.is_null() || state.is_null() {
+        return false;
+    }
+    let url = match unsafe { CStr::from_ptr(url) }.to_str() {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let state = match unsafe { CStr::from_ptr(state) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let store = unsafe { &*handle };
+    store
+        .store
+        .upsert_download(url, path, state, percent)
+        .is_ok()
+}
+
+/// Frees a string previously returned by a `frost_store_*` function.
+///
+/// # Safety
+/// - `value` must be a valid pointer obtained from a `frost_store_*` function.
+/// - After calling this function, the pointer must not be used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_string_free(value: *mut c_char) {
+    unsafe {
+        frost_engine_string_free(value);
+    }
 }
