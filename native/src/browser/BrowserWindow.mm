@@ -435,6 +435,21 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
   return true;
 }
 
+bool BrowserWindow::CreateTabWithId(const std::string& input,
+                                    const std::string& tabId, bool active) {
+  const std::string url = NormalizeNavigationInput(input,
+                                                   dataStore_->Settings()->GetString("searchEngine"),
+                                                   dataStore_->Settings()->GetString("customSearchUrl"));
+  Tab& tab = tabManager_.CreateTab(url, active, tabId);
+  CreateTabBrowser(tab);
+  ResizeViews();
+  SetActiveContentView();
+  if (!privateWindow_) {
+    app_.PersistSession();
+  }
+  return true;
+}
+
 std::string BrowserWindow::CreatePendingPopupTab(const std::string& url, bool active) {
   Tab& tab = tabManager_.CreateTab(url.empty() ? "about:blank" : url, active);
   tab.isPendingPopup = true;
@@ -1071,7 +1086,9 @@ std::string HostCommandResultJson(const std::string& commandId, bool ok,
   return json;
 }
 
-// Builds a HostEvent JSON envelope from a flat key/value map.
+// Builds a HostEvent JSON envelope. `fields` maps a key to a *raw JSON*
+// fragment (e.g. "\"value\"", "true", "50") so that numeric/bool fields
+// are serialized with the correct JSON type expected by FrostEngine.
 std::string HostEventJson(const std::string& event,
                           const std::map<std::string, std::string>& fields) {
   std::string json = "{\"version\":0,\"event\":\"";
@@ -1085,9 +1102,8 @@ std::string HostEventJson(const std::string& event,
     first = false;
     json += "\"";
     json += kv.first;
-    json += "\":\"";
+    json += "\":";
     json += kv.second;
-    json += "\"";
   }
   json += "}}";
   return json;
@@ -1127,7 +1143,8 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   if (command == "page.create") {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
-    ok = !tabId.empty() && CreateTab(url.empty() ? "fubuki://newtab/" : url, true);
+    ok = !tabId.empty() &&
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
                                       {{"tabId", tabId},

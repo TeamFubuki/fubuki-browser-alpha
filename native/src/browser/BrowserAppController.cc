@@ -65,6 +65,22 @@ void PollHostCommands(BrowserAppController *app) {
   CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, app), 16);
 }
 
+// Builds a HostCommandResult JSON envelope for the given command id.
+std::string HostCommandResultJson(const std::string &commandId, bool ok,
+                                  const std::string &error) {
+  std::string json = "{\"version\":0,\"commandId\":\"";
+  json += commandId;
+  json += "\",\"ok\":";
+  json += ok ? "true" : "false";
+  if (!ok) {
+    json += ",\"error\":\"";
+    json += error;
+    json += "\"";
+  }
+  json += "}";
+  return json;
+}
+
 }  // namespace
 
 void BrowserAppController::StartHostCommandPoller() {
@@ -92,54 +108,40 @@ void BrowserAppController::DispatchHostCommands() {
         continue;
       }
       CefRefPtr<CefDictionaryValue> envelope = value->GetDictionary();
-      const std::string commandId =
-          envelope->HasKey("id") ? envelope->GetString("id").ToString() : "";
       const std::string command = envelope->HasKey("command")
                                       ? envelope->GetString("command").ToString()
                                       : "";
-      CefRefPtr<CefDictionaryValue> payload =
-          envelope->HasKey("payload") &&
-                  envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
-              ? envelope->GetDictionary("payload")
-              : CefDictionaryValue::Create();
+      const std::string commandId =
+          envelope->HasKey("id") ? envelope->GetString("id").ToString() : "";
 
-      bool ok = true;
-      std::string error;
       if (command == "window.create") {
+        CefRefPtr<CefDictionaryValue> payload =
+            envelope->HasKey("payload") &&
+                    envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+                ? envelope->GetDictionary("payload")
+                : CefDictionaryValue::Create();
         const bool isPrivate =
             payload->HasKey("isPrivate") && payload->GetBool("isPrivate");
-        ok = NewWindow(isPrivate, nullptr) != nullptr;
-        if (!ok) {
-          error = "failed to create window";
-        }
+        const bool ok = NewWindow(isPrivate, nullptr) != nullptr;
+        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
+                                                                ok ? "" : "failed to create window"));
       } else if (command == "window.close") {
+        CefRefPtr<CefDictionaryValue> payload =
+            envelope->HasKey("payload") &&
+                    envelope->GetDictionary("payload")->GetType() == VTYPE_DICTIONARY
+                ? envelope->GetDictionary("payload")
+                : CefDictionaryValue::Create();
         const std::string targetWindowId =
             payload->HasKey("windowId") ? payload->GetString("windowId").ToString() : "";
-        if (targetWindowId == window->WindowId()) {
-          ok = window->CloseWindow();
-        } else {
-          ok = true;
-        }
-        if (!ok) {
-          error = "failed to close window";
-        }
+        const bool ok = (targetWindowId == window->WindowId())
+                            ? window->CloseWindow()
+                            : true;
+        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
+                                                                ok ? "" : "failed to close window"));
       } else {
-        // Delegate page/overlay/permission commands to the owning window.
-        window->ExecuteHostCommand(commandJson);
-        continue;
+        // Page/overlay/permission commands are owned by the window itself.
+        window->PollAndExecuteHostCommands();
       }
-
-      std::string result = "{\"version\":0,\"commandId\":\"";
-      result += commandId;
-      result += "\",\"ok\":";
-      result += ok ? "true" : "false";
-      if (!ok) {
-        result += ",\"error\":\"";
-        result += error;
-        result += "\"";
-      }
-      result += "}";
-      bridge->PushHostCommandResultJson(result);
     }
   }
 }

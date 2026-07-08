@@ -35,6 +35,9 @@ public:
   void Show(CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool CloseWindow();
   bool CreateTab(const std::string &input, bool active);
+  // Creates a tab whose id is owned by an external authority (FrostEngine).
+  bool CreateTabWithId(const std::string &input, const std::string &tabId,
+                       bool active);
   std::string CreatePendingPopupTab(const std::string &url, bool active);
   bool ActivateTab(const std::string &tabId);
   bool CloseTab(const std::string &tabId);
