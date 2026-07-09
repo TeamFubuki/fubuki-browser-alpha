@@ -21,7 +21,7 @@ namespace {
 constexpr CGFloat kMinSidebarWidth = 168.0;
 constexpr CGFloat kDefaultSidebarWidth = 196.0;
 constexpr CGFloat kMaxSidebarWidth = 280.0;
-}
+}  // namespace
 
 @interface FubukiUiHostView : NSView
 @property(nonatomic) BOOL overlayActive;
@@ -35,14 +35,15 @@ constexpr CGFloat kMaxSidebarWidth = 280.0;
 @interface FubukiDragRegionView : NSView
 @property(nonatomic) CGFloat sidebarWidth;
 @property(nonatomic) CGFloat navHeight;
-- (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height;
+- (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions
+              contentHeight:(CGFloat)height;
 @end
 
 namespace fubuki {
 class BrowserWindow;
 BrowserWindow* GetActiveBrowserWindow();
 BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
-}
+}  // namespace fubuki
 
 @interface FubukiWindowDelegate : NSObject <NSWindowDelegate>
 @end
@@ -62,12 +63,13 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
     return YES;
   }
   if (self.overlayActive) {
-    const CGFloat panelWidth = std::min<CGFloat>(self.overlayWidth, std::max<CGFloat>(0.0, bounds.size.width - 16.0));
-    const CGFloat panelHeight = std::min<CGFloat>(self.overlayHeight, std::max<CGFloat>(0.0, bounds.size.height - self.navHeight - 16.0));
+    const CGFloat panelWidth =
+        std::min<CGFloat>(self.overlayWidth, std::max<CGFloat>(0.0, bounds.size.width - 16.0));
+    const CGFloat panelHeight = std::min<CGFloat>(
+        self.overlayHeight, std::max<CGFloat>(0.0, bounds.size.height - self.navHeight - 16.0));
     const NSRect panelRect = NSMakeRect(bounds.size.width - panelWidth - 8.0,
                                         bounds.size.height - self.navHeight - panelHeight - 8.0,
-                                        panelWidth,
-                                        panelHeight);
+                                        panelWidth, panelHeight);
     if (NSPointInRect(point, panelRect)) {
       return YES;
     }
@@ -112,15 +114,14 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
   return NO;
 }
 
-- (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions contentHeight:(CGFloat)height {
+- (void)setDraggableRegions:(const std::vector<CefDraggableRegion>&)regions
+              contentHeight:(CGFloat)height {
   [draggableRects_ removeAllObjects];
   [blockedRects_ removeAllObjects];
   contentHeight_ = height;
   for (const auto& region : regions) {
-    const NSRect rect = NSMakeRect(region.bounds.x,
-                                  height - region.bounds.y - region.bounds.height,
-                                  region.bounds.width,
-                                  region.bounds.height);
+    const NSRect rect = NSMakeRect(region.bounds.x, height - region.bounds.y - region.bounds.height,
+                                   region.bounds.width, region.bounds.height);
     [(region.draggable ? draggableRects_ : blockedRects_) addObject:[NSValue valueWithRect:rect]];
   }
 }
@@ -135,7 +136,8 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
   if (localPoint.x >= self.sidebarWidth && localPoint.y <= contentHeight_ - self.navHeight) {
     return nil;
   }
-  if (localPoint.y >= contentHeight_ - self.navHeight && localPoint.x >= [self bounds].size.width - 280.0) {
+  if (localPoint.y >= contentHeight_ - self.navHeight &&
+      localPoint.x >= [self bounds].size.width - 280.0) {
     return nil;
   }
   for (NSValue* value in blockedRects_) {
@@ -153,7 +155,8 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 
 - (void)mouseDown:(NSEvent*)event {
   if ([event clickCount] == 2) {
-    const NSString* action = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+    const NSString* action =
+        [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
     if ([action isEqualToString:@"Minimize"]) {
       [[self window] miniaturize:nil];
     } else if (![action isEqualToString:@"None"]) {
@@ -226,7 +229,8 @@ constexpr CGFloat kMinHeight = 620.0;
 CefWindowInfo ChildWindowInfo(NSView* parent) {
   CefWindowInfo info;
   NSRect bounds = [parent bounds];
-  info.SetAsChild(parent, CefRect(0, 0, static_cast<int>(bounds.size.width), static_cast<int>(bounds.size.height)));
+  info.SetAsChild(parent, CefRect(0, 0, static_cast<int>(bounds.size.width),
+                                  static_cast<int>(bounds.size.height)));
   return info;
 }
 
@@ -255,25 +259,27 @@ void SetBrowserViewHidden(CefRefPtr<CefBrowser> browser, bool hidden) {
   [view setHidden:hidden];
 }
 
-void UpdateUiHostClip(NSView* view, bool overlayActive, CGFloat sidebarWidth, CGFloat navHeight, CGFloat overlayWidth, CGFloat overlayHeight) {
+void UpdateUiHostClip(NSView* view, bool overlayActive, CGFloat sidebarWidth, CGFloat navHeight,
+                      CGFloat overlayWidth, CGFloat overlayHeight) {
   if (!view || !view.layer) {
     return;
   }
   const NSRect bounds = [view bounds];
   CGMutablePathRef path = CGPathCreateMutable();
-  CGPathAddRect(path, nullptr, CGRectMake(0.0, bounds.size.height - navHeight, bounds.size.width, navHeight));
+  CGPathAddRect(path, nullptr,
+                CGRectMake(0.0, bounds.size.height - navHeight, bounds.size.width, navHeight));
   if (sidebarWidth > 0.0) {
     CGPathAddRect(path, nullptr, CGRectMake(0.0, 0.0, sidebarWidth, bounds.size.height));
   }
   if (overlayActive) {
-    const CGFloat panelWidth = std::min<CGFloat>(overlayWidth, std::max<CGFloat>(0.0, bounds.size.width - 16.0));
-    const CGFloat panelHeight = std::min<CGFloat>(overlayHeight, std::max<CGFloat>(0.0, bounds.size.height - navHeight - 16.0));
-    CGPathAddRect(path,
-                  nullptr,
-                  CGRectMake(bounds.size.width - panelWidth - 8.0,
-                             bounds.size.height - navHeight - panelHeight - 8.0,
-                             panelWidth,
-                             panelHeight));
+    const CGFloat panelWidth =
+        std::min<CGFloat>(overlayWidth, std::max<CGFloat>(0.0, bounds.size.width - 16.0));
+    const CGFloat panelHeight = std::min<CGFloat>(
+        overlayHeight, std::max<CGFloat>(0.0, bounds.size.height - navHeight - 16.0));
+    CGPathAddRect(
+        path, nullptr,
+        CGRectMake(bounds.size.width - panelWidth - 8.0,
+                   bounds.size.height - navHeight - panelHeight - 8.0, panelWidth, panelHeight));
   }
   CAShapeLayer* mask = [CAShapeLayer layer];
   mask.frame = bounds;
@@ -302,16 +308,17 @@ std::string QueryParam(const std::string& url, const std::string& key) {
   size_t start = 0;
   while (start <= query.size()) {
     const size_t end = query.find('&', start);
-    const std::string pair = query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    const std::string pair =
+        query.substr(start, end == std::string::npos ? std::string::npos : end - start);
     const size_t equals = pair.find('=');
     const std::string name = equals == std::string::npos ? pair : pair.substr(0, equals);
     if (name == key) {
       const std::string value = equals == std::string::npos ? "" : pair.substr(equals + 1);
-      return CefURIDecode(value,
-                          true,
-                          static_cast<cef_uri_unescape_rule_t>(UU_SPACES | UU_PATH_SEPARATORS |
-                                                               UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
-                                                               UU_REPLACE_PLUS_WITH_SPACE))
+      return CefURIDecode(
+                 value, true,
+                 static_cast<cef_uri_unescape_rule_t>(UU_SPACES | UU_PATH_SEPARATORS |
+                                                      UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+                                                      UU_REPLACE_PLUS_WITH_SPACE))
           .ToString();
     }
     if (end == std::string::npos) {
@@ -326,8 +333,10 @@ void RegisterFubukiSchemeHandlers(CefRefPtr<CefRequestContext> context) {
   if (!context) {
     return;
   }
-  for (const char* host : {"app", "newtab", "settings", "bookmarks", "downloads", "history", "debug"}) {
-    context->RegisterSchemeHandlerFactory("fubuki", host, new FubukiSchemeHandlerFactory(FUBUKI_UI_DIST));
+  for (const char* host :
+       {"app", "newtab", "settings", "bookmarks", "downloads", "history", "debug"}) {
+    context->RegisterSchemeHandlerFactory("fubuki", host,
+                                          new FubukiSchemeHandlerFactory(FUBUKI_UI_DIST));
   }
 }
 
@@ -346,7 +355,8 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window) {
   return it == gBrowserWindowsByNativeWindow.end() ? nullptr : it->second;
 }
 
-BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager, std::string windowId, bool privateWindow)
+BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
+                             std::string windowId, bool privateWindow)
     : app_(app),
       eventBus_(app.Events()),
       tabManager_(tabManager),
@@ -381,11 +391,14 @@ BrowserWindow::~BrowserWindow() {
 void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
   CEF_REQUIRE_UI_THREAD();
   CreateNativeWindow();
-  if (restoreState && restoreState->HasKey("frame") && restoreState->GetType("frame") == VTYPE_DICTIONARY) {
+  if (restoreState && restoreState->HasKey("frame") &&
+      restoreState->GetType("frame") == VTYPE_DICTIONARY) {
     auto frameDict = restoreState->GetDictionary("frame");
     const CGFloat width = std::max<CGFloat>(kMinWidth, frameDict->GetDouble("width"));
     const CGFloat height = std::max<CGFloat>(kMinHeight, frameDict->GetDouble("height"));
-    [window_ setFrame:NSMakeRect(frameDict->GetDouble("x"), frameDict->GetDouble("y"), width, height) display:NO];
+    [window_
+        setFrame:NSMakeRect(frameDict->GetDouble("x"), frameDict->GetDouble("y"), width, height)
+         display:NO];
   }
   CreateUiBrowser();
   bool restored = false;
@@ -705,7 +718,8 @@ bool BrowserWindow::PrintPage() {
 
 bool BrowserWindow::ViewSource() {
   Tab* tab = tabManager_.GetActiveTab();
-  if (!tab || tab->url.empty() || tab->url.rfind("fubuki://", 0) == 0 || tab->url.rfind("data:", 0) == 0) {
+  if (!tab || tab->url.empty() || tab->url.rfind("fubuki://", 0) == 0 ||
+      tab->url.rfind("data:", 0) == 0) {
     return false;
   }
   return CreateTab("view-source:" + tab->url, true);
@@ -717,13 +731,12 @@ bool BrowserWindow::FocusOmnibox() {
   }
   uiBrowser_->GetHost()->SetFocus(true);
   uiBrowser_->GetMainFrame()->ExecuteJavaScript(
-      "document.querySelector('.omnibox input')?.select();",
-      "fubuki://app/",
-      0);
+      "document.querySelector('.omnibox input')?.select();", "fubuki://app/", 0);
   return true;
 }
 
-CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId, CefRefPtr<CefDictionaryValue> args) {
+CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId,
+                                                  CefRefPtr<CefDictionaryValue> args) {
   return commands_.Execute(commandId, args);
 }
 
@@ -737,7 +750,8 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return GetBrowserAppController() ? GetBrowserAppController()->RequestNewPrivateWindow() : false;
   }
   if (commandDown && character == 'n') {
-    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewWindow(false, nullptr) : false;
+    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewWindow(false, nullptr)
+                                     : false;
   }
   if (commandDown && character == ',') {
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
@@ -750,8 +764,7 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     if (uiBrowser_) {
       uiBrowser_->GetMainFrame()->ExecuteJavaScript(
           "window.dispatchEvent(new CustomEvent('fubuki:toggle-active-bookmark'));",
-          "fubuki://app/",
-          0);
+          "fubuki://app/", 0);
       return true;
     }
     return false;
@@ -774,9 +787,7 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
   if (commandDown && (character == 'f' || character == 'F')) {
     if (uiBrowser_) {
       uiBrowser_->GetMainFrame()->ExecuteJavaScript(
-          "window.dispatchEvent(new CustomEvent('fubuki:show-find'));",
-          "fubuki://app/",
-          0);
+          "window.dispatchEvent(new CustomEvent('fubuki:show-find'));", "fubuki://app/", 0);
       return true;
     }
     return false;
@@ -928,26 +939,31 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
   const bool ok = Store().ClearHistoryRange(range);
   if (ok) {
-    eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
+    eventBus_.Publish(
+        {EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
 
 bool BrowserWindow::SetSetting(const std::string& key, const std::string& value) {
-  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" && key != "startupBehavior" &&
-      key != "theme" && key != "language" && key != "newTabBackgroundMode" && key != "newTabBackgroundColor" &&
+  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" &&
+      key != "startupBehavior" && key != "theme" && key != "language" &&
+      key != "newTabBackgroundMode" && key != "newTabBackgroundColor" &&
       key != "newTabBackgroundUrl" && key != "customSearchUrl" && key != "appearance" &&
       key != "toolbarDensity" && key != "sidebarVisible" && key != "sidebarWidth" &&
       key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
       key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload" &&
-      key != "defaultZoomLevel" && key != "closeWindowWithLastTab" && key != "privateSearchEngine") {
+      key != "defaultZoomLevel" && key != "closeWindowWithLastTab" &&
+      key != "privateSearchEngine") {
     return false;
   }
   std::string savedValue = value;
   if (key == "sidebarWidth") {
     try {
-      savedValue = std::to_string(static_cast<int>(std::clamp(std::stod(value), static_cast<double>(kMinSidebarWidth), static_cast<double>(kMaxSidebarWidth))));
+      savedValue = std::to_string(
+          static_cast<int>(std::clamp(std::stod(value), static_cast<double>(kMinSidebarWidth),
+                                      static_cast<double>(kMaxSidebarWidth))));
     } catch (...) {
       savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
     }
@@ -982,14 +998,16 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
 bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
   const bool ok = Store().SetPermission(origin, permission, value);
   if (ok) {
-    eventBus_.Publish({EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
+    eventBus_.Publish(
+        {EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
 
 bool BrowserWindow::SetLiveSidebarWidth(double width) {
-  liveSidebarWidth_ = std::clamp(width, static_cast<double>(kMinSidebarWidth), static_cast<double>(kMaxSidebarWidth));
+  liveSidebarWidth_ = std::clamp(width, static_cast<double>(kMinSidebarWidth),
+                                 static_cast<double>(kMaxSidebarWidth));
   UpdateContentFrame();
   return true;
 }
@@ -1016,7 +1034,9 @@ bool BrowserWindow::SetUiOverlayActive(bool active, double overlayWidth, double 
   }
   if (dragRegionView_) {
     [dragRegionView_ removeFromSuperview];
-    [root addSubview:dragRegionView_ positioned:NSWindowAbove relativeTo:(active ? uiHostView_ : contentHostView_)];
+    [root addSubview:dragRegionView_
+          positioned:NSWindowAbove
+          relativeTo:(active ? uiHostView_ : contentHostView_)];
   }
   UpdateContentFrame();
   return true;
@@ -1032,7 +1052,7 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   } else if (key == "removeHistory") {
     ok = RemoveHistory(value);
   } else if (key == "removeDownload") {
-    ok = RemoveDownload("", value);
+    ok = RemoveDownload(value, value);
   } else if (key == "openDownload") {
     ok = OpenDownloadedFile(value);
   } else if (key == "revealDownload") {
@@ -1053,7 +1073,8 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     if (safeReturnPage.rfind("fubuki://", 0) == 0) {
       Navigate(tabId, safeReturnPage);
     } else {
-      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/" : "fubuki://settings/" + safeReturnPage);
+      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/"
+                                             : "fubuki://settings/" + safeReturnPage);
     }
   }
   return ok;
@@ -1292,7 +1313,8 @@ void BrowserWindow::OnTabFavicon(const std::string& tabId, const std::string& fa
   }
 }
 
-void BrowserWindow::OnTabLoadingState(const std::string& tabId, bool isLoading, bool canGoBack, bool canGoForward) {
+void BrowserWindow::OnTabLoadingState(const std::string& tabId, bool isLoading, bool canGoBack,
+                                      bool canGoForward) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, tab->title, tab->url, isLoading, canGoBack, canGoForward);
     PushHostEventJson(HostEventJson("page.loadingChanged",
@@ -1306,7 +1328,8 @@ void BrowserWindow::OnTabLoadingState(const std::string& tabId, bool isLoading, 
 
 void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
-    eventBus_.Publish({EventType::NavigationStarted, "navigation.started", *tab, windowId_, tabId, ""});
+    eventBus_.Publish(
+        {EventType::NavigationStarted, "navigation.started", *tab, windowId_, tabId, ""});
   }
 }
 
@@ -1316,7 +1339,8 @@ void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
       Store().AddHistory(tab->title, tab->url);
       app_.PersistSession();
     }
-    eventBus_.Publish({EventType::NavigationFinished, "navigation.finished", *tab, windowId_, tabId, ""});
+    eventBus_.Publish(
+        {EventType::NavigationFinished, "navigation.finished", *tab, windowId_, tabId, ""});
   }
 }
 
@@ -1330,7 +1354,8 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
       Store().AddLog("error", "Navigation failed: " + tab->url + " - " + message);
       app_.PersistSession();
     }
-    eventBus_.Publish({EventType::NavigationFailed, "navigation.failed", *tab, windowId_, tabId, message});
+    eventBus_.Publish(
+        {EventType::NavigationFailed, "navigation.failed", *tab, windowId_, tabId, message});
   }
 }
 
@@ -1346,7 +1371,8 @@ CefWindowInfo BrowserWindow::PopupWindowInfo() const {
   return ChildWindowInfo(contentHostView_);
 }
 
-void BrowserWindow::OnDownloadStarted(const std::string& url, const std::string& path) {
+void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::string& url,
+                                      const std::string& path) {
   if (privateWindow_) {
     return;
   }
@@ -1358,7 +1384,9 @@ void BrowserWindow::OnDownloadStarted(const std::string& url, const std::string&
   fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
-void BrowserWindow::OnDownloadUpdated(const std::string& url, const std::string& path, const std::string& state, int percent) {
+void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::string& url,
+                                      const std::string& path, const std::string& state,
+                                      int percent) {
   if (privateWindow_) {
     return;
   }
@@ -1383,7 +1411,8 @@ void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRe
   if (![dragRegionView_ isKindOfClass:[FubukiDragRegionView class]]) {
     return;
   }
-  [(FubukiDragRegionView*)dragRegionView_ setDraggableRegions:regions contentHeight:[uiHostView_ bounds].size.height];
+  [(FubukiDragRegionView*)dragRegionView_ setDraggableRegions:regions
+                                                contentHeight:[uiHostView_ bounds].size.height];
 }
 
 CefRefPtr<CefDictionaryValue> BrowserWindow::SessionSnapshot() const {
@@ -1421,17 +1450,19 @@ void BrowserWindow::CreateNativeWindow() {
     return;
   }
   NSRect frame = NSMakeRect(120, 120, kMinWidth, kMinHeight);
-  window_ = [[NSWindow alloc] initWithContentRect:frame
-                                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
-                                                  NSWindowStyleMaskFullSizeContentView
-                                          backing:NSBackingStoreBuffered
-                                            defer:NO];
+  window_ = [[NSWindow alloc]
+      initWithContentRect:frame
+                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                          NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                          NSWindowStyleMaskFullSizeContentView
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
   [window_ setTitle:privateWindow_ ? @"Fubuki Browser Alpha - Private" : @"Fubuki Browser Alpha"];
   [window_ setTitleVisibility:NSWindowTitleHidden];
   [window_ setTitlebarAppearsTransparent:YES];
   [window_ setMovableByWindowBackground:YES];
-  [window_ setBackgroundColor:privateWindow_ ? [NSColor colorWithCalibratedWhite:0.12 alpha:0.96] : [NSColor clearColor]];
+  [window_ setBackgroundColor:privateWindow_ ? [NSColor colorWithCalibratedWhite:0.12 alpha:0.96]
+                                             : [NSColor clearColor]];
   [window_ setOpaque:NO];
   [window_ setMinSize:NSMakeSize(kMinWidth, kMinHeight)];
   if (!gWindowDelegate) {
@@ -1454,8 +1485,11 @@ void BrowserWindow::CreateNativeWindow() {
   [root.layer setBackgroundColor:[[NSColor clearColor] CGColor]];
   [window_ setContentView:root];
 
-  uiHostView_ = [[FubukiUiHostView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
-  contentHostView_ = [[NSView alloc] initWithFrame:NSMakeRect(kDefaultSidebarWidth, 0, frame.size.width - kDefaultSidebarWidth, frame.size.height - kNavHeight)];
+  uiHostView_ = [[FubukiUiHostView alloc]
+      initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
+  contentHostView_ = [[NSView alloc]
+      initWithFrame:NSMakeRect(kDefaultSidebarWidth, 0, frame.size.width - kDefaultSidebarWidth,
+                               frame.size.height - kNavHeight)];
   dragRegionView_ = [[FubukiDragRegionView alloc] initWithFrame:[uiHostView_ frame]];
   [uiHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [contentHostView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
@@ -1473,22 +1507,15 @@ void BrowserWindow::CreateNativeWindow() {
 void BrowserWindow::CreateUiBrowser() {
   CefBrowserSettings settings;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
-  CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_),
-                                new FubukiClient(this, "", true),
-                                "fubuki://app/index.html?v=5",
-                                settings,
-                                nullptr,
-                                nullptr);
+  CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_), new FubukiClient(this, "", true),
+                                "fubuki://app/index.html?v=5", settings, nullptr, nullptr);
 }
 
 void BrowserWindow::CreateTabBrowser(const Tab& tab) {
   CefBrowserSettings settings;
   settings.background_color = CefColorSetARGB(255, 255, 255, 255);
   CefBrowserHost::CreateBrowser(ChildWindowInfo(contentHostView_),
-                                new FubukiClient(this, tab.id, false),
-                                tab.url,
-                                settings,
-                                nullptr,
+                                new FubukiClient(this, tab.id, false), tab.url, settings, nullptr,
                                 privateWindow_ ? privateRequestContext_ : nullptr);
 }
 
@@ -1496,7 +1523,8 @@ bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bo
   if (!tabState) {
     return false;
   }
-  const std::string url = tabState->HasKey("url") ? tabState->GetString("url").ToString() : "fubuki://newtab/";
+  const std::string url =
+      tabState->HasKey("url") ? tabState->GetString("url").ToString() : "fubuki://newtab/";
   const bool ok = CreateTab(url.empty() ? "fubuki://newtab/" : url, active);
   if (ok) {
     if (Tab* tab = active ? tabManager_.GetActiveTab() : nullptr) {
@@ -1522,74 +1550,89 @@ bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bo
 
 void BrowserWindow::RegisterCommands() {
   auto tabIdArg = [this](CefRefPtr<CefDictionaryValue> args) -> std::string {
-    return args->HasKey("tabId") ? args->GetString("tabId").ToString() : tabManager_.GetActiveTabId();
+    return args->HasKey("tabId") ? args->GetString("tabId").ToString()
+                                 : tabManager_.GetActiveTabId();
   };
-  commands_.Register("tabs.create", "New Tab", "Tabs", "Cmd+T", [this](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    const std::string url = args->HasKey("url") ? args->GetString("url").ToString() : "fubuki://newtab/";
-    value->SetBool(CreateTab(url, true));
-    return value;
-  });
-  commands_.Register("tabs.close", "Close Tab", "Tabs", "Cmd+W", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(CloseTab(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.reopenClosed", "Reopen Closed Tab", "Tabs", "Cmd+Shift+T", [this](CefRefPtr<CefDictionaryValue>) {
-    auto value = CefValue::Create();
-    value->SetBool(ReopenClosedTab());
-    return value;
-  });
-  commands_.Register("tabs.duplicate", "Duplicate Tab", "Tabs", "", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(DuplicateTab(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.pin", "Pin Tab", "Tabs", "", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(PinTab(tabIdArg(args), true));
-    return value;
-  });
-  commands_.Register("tabs.unpin", "Unpin Tab", "Tabs", "", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(PinTab(tabIdArg(args), false));
-    return value;
-  });
-  commands_.Register("tabs.closeOther", "Close Other Tabs", "Tabs", "", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(CloseOtherTabs(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.closeToRight", "Close Tabs to the Right", "Tabs", "", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(CloseTabsToRight(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.moveToNewWindow", "Move Tab to New Window", "Tabs", "", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(MoveTabToNewWindow(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.reload", "Reload", "Navigation", "Cmd+R", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(Reload(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.stop", "Stop", "Navigation", "Esc", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(Stop(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.goBack", "Back", "Navigation", "Cmd+[", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(GoBack(tabIdArg(args)));
-    return value;
-  });
-  commands_.Register("tabs.goForward", "Forward", "Navigation", "Cmd+]", [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(GoForward(tabIdArg(args)));
-    return value;
-  });
+  commands_.Register(
+      "tabs.create", "New Tab", "Tabs", "Cmd+T", [this](CefRefPtr<CefDictionaryValue> args) {
+        auto value = CefValue::Create();
+        const std::string url =
+            args->HasKey("url") ? args->GetString("url").ToString() : "fubuki://newtab/";
+        value->SetBool(CreateTab(url, true));
+        return value;
+      });
+  commands_.Register("tabs.close", "Close Tab", "Tabs", "Cmd+W",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(CloseTab(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.reopenClosed", "Reopen Closed Tab", "Tabs", "Cmd+Shift+T",
+                     [this](CefRefPtr<CefDictionaryValue>) {
+                       auto value = CefValue::Create();
+                       value->SetBool(ReopenClosedTab());
+                       return value;
+                     });
+  commands_.Register("tabs.duplicate", "Duplicate Tab", "Tabs", "",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(DuplicateTab(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.pin", "Pin Tab", "Tabs", "",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(PinTab(tabIdArg(args), true));
+                       return value;
+                     });
+  commands_.Register("tabs.unpin", "Unpin Tab", "Tabs", "",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(PinTab(tabIdArg(args), false));
+                       return value;
+                     });
+  commands_.Register("tabs.closeOther", "Close Other Tabs", "Tabs", "",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(CloseOtherTabs(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.closeToRight", "Close Tabs to the Right", "Tabs", "",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(CloseTabsToRight(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.moveToNewWindow", "Move Tab to New Window", "Tabs", "",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(MoveTabToNewWindow(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.reload", "Reload", "Navigation", "Cmd+R",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(Reload(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.stop", "Stop", "Navigation", "Esc",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(Stop(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.goBack", "Back", "Navigation", "Cmd+[",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(GoBack(tabIdArg(args)));
+                       return value;
+                     });
+  commands_.Register("tabs.goForward", "Forward", "Navigation", "Cmd+]",
+                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(GoForward(tabIdArg(args)));
+                       return value;
+                     });
   commands_.Register("tabs.home", "Home", "Navigation", "", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
     value->SetBool(GoHome());
@@ -1722,26 +1765,31 @@ void BrowserWindow::RegisterCommands() {
     value->SetBool(PrintPage());
     return value;
   });
-  commands_.Register("page.viewSource", "View Source", "Developer", "", [this](CefRefPtr<CefDictionaryValue>) {
-    auto value = CefValue::Create();
-    value->SetBool(ViewSource());
-    return value;
-  });
-  commands_.Register("bookmarks.addActive", "Bookmark Active Tab", "Bookmarks", "Cmd+D", [this](CefRefPtr<CefDictionaryValue>) {
-    auto value = CefValue::Create();
-    value->SetBool(AddActiveBookmark());
-    return value;
-  });
-  commands_.Register("bookmarks.save", "Save Bookmark", "Bookmarks", "", [this](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(SaveBookmark(args->GetString("title"), args->GetString("url"), args->GetString("faviconUrl")));
-    return value;
-  });
-  commands_.Register("bookmarks.remove", "Remove Bookmark", "Bookmarks", "", [this](CefRefPtr<CefDictionaryValue> args) {
-    auto value = CefValue::Create();
-    value->SetBool(RemoveBookmark(args->GetString("url")));
-    return value;
-  });
+  commands_.Register("page.viewSource", "View Source", "Developer", "",
+                     [this](CefRefPtr<CefDictionaryValue>) {
+                       auto value = CefValue::Create();
+                       value->SetBool(ViewSource());
+                       return value;
+                     });
+  commands_.Register("bookmarks.addActive", "Bookmark Active Tab", "Bookmarks", "Cmd+D",
+                     [this](CefRefPtr<CefDictionaryValue>) {
+                       auto value = CefValue::Create();
+                       value->SetBool(AddActiveBookmark());
+                       return value;
+                     });
+  commands_.Register("bookmarks.save", "Save Bookmark", "Bookmarks", "",
+                     [this](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(SaveBookmark(args->GetString("title"), args->GetString("url"),
+                                                   args->GetString("faviconUrl")));
+                       return value;
+                     });
+  commands_.Register("bookmarks.remove", "Remove Bookmark", "Bookmarks", "",
+                     [this](CefRefPtr<CefDictionaryValue> args) {
+                       auto value = CefValue::Create();
+                       value->SetBool(RemoveBookmark(args->GetString("url")));
+                       return value;
+                     });
 }
 
 void BrowserWindow::WireEvents() {
@@ -1840,7 +1888,8 @@ void BrowserWindow::UpdateContentFrame() {
       const std::string widthValue = settings->GetString("sidebarWidth");
       if (!widthValue.empty()) {
         try {
-          sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth), static_cast<double>(kMaxSidebarWidth));
+          sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth),
+                                    static_cast<double>(kMaxSidebarWidth));
         } catch (...) {
           sidebarWidth = kDefaultSidebarWidth;
         }
@@ -1864,15 +1913,13 @@ void BrowserWindow::UpdateContentFrame() {
   dragHost.sidebarWidth = sidebarWidth;
   dragHost.navHeight = navHeight;
   [contentHostView_ setFrame:NSMakeRect(sidebarWidth, 0, contentWidth, contentHeight)];
-  UpdateUiHostClip(uiHostView_, uiOverlayActive_, sidebarWidth, navHeight, uiOverlayWidth_, uiOverlayHeight_);
+  UpdateUiHostClip(uiHostView_, uiOverlayActive_, sidebarWidth, navHeight, uiOverlayWidth_,
+                   uiOverlayHeight_);
   ResizeViews();
 }
 
-void BrowserWindow::UpdateTabPatch(const std::string& tabId,
-                                   const std::string& title,
-                                   const std::string& url,
-                                   bool isLoading,
-                                   bool canGoBack,
+void BrowserWindow::UpdateTabPatch(const std::string& tabId, const std::string& title,
+                                   const std::string& url, bool isLoading, bool canGoBack,
                                    bool canGoForward) {
   Tab patch;
   if (Tab* current = tabManager_.GetTab(tabId)) {
