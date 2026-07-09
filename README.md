@@ -28,6 +28,35 @@ Fubuki は、単なる CEF ラッパーではなく、UI、エンジン、ネイ
 UI renders. Engine decides. Host executes.
 ```
 
+## Purpose / 作成目的
+
+Fubuki Browser Alpha の目的は、既存ブラウザの見た目だけを再現することではありません。ブラウザを「UI 付きアプリ」ではなく、明確な状態管理・コマンド境界・ホスト実行層を持つ制御可能な基盤として設計することです。
+
+具体的には、次のような目的で作成されています。
+
+- macOS 上で CEF を直接扱う、軽量で理解しやすいネイティブブラウザ基盤を作る。
+- タブ、ウィンドウ、セッション、設定などの論理状態を Rust 側に集約し、UI や C++ ホストに状態が散らばらない構造にする。
+- UI、Engine、Host の境界を Protocol と HostCommand / HostEvent で固定し、後から機能追加しても責務が崩れにくい構成にする。
+- 将来的な外部操作、自動化、デバッグ、検証用途に向けて、ブラウザ内部を安全に制御できる command boundary を用意する。
+- Electron や汎用 WebView ラッパーではなく、ブラウザそのものの構造を小さく実装して検証できる土台にする。
+
+Fubuki は、現時点では Chrome や Safari を置き換える日常利用ブラウザではありません。目的は、プロダクションブラウザの完成度よりも、ブラウザアーキテクチャ、状態管理、ネイティブホスト連携、自動操作境界を正しく分離した実験・開発基盤を作ることです。
+
+## Differentiation / 何と差別化されているか
+
+Fubuki は、以下のような既存カテゴリと意図的に違う位置付けにあります。
+
+| Compared with | Difference |
+|---|---|
+| Chrome / Safari / Firefox / Arc | 完成済みの一般利用ブラウザを置き換えることより、ブラウザ内部の状態管理・ホスト連携・自動操作境界を検証しやすい構造を重視します。 |
+| Electron / Tauri apps | Web アプリをデスクトップアプリ化するためのシェルではありません。CEF を直接扱い、ブラウザとしてのタブ、ウィンドウ、ナビゲーション、永続化を自前の Engine と Host で管理します。 |
+| WKWebView wrappers | Apple の WebView に乗るのではなく、CEF / Chromium 系の実行基盤を使います。macOS ネイティブアプリでありつつ、Chromium ベースのブラウザ制御を前提にしています。 |
+| CEF sample apps | CEF を表示するだけではなく、Rust 製 FrostEngine、SQLite Store、Frost Protocol、FFI、HostCommand / HostEvent によって、状態と副作用の境界を明確に分けます。 |
+| Playwright / Selenium style automation | 既存ブラウザを外側から操作するだけではなく、ブラウザ内部に command boundary を設け、能力チェックや監査イベントを通した制御を前提にします。 |
+| Minimal browser demos | 最小表示デモではなく、セッション、履歴、ブックマーク、ダウンロード、設定、内部ページ、テスト、CI まで含めた拡張可能な基盤を目指します。 |
+
+要するに、Fubuki は「完成済みブラウザの代替」ではなく、**ブラウザを自分たちで制御・拡張・検証するための macOS-first なブラウザコア**です。
+
 ## Architecture / アーキテクチャ
 
 ```text
