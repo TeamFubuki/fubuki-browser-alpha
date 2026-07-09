@@ -1065,32 +1065,29 @@ impl HistoryRepository for InMemoryStore {
     }
 
     fn clear_history_range(&self, range: &str) -> frost_store::StoreResult<bool> {
-        match range {
+        let cutoff = match range {
             "all" => {
                 self.history.borrow_mut().clear();
-                Ok(true)
+                return Ok(true);
             }
-            "lastHour" => {
-                let cutoff = now_epoch() - 3600;
-                let mut history = self.history.borrow_mut();
-                let before = history.len();
-                history.retain(|r| r.created_at.parse::<i64>().map_or(true, |ts| ts < cutoff));
-                Ok(history.len() != before)
-            }
+            "lastHour" => now_epoch() - 3600,
             "today" => {
                 let now = now_epoch();
-                let start_of_today = now - (now % 86400);
-                let mut history = self.history.borrow_mut();
-                let before = history.len();
-                history.retain(|r| {
-                    r.created_at
-                        .parse::<i64>()
-                        .map_or(true, |ts| ts < start_of_today)
-                });
-                Ok(history.len() != before)
+                now - (now % 86400)
             }
-            _ => Ok(false),
-        }
+            _ => return Ok(false),
+        };
+        let mut history = self.history.borrow_mut();
+        let before = history.len();
+        // Remove items with timestamps >= cutoff.
+        // Items with invalid (non-numeric) timestamps are also removed.
+        history.retain(|r| {
+            r.created_at
+                .parse::<i64>()
+                .map(|ts| ts < cutoff)
+                .unwrap_or(false)
+        });
+        Ok(history.len() != before)
     }
 }
 

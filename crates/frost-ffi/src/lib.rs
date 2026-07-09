@@ -224,11 +224,17 @@ pub unsafe extern "C" fn frost_engine_process_json(
             return into_c_string(error_response(id, error.to_string()));
         }
         match handle.response_rx.recv() {
-            Ok(response) => into_c_string(serde_json::to_string(&response).unwrap_or_else(|e| {
-                serde_json::to_string(&ProtocolResponse::error(id, e.to_string()))
-                    .unwrap_or_default()
-            })),
-            Err(error) => into_c_string(error_response(id, error.to_string())),
+            Ok(response) => match serde_json::to_string(&response) {
+                Ok(json) => into_c_string(json),
+                Err(e) => {
+                    eprintln!("[frost-ffi] Failed to serialize response: {e}");
+                    into_c_string(error_response(id, "response serialization failed"))
+                }
+            },
+            Err(error) => {
+                eprintln!("[frost-ffi] Response channel closed: {error}");
+                into_c_string(error_response(id, error.to_string()))
+            }
         }
     }
 }
