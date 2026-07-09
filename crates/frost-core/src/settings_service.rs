@@ -1,4 +1,4 @@
-use frost_store::{SettingsRepository, StoreResult, StoreError};
+use frost_store::{SettingsRepository, StoreError, StoreResult};
 
 pub struct SettingsService;
 
