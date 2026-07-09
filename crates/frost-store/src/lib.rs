@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum StoreError {
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    #[error("invalid setting key: {0}")]
+    InvalidKey(String),
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;

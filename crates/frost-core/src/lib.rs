@@ -484,7 +484,7 @@ where
                 Ok(Response::Bool(true))
             }
             Request::SettingsReset { key } => {
-                let value = default_setting(&key);
+                let value = SettingsService::default_value(&key);
                 SettingsService::set(&self.repository, &key, value)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::SettingChanged(SettingChanged {
@@ -900,22 +900,6 @@ fn now_epoch() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
-}
-
-fn default_setting(key: &str) -> &'static str {
-    match key {
-        "homepage" | "homeUrl" => "https://example.com",
-        "searchEngine" => "google",
-        "customSearchUrl" => "https://www.google.com/search?q={query}",
-        "theme" => "light",
-        "appearance" => "system",
-        "sidebarVisible" => "show",
-        "sidebarWidth" => "196",
-        "newTabPage" => "blank",
-        "language" => "system",
-        "defaultZoomLevel" => "0",
-        _ => "",
-    }
 }
 
 fn default_commands() -> Vec<BrowserCommand> {

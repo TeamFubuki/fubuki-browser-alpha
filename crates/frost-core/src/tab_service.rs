@@ -74,10 +74,18 @@ impl TabService {
             return false;
         };
 
-        for tab in &mut self.tabs {
-            if tab.window_id == window_id {
-                tab.is_active = tab.id == tab_id;
-            }
+        // First, deactivate the currently active tab in this window
+        if let Some(current_active) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.is_active && t.window_id == window_id)
+        {
+            current_active.is_active = false;
+        }
+
+        // Then activate the target tab
+        if let Some(target) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            target.is_active = true;
         }
         true
     }
