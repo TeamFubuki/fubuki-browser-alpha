@@ -858,6 +858,7 @@ bool BrowserWindow::RemoveHistory(const std::string& url) {
 
 bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& path) {
   const bool ok = dataStore_->RemoveDownload(url, path);
+  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
   eventBus_.Publish({EventType::DownloadChanged,
                      "download.changed",
                      {},
@@ -1212,6 +1213,7 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
     return;
   }
   dataStore_->UpdateDownload(downloadId, url, path, state, percent);
+  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
   if (state != "in_progress") {
     dataStore_->Log("info", "Download " + state + ": " + path);
   }
