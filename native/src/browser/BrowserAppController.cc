@@ -70,17 +70,16 @@ void PollHostCommands(BrowserAppController *app) {
 // Builds a HostCommandResult JSON envelope for the given command id.
 std::string HostCommandResultJson(const std::string &commandId, bool ok,
                                   const std::string &error) {
-  std::string json = "{\"version\":0,\"commandId\":\"";
-  json += commandId;
-  json += "\",\"ok\":";
-  json += ok ? "true" : "false";
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("commandId", commandId);
+  root->SetBool("ok", ok);
   if (!ok) {
-    json += ",\"error\":\"";
-    json += error;
-    json += "\"";
+    root->SetString("error", error);
   }
-  json += "}";
-  return json;
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
 }
 
 }  // namespace
@@ -140,7 +139,9 @@ void BrowserAppController::DispatchHostCommands() {
                                                                 ok ? "" : "failed to close window"));
       } else {
         // Page/overlay/permission commands are owned by the window itself.
-        window->PollAndExecuteHostCommands();
+        // Forward the already-polled command instead of re-draining the queue,
+        // so the specific command we just read is not discarded.
+        window->ExecuteHostCommand(commandJson);
       }
     }
   }

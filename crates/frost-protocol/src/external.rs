@@ -16,7 +16,13 @@ pub enum ExternalCapability {
 #[serde(rename_all = "camelCase")]
 pub struct ExternalCommandEnvelope {
     pub version: u16,
+    /// Correlation id for matching the response back to the caller. This is NOT
+    /// an identity/authorization key; capability grant and rate-limit lookups
+    /// use [`ExternalCommandEnvelope::origin`] instead.
     pub id: String,
+    /// Caller origin used as the capability/rate-limit key. Never derived from
+    /// `id`, and never trusted from the command's declared `capability`.
+    pub origin: String,
     pub capability: ExternalCapability,
     #[serde(flatten)]
     pub command: ExternalCommand,
@@ -78,12 +84,14 @@ pub enum ExternalEvent {
 impl ExternalCommandEnvelope {
     pub fn new(
         id: impl Into<String>,
+        origin: impl Into<String>,
         capability: ExternalCapability,
         command: ExternalCommand,
     ) -> Self {
         Self {
             version: crate::PROTOCOL_VERSION,
             id: id.into(),
+            origin: origin.into(),
             capability,
             command,
         }
@@ -107,6 +115,7 @@ mod tests {
     fn serializes_capability_as_snake_case() {
         let envelope = ExternalCommandEnvelope::new(
             "external-1",
+            "external-origin",
             ExternalCapability::ReadState,
             ExternalCommand::StateRead,
         );
@@ -115,7 +124,40 @@ mod tests {
 
         assert_eq!(json["version"], 0);
         assert_eq!(json["id"], "external-1");
+        assert_eq!(json["origin"], "external-origin");
         assert_eq!(json["capability"], "read_state");
         assert_eq!(json["command"], "state.read");
+    }
+
+    #[test]
+    fn keeps_correlation_id_distinct_from_origin() {
+        // The correlation `id` must never be used as the authorization key.
+        // Here `id` differs from `origin`; the policy layer grants by origin.
+        let envelope = ExternalCommandEnvelope::new(
+            "correlation-abc",
+            "external-origin",
+            ExternalCapability::ReadState,
+            ExternalCommand::StateRead,
+        );
+
+        let json = serde_json::to_value(envelope).unwrap();
+
+        assert_eq!(json["id"], "correlation-abc");
+        assert_eq!(json["origin"], "external-origin");
+        assert_ne!(json["id"], json["origin"]);
+    }
+
+    #[test]
+    fn round_trips_origin_via_json() {
+        let envelope = ExternalCommandEnvelope::new(
+            "external-1",
+            "external-origin",
+            ExternalCapability::ReadState,
+            ExternalCommand::StateRead,
+        );
+        let json = serde_json::to_string(&envelope).unwrap();
+        let parsed: ExternalCommandEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.origin, "external-origin");
+        assert_eq!(parsed.id, "external-1");
     }
 }

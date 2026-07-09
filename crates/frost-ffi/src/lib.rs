@@ -22,6 +22,10 @@ pub struct FrostEngineHandle {
     host_event_tx: Sender<HostEventEnvelope>,
     host_result_tx: Sender<HostCommandResultEnvelope>,
     external_policy: std::sync::Mutex<ExternalPolicy>,
+    // Serializes the request_tx send + response_rx recv pair so that the JSON
+    // processing path and the external routing path (which share the same
+    // request/response channels) never read another caller's response.
+    request_response_lock: std::sync::Mutex<()>,
     join_handle: Option<JoinHandle<()>>,
 }
 
@@ -107,6 +111,7 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         host_event_tx,
         host_result_tx,
         external_policy: std::sync::Mutex::new(ExternalPolicy::new()),
+        request_response_lock: std::sync::Mutex::new(()),
         join_handle: Some(join_handle),
     }))
 }
@@ -205,6 +210,12 @@ pub unsafe extern "C" fn frost_engine_process_json(
 
         let id = request.id.clone();
         let handle = &*handle;
+        // Hold the lock across send + recv so the shared response channel is
+        // never read by the wrong caller (see route_external_to_core).
+        let _guard = handle
+            .request_response_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Err(error) = handle.request_tx.send(request) {
             return into_c_string(error_response(id, error.to_string()));
         }
@@ -411,11 +422,11 @@ pub unsafe extern "C" fn frost_engine_process_external_json(
             );
         }
     };
-    // Route the command through the core on a throwaway core clone is not possible;
-    // instead we forward to the request channel for non-destructive reads and
-    // perform destructive actions via the same channel. The policy check already
-    // happened in `process_external`; here we re-run it through the live core by
-    // sending the equivalent ProtocolRequest.
+    // Route the command through the live engine's request channel and read the
+    // matching response. Capability and rate-limit checks are re-run here
+    // (gated by the caller `origin`, never by the correlation `id`) because the
+    // external path cannot borrow the core owned by the worker thread. The
+    // request/response pair is serialized via `request_response_lock`.
     let response = route_external_to_core(handle, envelope, &mut policy);
     into_c_string(response)
 }
@@ -430,7 +441,7 @@ fn route_external_to_core(
     envelope: frost_protocol::ExternalCommandEnvelope,
     policy: &mut ExternalPolicy,
 ) -> String {
-    use frost_protocol::{ExternalCapability, ExternalCommand, ProtocolRequest, Request};
+    use frost_protocol::{ExternalCapability, ExternalCommand, ProtocolRequest, Request, Response};
 
     let capability = match &envelope.command {
         ExternalCommand::StateRead => ExternalCapability::ReadState,
@@ -443,11 +454,13 @@ fn route_external_to_core(
         ExternalCommand::DebugOpenDevTools { .. } => ExternalCapability::Debug,
     };
 
-    if !policy.is_granted(&envelope.id, &capability) {
+    // Gate by the caller origin, never by the correlation id, and never trust
+    // the capability declared inside the command envelope.
+    if !policy.is_granted(&envelope.origin, &capability) {
         return serde_json::json!({ "allowed": false, "error": "capability not granted" })
             .to_string();
     }
-    if !policy.check_rate(&envelope.id) {
+    if !policy.check_rate(&envelope.origin) {
         return serde_json::json!({ "allowed": false, "error": "rate limited" }).to_string();
     }
 
@@ -493,18 +506,42 @@ fn route_external_to_core(
 
     match request {
         Some(req) => {
+            // Serialize send + recv so the shared response channel is never read
+            // by the wrong caller (see frost_engine_process_json).
+            let _guard = handle
+                .request_response_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if handle.request_tx.send(req).is_err() {
                 return serde_json::json!({ "allowed": false, "error": "engine unavailable" })
                     .to_string();
             }
             match handle.response_rx.recv() {
-                Ok(resp) => serde_json::json!({ "allowed": resp.ok, "ok": resp.ok }).to_string(),
+                Ok(resp) => {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("allowed".into(), serde_json::json!(resp.ok));
+                    obj.insert("ok".into(), serde_json::json!(resp.ok));
+                    // Surface the snapshot body for state reads instead of just
+                    // an `ok` flag.
+                    if let Response::AppSnapshot(state) = &resp.response {
+                        obj.insert(
+                            "result".into(),
+                            serde_json::to_value(state).unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    serde_json::Value::Object(obj).to_string()
+                }
                 Err(_) => {
                     serde_json::json!({ "allowed": false, "error": "no response" }).to_string()
                 }
             }
         }
-        None => serde_json::json!({ "allowed": true, "ok": true }).to_string(),
+        None => {
+            // DebugOpenDevTools (and any unsupported command) is a host/CEF
+            // concern the engine must not perform; never report success.
+            serde_json::json!({ "allowed": false, "error": "command not supported via external router" })
+                .to_string()
+        }
     }
 }
 

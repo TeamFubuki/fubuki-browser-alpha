@@ -167,7 +167,8 @@ where
         let cmd_policy = policy_for(&command);
         let capability = cmd_policy.capability;
         let destructive = cmd_policy.destructive;
-        let origin = envelope.id.clone();
+        // Gate by the caller origin, never by the correlation id.
+        let origin = envelope.origin.clone();
 
         if !policy.is_granted(&origin, &capability) {
             let reason = format!("capability '{:?}' not granted", capability);
@@ -336,6 +337,7 @@ mod tests {
         let mut policy = ExternalPolicy::new();
         let envelope = ExternalCommandEnvelope::new(
             "ext-1",
+            "ext-1",
             ExternalCapability::ReadState,
             ExternalCommand::StateRead,
         );
@@ -354,6 +356,7 @@ mod tests {
         policy.grant("ext-1", vec![ExternalCapability::ReadState]);
         let envelope = ExternalCommandEnvelope::new(
             "ext-1",
+            "ext-1",
             ExternalCapability::ReadState,
             ExternalCommand::StateRead,
         );
@@ -368,6 +371,7 @@ mod tests {
         policy.grant("ext-2", vec![ExternalCapability::TabControl]);
         let envelope = ExternalCommandEnvelope::new(
             "ext-2",
+            "ext-2",
             ExternalCapability::TabControl,
             ExternalCommand::TabClose {
                 tab_id: "tab-1".into(),
@@ -376,5 +380,44 @@ mod tests {
         let outcome = core.process_external(envelope, &mut policy);
         // Capability is granted but no tab exists, so routing fails.
         assert!(!outcome.allowed);
+    }
+
+    #[test]
+    fn grants_by_origin_not_by_correlation_id() {
+        let mut core = core();
+        let mut policy = ExternalPolicy::new();
+        // Grant to the origin; the correlation `id` is intentionally different.
+        policy.grant("ext-origin", vec![ExternalCapability::ReadState]);
+        let envelope = ExternalCommandEnvelope::new(
+            "correlation-id",
+            "ext-origin",
+            ExternalCapability::ReadState,
+            ExternalCommand::StateRead,
+        );
+        let outcome = core.process_external(envelope, &mut policy);
+        assert!(outcome.allowed);
+    }
+
+    #[test]
+    fn rate_limits_by_origin() {
+        let mut core = core();
+        let mut policy = ExternalPolicy::new();
+        policy.grant("ext-rate", vec![ExternalCapability::ReadState]);
+        for _ in 0..DEFAULT_RATE_LIMIT {
+            let envelope = ExternalCommandEnvelope::new(
+                "id",
+                "ext-rate",
+                ExternalCapability::ReadState,
+                ExternalCommand::StateRead,
+            );
+            assert!(core.process_external(envelope, &mut policy).allowed);
+        }
+        let envelope = ExternalCommandEnvelope::new(
+            "id",
+            "ext-rate",
+            ExternalCapability::ReadState,
+            ExternalCommand::StateRead,
+        );
+        assert!(!core.process_external(envelope, &mut policy).allowed);
     }
 }

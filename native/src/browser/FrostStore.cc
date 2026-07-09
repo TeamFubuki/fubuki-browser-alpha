@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "frost_ffi.h"
+#include "utils/JsonUtils.h"
 
 namespace fubuki {
 
@@ -100,13 +101,14 @@ bool FrostStore::ExecRequest(const std::string &method,
 
 bool FrostStore::AddBookmark(const std::string &title, const std::string &url,
                              const std::string &faviconUrl) {
-  std::string params = "{\"title\":\"" + title + "\",\"url\":\"" + url +
-                       "\",\"faviconUrl\":\"" + faviconUrl + "\"}";
+  std::string params = "{\"title\":" + JsonEscape(title) +
+                       ",\"url\":" + JsonEscape(url) +
+                       ",\"faviconUrl\":" + JsonEscape(faviconUrl) + "}";
   return ExecRequest("bookmarks.save", params);
 }
 
 bool FrostStore::RemoveBookmark(const std::string &url) {
-  std::string params = "{\"url\":\"" + url + "\"}";
+  std::string params = "{\"url\":" + JsonEscape(url) + "}";
   return ExecRequest("bookmarks.remove", params);
 }
 
@@ -120,7 +122,7 @@ bool FrostStore::AddHistory(const std::string &title, const std::string &url,
 }
 
 bool FrostStore::RemoveHistory(const std::string &url) {
-  std::string params = "{\"url\":\"" + url + "\"}";
+  std::string params = "{\"url\":" + JsonEscape(url) + "}";
   return ExecRequest("history.remove", params);
 }
 
@@ -140,19 +142,22 @@ bool FrostStore::UpdateDownload(const std::string &url, const std::string &path,
 
 bool FrostStore::RemoveDownload(const std::string &url,
                                 const std::string &path) {
-  std::string params = "{\"url\":\"" + url + "\",\"path\":\"" + path + "\"}";
+  std::string params = "{\"url\":" + JsonEscape(url) + ",\"path\":" + JsonEscape(path) + "}";
   return ExecRequest("downloads.remove", params);
 }
 
 bool FrostStore::HasDownloadPath(const std::string &path) const {
-  // The host no longer owns download metadata; treat any non-empty path as\n  // valid so file-open/reveal still works for completed downloads.\n  return !path.empty();
+  // The host no longer owns download metadata; treat any non-empty path as
+  // valid so file-open/reveal still works for completed downloads.
+  return !path.empty();
 }
 
 bool FrostStore::SetPermission(const std::string &origin,
                                const std::string &permission,
                                const std::string &value) {
-  std::string params = "{\"origin\":\"" + origin + "\",\"permission\":\"" +
-                       permission + "\",\"value\":\"" + value + "\"}";
+  std::string params = "{\"origin\":" + JsonEscape(origin) +
+                       ",\"permission\":" + JsonEscape(permission) +
+                       ",\"value\":" + JsonEscape(value) + "}";
   return ExecRequest("permissions.set", params);
 }
 
@@ -169,7 +174,7 @@ bool FrostStore::ClearDownloads() {
 }
 
 bool FrostStore::ClearHistoryRange(const std::string &range) {
-  std::string params = "{\"range\":\"" + range + "\"}";
+  std::string params = "{\"range\":" + JsonEscape(range) + "}";
   return ExecRequest("history.clearRange", params);
 }
 

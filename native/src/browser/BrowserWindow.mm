@@ -1090,43 +1090,58 @@ bool BrowserWindow::HandleNewTabSearchUrl(const std::string& tabId, const std::s
 
 namespace {
 
-// Builds a HostCommandResult JSON envelope for the given command id.
-std::string HostCommandResultJson(const std::string& commandId, bool ok,
-                                  const std::string& error) {
-  std::string json = "{\"version\":0,\"commandId\":\"";
-  json += commandId;
-  json += "\",\"ok\":";
-  json += ok ? "true" : "false";
-  if (!ok) {
-    json += ",\"error\":\"";
-    json += error;
-    json += "\"";
-  }
-  json += "}";
-  return json;
+// Wraps a string as a JSON string value. CEF's JSON writer escapes it, so
+// values like tabId/url/title can never produce broken JSON.
+CefRefPtr<CefValue> JsonStringValue(const std::string& s) {
+  auto v = CefValue::Create();
+  v->SetString(s);
+  return v;
 }
 
-// Builds a HostEvent JSON envelope. `fields` maps a key to a *raw JSON*
-// fragment (e.g. "\"value\"", "true", "50") so that numeric/bool fields
-// are serialized with the correct JSON type expected by FrostEngine.
-std::string HostEventJson(const std::string& event,
-                          const std::map<std::string, std::string>& fields) {
-  std::string json = "{\"version\":0,\"event\":\"";
-  json += event;
-  json += "\",\"payload\":{";
-  bool first = true;
-  for (const auto& kv : fields) {
-    if (!first) {
-      json += ",";
-    }
-    first = false;
-    json += "\"";
-    json += kv.first;
-    json += "\":";
-    json += kv.second;
+CefRefPtr<CefValue> JsonBoolValue(bool b) {
+  auto v = CefValue::Create();
+  v->SetBool(b);
+  return v;
+}
+
+CefRefPtr<CefValue> JsonIntValue(int n) {
+  auto v = CefValue::Create();
+  v->SetInt(n);
+  return v;
+}
+
+// Builds a HostCommandResult JSON envelope for the given command id. Values are
+// written through CEF's JSON writer so strings are always correctly escaped.
+std::string HostCommandResultJson(const std::string& commandId, bool ok,
+                                  const std::string& error) {
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("commandId", commandId);
+  root->SetBool("ok", ok);
+  if (!ok) {
+    root->SetString("error", error);
   }
-  json += "}}";
-  return json;
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
+}
+
+// Builds a HostEvent JSON envelope. Field values are passed as typed CefValue
+// handles so that strings are always correctly JSON-escaped (no hand-built
+// fragments that can produce broken JSON for tabId/url/etc.).
+std::string HostEventJson(const std::string& event,
+                          const std::map<std::string, CefRefPtr<CefValue>>& fields) {
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("event", event);
+  auto payload = CefDictionaryValue::Create();
+  for (const auto& kv : fields) {
+    payload->SetValue(kv.first, kv.second);
+  }
+  root->SetDictionary("payload", payload);
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
 }
 
 std::string JsonString(const CefRefPtr<CefDictionaryValue>& dict,
@@ -1166,9 +1181,9 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
          CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
-                                      {{"tabId", tabId},
-                                       {"windowId", windowId_},
-                                       {"url", url}}));
+                                      {{ "tabId", JsonStringValue(tabId) },
+                                       { "windowId", JsonStringValue(windowId_) },
+                                       { "url", JsonStringValue(url) }}));
     } else {
       error = "failed to create page";
     }
@@ -1290,7 +1305,7 @@ void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefB
 void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& title) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, title, tab->url, tab->isLoading, tab->canGoBack, tab->canGoForward);
-    PushHostEventJson(HostEventJson("page.titleChanged", {{"tabId", tabId}, {"title", title}}));
+    PushHostEventJson(HostEventJson("page.titleChanged", {{ "tabId", JsonStringValue(tabId) }, { "title", JsonStringValue(title) }}));
   }
 }
 
@@ -1300,7 +1315,7 @@ void BrowserWindow::OnTabUrl(const std::string& tabId, const std::string& url) {
       tab->isPendingPopup = false;
     }
     UpdateTabPatch(tabId, tab->title, url, tab->isLoading, tab->canGoBack, tab->canGoForward);
-    PushHostEventJson(HostEventJson("page.urlChanged", {{"tabId", tabId}, {"url", url}}));
+    PushHostEventJson(HostEventJson("page.urlChanged", {{ "tabId", JsonStringValue(tabId) }, { "url", JsonStringValue(url) }}));
   }
 }
 
@@ -1309,7 +1324,7 @@ void BrowserWindow::OnTabFavicon(const std::string& tabId, const std::string& fa
     Tab patch = *tab;
     patch.faviconUrl = faviconUrl;
     tabManager_.UpdateTab(tabId, patch);
-    PushHostEventJson(HostEventJson("page.faviconChanged", {{"tabId", tabId}, {"faviconUrl", faviconUrl}}));
+    PushHostEventJson(HostEventJson("page.faviconChanged", {{ "tabId", JsonStringValue(tabId) }, { "faviconUrl", JsonStringValue(faviconUrl) }}));
   }
 }
 
@@ -1318,11 +1333,11 @@ void BrowserWindow::OnTabLoadingState(const std::string& tabId, bool isLoading, 
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, tab->title, tab->url, isLoading, canGoBack, canGoForward);
     PushHostEventJson(HostEventJson("page.loadingChanged",
-                                    {{"tabId", tabId}, {"isLoading", isLoading ? "true" : "false"}}));
+                                    {{ "tabId", JsonStringValue(tabId) }, { "isLoading", JsonBoolValue(isLoading) }}));
     PushHostEventJson(HostEventJson("page.navigationStateChanged",
-                                    {{"tabId", tabId},
-                                     {"canGoBack", canGoBack ? "true" : "false"},
-                                     {"canGoForward", canGoForward ? "true" : "false"}}));
+                                    {{ "tabId", JsonStringValue(tabId) },
+                                     { "canGoBack", JsonBoolValue(canGoBack) },
+                                     { "canGoForward", JsonBoolValue(canGoForward) }}));
   }
 }
 
@@ -1349,7 +1364,7 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
     Tab patch = *tab;
     patch.errorText = message;
     tabManager_.UpdateTab(tabId, patch);
-    PushHostEventJson(HostEventJson("page.loadFailed", {{"tabId", tabId}, {"errorText", message}}));
+    PushHostEventJson(HostEventJson("page.loadFailed", {{ "tabId", JsonStringValue(tabId) }, { "errorText", JsonStringValue(message) }}));
     if (!privateWindow_) {
       Store().AddLog("error", "Navigation failed: " + tab->url + " - " + message);
       app_.PersistSession();
@@ -1395,10 +1410,10 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
     Store().AddLog("info", "Download " + state + ": " + path);
   }
   PushHostEventJson(HostEventJson("download.updated",
-                                  {{"url", url},
-                                   {"path", path},
-                                   {"state", state},
-                                   {"percent", std::to_string(percent)}}));
+                                  {{ "url", JsonStringValue(url) },
+                                   { "path", JsonStringValue(path) },
+                                   { "state", JsonStringValue(state) },
+                                   { "percent", JsonIntValue(percent) }}));
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
