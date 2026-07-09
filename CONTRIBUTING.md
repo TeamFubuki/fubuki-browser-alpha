@@ -1,4 +1,4 @@
-# Contributing to Fubuki Browser Alpha
+# Fubuki Browser Alpha 貢献ガイド
 
 Fubuki Browser Alpha への貢献ありがとうございます。このドキュメントでは、開発環境、ブランチ運用、コミット規約、PR の確認項目、実装方針をまとめます。
 
@@ -6,25 +6,25 @@ Fubuki Browser Alpha は、macOS ネイティブホスト、CEF、Rust 製 Frost
 
 `Alpha` はプロダクト名・コードネームであり、リリース段階としての「アルファ版」を意味しません。Issue、PR、ドキュメントで成熟度を説明する場合は、必要に応じて `MVP`、`experimental`、`not production-ready` など、実態に近い表現を使ってください。
 
-## Development Environment
+## 開発環境
 
-### Requirements
+### 必要環境
 
-| Tool | Version / Notes |
+| ツール | バージョン・補足 |
 |---|---|
-| macOS | 12 or later |
-| Xcode Command Line Tools | latest |
-| CMake | 3.21 or later |
-| Rust | stable toolchain with `clippy` and `rustfmt` |
-| Node.js | 22 or later |
-| pnpm | 11.x; `ui/package.json` pins `pnpm@11.9.0` |
-| LLVM via Homebrew | for `clang-format` / `clang-tidy` |
-| cppcheck | for native lint checks |
-| python3 / curl / tar | required by the CEF fetch script |
+| macOS | 12 以降 |
+| Xcode Command Line Tools | 最新版 |
+| CMake | 3.21 以降 |
+| Rust | stable toolchain。`clippy` と `rustfmt` を含めます。 |
+| Node.js | 22 以降 |
+| pnpm | 11.x。`ui/package.json` では `pnpm@11.9.0` を指定しています。 |
+| LLVM via Homebrew | `clang-format` / `clang-tidy` 用 |
+| cppcheck | ネイティブコードのリント用 |
+| python3 / curl / tar | CEF 取得スクリプトで使用 |
 
-The primary target is Apple Silicon macOS. Intel macOS may work with the matching CEF binary distribution, but compatibility depends on the selected CEF build.
+Apple Silicon macOS を主なターゲットにしています。Intel macOS でも対応する CEF binary distribution を使えば動作する可能性はありますが、互換性は選択した CEF ビルドに依存します。
 
-### First-time Setup
+### 初回セットアップ
 
 ```bash
 git clone https://github.com/TeamFubuki/fubuki-browser-alpha.git
@@ -32,24 +32,24 @@ cd fubuki-browser-alpha
 make bootstrap
 ```
 
-`make bootstrap` downloads CEF, installs UI dependencies, and configures the native CMake build.
+`make bootstrap` は、CEF の取得、UI 依存関係のインストール、ネイティブ CMake ビルド設定をまとめて実行します。
 
-### Build and Run
+### ビルドと実行
 
 ```bash
 make build
 make run
 ```
 
-For layer-specific work:
+レイヤーごとに作業する場合は、以下を使います。
 
 ```bash
-make ui       # SolidJS UI
-make rust     # FrostEngine Rust crates
-make native   # C++ / CEF host
+make ui       # SolidJS UI をビルド
+make rust     # FrostEngine の Rust crate をビルド
+make native   # C++ / CEF ホストをビルド
 ```
 
-If the native build fails after CEF or CMake changes, try a clean configure first:
+CEF や CMake まわりの変更後にネイティブビルドが失敗する場合は、設定を作り直してください。
 
 ```bash
 make clean
@@ -57,9 +57,9 @@ make configure
 make native
 ```
 
-## Project Boundaries
+## プロジェクト境界
 
-Keep the architecture intact.
+アーキテクチャ上の境界を崩さないでください。
 
 ```text
 Fubuki Browser UI (SolidJS)
@@ -69,69 +69,69 @@ FrostEngine Core (Rust)
 CEF / macOS Host (C++20)
 ```
 
-### Ownership Rules
+### 所有権のルール
 
-- **FrostEngine owns logical browser state.** Tabs, windows, settings, sessions, and browser-owned persistence should live in the Rust layer.
-- **The native host owns I/O and rendering.** C++ should manage NSWindow, CEF browser instances, scheme handling, and host-side side effects.
-- **The UI is a client.** SolidJS should render state and send protocol requests; it should not become the source of truth for browser state.
-- **Protocol changes must be explicit.** If a feature crosses layers, update the relevant request / response / event / host boundary types first.
-- **External automation must remain auditable.** Capability checks, rate limiting, and audit events should not be bypassed.
-- **Destructive operations must not be GET navigation.** Internal pages should use safe action boundaries for changes that mutate state.
+- **ブラウザの論理状態は FrostEngine が所有します。** タブ、ウィンドウ、設定、セッション、ブラウザ所有の永続化データは Rust レイヤーに置きます。
+- **ネイティブホストは I/O と描画を担当します。** C++ は NSWindow、CEF Browser インスタンス、scheme 処理、ホスト側の副作用を管理します。
+- **UI はクライアントです。** SolidJS は状態を描画し、プロトコルリクエストを送信します。ブラウザ状態の信頼できる情報源にはしません。
+- **プロトコル変更は明示的に行います。** 機能がレイヤーをまたぐ場合は、先に関連する Request / Response / Event / Host 境界の型を更新してください。
+- **外部自動操作は監査可能にします。** capability check、rate limiting、audit event を迂回する実装は避けてください。
+- **破壊的操作を GET navigation にしないでください。** 内部ページで状態を変更する場合は、安全な操作境界を使います。
 
-## Branch Strategy
+## ブランチ戦略
 
-Use short topic branches from `main`.
+`main` から短い topic branch を作成してください。
 
-| Branch | Purpose |
+| ブランチ | 用途 |
 |---|---|
-| `feature/*` | New user-facing or internal functionality |
-| `fix/*` | Bug fixes |
-| `docs/*` | Documentation-only changes |
-| `refactor/*` | Internal restructuring without behavior changes |
-| `deps/*` | Dependency updates |
-| `ci/*` | CI or repository automation changes |
+| `feature/*` | ユーザー向けまたは内部向けの新機能 |
+| `fix/*` | バグ修正 |
+| `docs/*` | ドキュメントのみの変更 |
+| `refactor/*` | 挙動を変えない内部整理 |
+| `deps/*` | 依存関係の更新 |
+| `ci/*` | CI またはリポジトリ自動化の変更 |
 
-Pull requests should target `main` unless a maintainer says otherwise.
+メンテナーから別の指示がない限り、プルリクエストは `main` に向けて作成してください。
 
-## Commit Style
+## コミット規約
 
-Use [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/).
+[Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/) を使用します。
 
 ```text
 <type>(<scope>): <description>
 ```
 
-### Types
+### type
 
-| Type | Meaning |
+| type | 意味 |
 |---|---|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation-only change |
-| `style` | Formatting-only change |
-| `refactor` | Code change without feature or bug-fix intent |
-| `perf` | Performance improvement |
-| `test` | Test addition or update |
-| `build` | Build system or dependency change |
-| `ci` | CI / automation change |
-| `chore` | Maintenance |
-| `revert` | Revert a previous commit |
+| `feat` | 新機能 |
+| `fix` | バグ修正 |
+| `docs` | ドキュメントのみの変更 |
+| `style` | フォーマットのみの変更 |
+| `refactor` | 新機能追加やバグ修正を目的としないコード変更 |
+| `perf` | パフォーマンス改善 |
+| `test` | テストの追加または更新 |
+| `build` | ビルドシステムまたは依存関係の変更 |
+| `ci` | CI または自動化の変更 |
+| `chore` | メンテナンス |
+| `revert` | 以前のコミットの取り消し |
 
-### Recommended Scopes
+### 推奨 scope
 
-| Scope | Area |
+| scope | 対象 |
 |---|---|
-| `ui` | SolidJS UI under `ui/` |
-| `rust` | Rust workspace under `crates/` |
-| `native` | C++ / CEF / macOS host |
-| `protocol` | Frost Protocol request / response / event types |
-| `store` | SQLite persistence |
-| `docs` | Documentation |
-| `deps` | Dependencies |
-| `ci` | GitHub Actions and repository checks |
-| `release` | Release preparation |
+| `ui` | `ui/` 配下の SolidJS UI |
+| `rust` | `crates/` 配下の Rust workspace |
+| `native` | C++ / CEF / macOS ホスト |
+| `protocol` | Frost Protocol の Request / Response / Event 型 |
+| `store` | SQLite 永続化 |
+| `docs` | ドキュメント |
+| `deps` | 依存関係 |
+| `ci` | GitHub Actions とリポジトリチェック |
+| `release` | リリース準備 |
 
-Examples:
+例:
 
 ```text
 feat(protocol): add tab duplicate request
@@ -140,48 +140,48 @@ docs(architecture): clarify host state ownership
 deps(ui): update Tailwind CSS
 ```
 
-## Pull Request Standard
+## プルリクエストの基準
 
-A pull request should be small enough to review accurately. Split unrelated work.
+プルリクエストは、正確にレビューできる大きさにしてください。無関係な変更は分けます。
 
-Before opening a PR:
+PR を作成する前に、以下を確認してください。
 
-1. Rebase or merge the latest `main`.
-2. Run the checks relevant to your change.
-3. Update docs when behavior, commands, architecture, or limitations change.
-4. Include screenshots or recordings for visible UI changes.
-5. Mention known limitations instead of implying they are solved.
+1. 最新の `main` を rebase または merge する。
+2. 変更に関係するチェックを実行する。
+3. 挙動、コマンド、アーキテクチャ、制限事項が変わる場合はドキュメントを更新する。
+4. 見た目が変わる UI 変更には、スクリーンショットまたは短い録画を付ける。
+5. 未完成の点を解決済みのように書かず、既知の制限として明記する。
 
-A good PR description includes:
+よい PR 説明には、以下を含めます。
 
-- what changed
-- why it changed
-- affected layers
-- test results
-- linked issue, if any
-- remaining risks or follow-up work
+- 何を変更したか
+- なぜ変更したか
+- 影響するレイヤー
+- テスト結果
+- 関連 Issue があればそのリンク
+- 残っているリスクまたは follow-up
 
-### Suggested PR Checklist
+### PR チェックリスト例
 
 ```md
-## Summary
+## 概要
 - 
 
-## Verification
+## 確認
 - [ ] make test
 - [ ] make lint-all
 - [ ] make format-all
 - [ ] make audit
 
-## Notes
+## 補足
 - 
 ```
 
-Use the checklist as a guide. Do not mark commands as passed unless you actually ran them.
+このチェックリストは目安です。実際に実行していないコマンドを、実行済みとして記載しないでください。
 
-## Local Checks
+## ローカルチェック
 
-Run the broad checks before asking for review.
+レビュー依頼前に、広めのチェックを実行してください。
 
 ```bash
 make test
@@ -189,14 +189,14 @@ make lint-all
 make format-all
 ```
 
-For dependency and policy checks:
+依存関係とポリシーの確認には、以下を使います。
 
 ```bash
 make audit
 make audit-deny
 ```
 
-Layer-specific commands are available when a full pass is unnecessary:
+全体実行が不要な場合は、レイヤーごとのコマンドも使えます。
 
 ```bash
 make test-rust
@@ -212,151 +212,151 @@ make format-rust
 make format-native
 ```
 
-## CI Coverage
+## CI の確認内容
 
-Pull requests to `main` run CI checks for:
+`main` 向けのプルリクエストでは、以下の CI チェックを実行します。
 
-| Job | Coverage |
+| ジョブ | 確認内容 |
 |---|---|
-| UI check | Oxlint, Oxfmt, TypeScript build, Vitest |
-| Rust check | rustfmt, Clippy, `cargo test --workspace` |
-| Rust FFI build | `frost-ffi` release static library build |
+| UI check | Oxlint、Oxfmt、TypeScript build、Vitest |
+| Rust check | rustfmt、Clippy、`cargo test --workspace` |
+| Rust FFI build | `frost-ffi` の release static library ビルド |
 | Rust security audit | `cargo-audit` |
 | Rust license & advisory deny | `cargo-deny` |
-| Rust docs build | `cargo doc` with warnings denied |
+| Rust docs build | warnings denied での `cargo doc` |
 | UI dependency audit | `pnpm audit --audit-level=high` |
-| Native unit test | CMake, GoogleTest, CTest |
-| Repository hygiene | merge conflict marker and large-file checks |
+| Native unit test | CMake、GoogleTest、CTest |
+| Repository hygiene | merge conflict marker と巨大ファイルの検出 |
 
-The heavier macOS native CEF build is intended for `main` or manual workflow runs, not every pull request. Do not assume a PR has validated the full app bundle path.
+重い macOS native CEF ビルドは、`main` または手動実行向けです。PR の時点で完全な app bundle まで検証済みだとは考えないでください。
 
-## Coding Guidelines
+## コーディング方針
 
 ### Rust / FrostEngine
 
-- Keep state changes in FrostEngine services, not in UI or host glue.
-- Prefer typed request / response / event models over ad-hoc JSON.
-- Run `cargo fmt --all` and Clippy with warnings denied.
-- Public APIs should have useful doc comments.
-- Use explicit error types; `thiserror` is available in the workspace.
-- Add tests for service behavior and protocol-level changes.
+- 状態変更は UI や host glue ではなく、FrostEngine の service に置きます。
+- ad-hoc な JSON より、型付きの Request / Response / Event model を優先します。
+- `cargo fmt --all` を実行し、Clippy は warnings denied で通します。
+- public API には有用な doc comment を付けます。
+- エラー型は明示的に定義します。workspace では `thiserror` を使用できます。
+- service の挙動や protocol-level の変更にはテストを追加します。
 
 ### Frost Protocol
 
-- Treat protocol messages as a boundary, not an implementation detail.
-- Keep request, response, and event payloads versionable and serializable.
-- Avoid leaking UI-only or CEF-only assumptions into protocol types.
-- Update documentation when adding or renaming protocol messages.
+- protocol message は実装詳細ではなく境界として扱います。
+- Request、Response、Event の payload は、versioning と serialization を意識して設計します。
+- UI 固有または CEF 固有の前提を protocol type に漏らさないでください。
+- protocol message を追加または改名する場合は、ドキュメントも更新してください。
 
-### C++ / macOS / CEF Host
+### C++ / macOS / CEF ホスト
 
-- Use C++20.
-- Keep the host thin: render, execute host commands, forward CEF callbacks, report results.
-- Do not reintroduce a second logical state store in C++.
-- Follow CEF lifetime and threading rules carefully.
-- Format with `clang-format` and keep Clang-Tidy / cppcheck output clean where practical.
-- Treat `fubuki://` scheme handlers as a security boundary, not only as routing code.
-- Do not vendor CEF binaries into the repository.
+- C++20 を使用します。
+- ホストは薄く保ちます。描画、host command の実行、CEF callback の転送、結果報告を担当します。
+- C++ 側に二重の論理状態 store を作らないでください。
+- CEF の lifetime と threading のルールを慎重に扱います。
+- `clang-format` で整形し、Clang-Tidy / cppcheck の指摘は実質的な問題であれば対応してください。
+- `fubuki://` scheme handler は単なるルーティングではなく、セキュリティ境界として扱います。
+- CEF バイナリをリポジトリに vendoring しないでください。
 
 ### SolidJS UI
 
-- Treat the UI as a protocol client.
-- Use Solid's reactive primitives intentionally; avoid hiding state mutations in unrelated components.
-- Avoid `any` unless there is a clear boundary reason.
-- Keep browser operations routed through the bridge layer.
-- Use Tailwind CSS for styling.
-- Use Vitest for state, bridge, and component behavior that can be tested without a native host.
+- UI は protocol client として扱います。
+- Solid の reactive primitive を意図的に使い、関係のない component に状態変更を隠さないでください。
+- 明確な境界上の理由がない限り、`any` は避けます。
+- ブラウザ操作は bridge layer を通してください。
+- スタイリングには Tailwind CSS を使います。
+- ネイティブホストなしで検証できる state、bridge、component の挙動には Vitest を使います。
 
-### Persistence
+### 永続化
 
-- Browser-owned data should go through the Frost Store layer.
-- Migrations must be deterministic and safe to rerun.
-- Avoid storing private-window state in normal app persistence.
-- Be conservative with destructive data-clearing behavior and document limitations.
+- ブラウザ所有データは Frost Store layer を通してください。
+- migration は決定的で、再実行しても安全な形にします。
+- private window の状態を通常の app persistence に保存しないでください。
+- 破壊的なデータ削除は保守的に扱い、制限事項をドキュメント化してください。
 
-### External Automation
+### 外部自動操作
 
-External automation should connect through declared capabilities and auditable command paths. Do not add ad-hoc automation shortcuts that bypass capability checks, rate limiting, or audit events.
+外部自動操作は、宣言された capability と監査可能な command path を通して接続してください。capability check、rate limiting、audit event を迂回する ad-hoc な自動操作ショートカットは追加しないでください。
 
-## File Map
+## ファイル構成
 
-| Path | Purpose |
+| パス | 用途 |
 |---|---|
-| `crates/frost-protocol/` | Request, response, event, and host boundary schemas |
-| `crates/frost-core/` | Browser state and operations core |
-| `crates/frost-store/` | SQLite persistence layer |
-| `crates/frost-engine-api/` | Engine adapter boundary |
+| `crates/frost-protocol/` | Request、Response、Event、Host 境界の schema |
+| `crates/frost-core/` | ブラウザ状態と操作の core |
+| `crates/frost-store/` | SQLite 永続化 layer |
+| `crates/frost-engine-api/` | Engine adapter 境界 |
 | `crates/frost-ffi/` | Rust-to-C FFI layer |
-| `native/macos-cef-host/` | macOS CEF host project files |
-| `native/src/` | Native host implementation |
-| `native/tests/` | Native unit tests |
-| `ui/src/` | SolidJS browser UI |
+| `native/macos-cef-host/` | macOS CEF host の project file |
+| `native/src/` | ネイティブホスト実装 |
+| `native/tests/` | ネイティブ単体テスト |
+| `ui/src/` | SolidJS ブラウザ UI |
 | `ui/src/bridge/` | Frost Protocol client bridge |
-| `docs/` | Architecture, protocol, command, event, and limitation docs |
-| `scripts/` | Bootstrap, build, CEF, and cleanup scripts |
+| `docs/` | アーキテクチャ、protocol、command、event、制限事項のドキュメント |
+| `scripts/` | bootstrap、build、CEF、cleanup 用スクリプト |
 
-## Testing Policy
+## テスト方針
 
-Add or update tests when changing behavior.
+挙動を変更する場合は、テストを追加または更新してください。
 
-- New engine behavior should have Rust tests.
-- Protocol changes should cover serialization and expected request / response behavior.
-- UI changes should have Vitest coverage where practical.
-- Native host logic should use native unit tests when it can be tested without launching the full app.
-- Bug fixes should include a regression test unless the behavior is not reasonably testable in the current structure.
+- 新しいエンジン挙動には Rust テストを追加します。
+- protocol 変更では、serialization と期待される Request / Response の挙動を確認します。
+- UI 変更には、可能な範囲で Vitest の coverage を追加します。
+- フルアプリを起動せずに検証できるネイティブホストロジックには、ネイティブ単体テストを使います。
+- バグ修正には、現在の構造で合理的に難しい場合を除き、回帰テストを追加します。
 
-## Documentation Policy
+## ドキュメント方針
 
-Update documentation when a change affects:
+以下に影響する変更では、ドキュメントを更新してください。
 
-- setup or build commands
-- architecture or layer ownership
-- Frost Protocol, HostCommand, or HostEvent contracts
-- internal pages or browser-owned surfaces
-- known limitations
-- security-relevant behavior
+- セットアップまたはビルドコマンド
+- アーキテクチャまたはレイヤー所有権
+- Frost Protocol、HostCommand、HostEvent の契約
+- 内部ページまたはブラウザ所有の画面
+- 既知の制限
+- セキュリティに関係する挙動
 
-Do not make README claims broader than the implementation. If the implementation is partial, say that it is partial.
+README では、実装より広いことを主張しないでください。実装が部分的であれば、部分的であると明記してください。
 
-## Issues
+## Issue
 
-When filing a bug, include:
+バグを報告する場合は、以下を含めてください。
 
-- reproduction steps
-- expected behavior
-- actual behavior
-- macOS version and hardware
-- branch or commit SHA
-- logs, screenshots, or recordings when useful
+- 再現手順
+- 期待される挙動
+- 実際の挙動
+- macOS バージョンとハードウェア
+- ブランチまたは commit SHA
+- 有用なログ、スクリーンショット、録画
 
-For feature requests, include:
+機能要望では、以下を含めてください。
 
-- motivation
-- proposed behavior
-- affected layers
-- compatibility or security concerns
-- what can remain out of scope
+- 動機
+- 提案する挙動
+- 影響するレイヤー
+- 互換性またはセキュリティ上の懸念
+- スコープ外にできる範囲
 
-## Security Notes
+## セキュリティメモ
 
-This project contains browser-adjacent code. Treat boundaries as security-relevant even in the current MVP scope.
+このプロジェクトはブラウザに近いコードを含みます。現在の MVP スコープでも、境界はセキュリティ上重要なものとして扱ってください。
 
-- Do not expose privileged operations through ordinary page navigation.
-- Keep `fubuki://app/` and internal pages separated from arbitrary web content.
-- Avoid adding broad host capabilities without capability checks and auditability.
-- Document security limitations instead of presenting them as solved.
+- privileged operation を通常の page navigation から露出しないでください。
+- `fubuki://app/` と内部ページは、任意の Web content から分離してください。
+- capability check と auditability なしに、広い host capability を追加しないでください。
+- セキュリティ上の制限を、解決済みのように書かず、制限事項として記録してください。
 
-## Documentation
+## ドキュメント
 
-- [Project Overview](README.md)
-- [Architecture](docs/architecture.md)
-- [FrostEngine Plan](docs/frost-engine-plan.md)
-- [Bridge API](docs/bridge-api.md)
-- [Commands](docs/commands.md)
-- [Events](docs/events.md)
-- [Internal Pages](docs/internal-pages.md)
-- [Known Limitations](docs/known-limitations.md)
+- [プロジェクト概要](README.md)
+- [アーキテクチャ](docs/architecture.md)
+- [FrostEngine 計画](docs/frost-engine-plan.md)
+- [ブリッジ API](docs/bridge-api.md)
+- [コマンド定義](docs/commands.md)
+- [イベント定義](docs/events.md)
+- [内部ページ](docs/internal-pages.md)
+- [既知の制限](docs/known-limitations.md)
 
-## License
+## ライセンス
 
-By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
+貢献された内容は、[MIT License](LICENSE) の下で配布されることに同意したものとみなします。
