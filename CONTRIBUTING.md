@@ -8,6 +8,30 @@ Fubuki Browser Alpha は、macOS ネイティブホスト、CEF、Rust 製 Frost
 
 `Alpha` はプロダクト名・コードネームであり、リリース段階としての「アルファ版」を意味しません。Issue、PR、ドキュメントで成熟度を説明する場合は、必要に応じて `MVP`、`experimental`、`not production-ready` など、実態に近い表現を使ってください。
 
+## Contribution Scope / 貢献できること
+
+Contributions are welcome, but architecture comes first.
+
+以下のような貢献を歓迎します。
+
+- バグ修正
+- テスト追加
+- ドキュメント改善
+- UI の改善
+- Frost Protocol の整理
+- FrostEngine の設計改善
+- CEF / macOS Host の安定化
+- CI、lint、format、audit まわりの改善
+- 既知の制限を明確にする Issue / PR
+
+一方で、以下のような変更は慎重に扱います。
+
+- UI にブラウザ状態の source of truth を持たせる変更
+- C++ ホスト側に二重の論理状態 store を作る変更
+- Frost Protocol を迂回するショートカット
+- capability check や audit event を避ける外部自動操作
+- セキュリティ上の制限を解決済みのように見せる変更
+
 ## Development / 開発環境
 
 ### Requirements / 必要環境
@@ -141,12 +165,12 @@ CEF / macOS Host (C++20)
 feat(protocol): add tab duplicate request
 fix(native): reject destructive settings GET navigation
 docs(architecture): clarify host state ownership
-deps(ui): update Tailwind CSS
+deps/ui: update Tailwind CSS
 ```
 
 ## Pull Requests / プルリクエスト
 
-プルリクエストは、正確にレビューできる大きさにしてください。無関係な変更は分けます。
+Pull requests should be small, reviewable, and honest about risk.
 
 PR を作成する前に、以下を確認してください。
 
@@ -182,6 +206,19 @@ A good PR includes:
 ```
 
 このチェックリストは目安です。実際に実行していないコマンドを、実行済みとして記載しないでください。
+
+## Review Standard / レビュー基準
+
+レビューでは、単に動くかどうかだけではなく、以下を確認します。
+
+- レイヤー責務が崩れていないか
+- UI、Engine、Host の境界が明示的か
+- protocol change が型とドキュメントに反映されているか
+- private window、download、history、settings などの永続化影響が説明されているか
+- security boundary を弱めていないか
+- テストまたは検証方法が十分か
+
+議論が必要な変更は歓迎します。ただし、大きな設計変更は Issue や draft PR で先に方向性を確認してください。
 
 ## Local Checks / ローカルチェック
 
