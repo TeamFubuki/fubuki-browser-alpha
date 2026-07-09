@@ -40,6 +40,19 @@ pub enum Event {
     PermissionChanged { origin: String, permission: String },
     #[serde(rename = "host.synced")]
     HostSynced,
+    #[serde(rename = "external.audit")]
+    ExternalAudit {
+        command_id: String,
+        capability: crate::ExternalCapability,
+        allowed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "external.rateLimited")]
+    ExternalRateLimited {
+        command_id: String,
+        retry_after_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -87,6 +100,35 @@ pub struct SettingChanged {
 
 impl EventEnvelope {
     pub fn new(event: Event) -> Self {
+        Self {
+            version: crate::PROTOCOL_VERSION,
+            event,
+        }
+    }
+
+    /// Wraps an external automation event into an engine event envelope so it
+    /// can be delivered over the same event channel as internal events.
+    pub fn from_external(external: crate::ExternalEventEnvelope) -> Self {
+        let event = match external.event {
+            crate::ExternalEvent::Audit {
+                command_id,
+                capability,
+                allowed,
+                reason,
+            } => Event::ExternalAudit {
+                command_id,
+                capability,
+                allowed,
+                reason,
+            },
+            crate::ExternalEvent::RateLimited {
+                command_id,
+                retry_after_ms,
+            } => Event::ExternalRateLimited {
+                command_id,
+                retry_after_ms,
+            },
+        };
         Self {
             version: crate::PROTOCOL_VERSION,
             event,

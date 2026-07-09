@@ -60,11 +60,79 @@ bool IsFubukiInternalUrl(const std::string& url) {
   return StartsWith(url, "fubuki://");
 }
 
-std::string BrowserAppearance(BrowserWindow* window) {
+std::string DecodeFormValue(const std::string &value) {
+  return CefURIDecode(value, true,
+                      static_cast<cef_uri_unescape_rule_t>(
+                          UU_SPACES | UU_PATH_SEPARATORS |
+                          UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+                          UU_REPLACE_PLUS_WITH_SPACE))
+      .ToString();
+}
+
+std::string FormParam(const std::string &encoded, const std::string &key) {
+  size_t start = 0;
+  while (start <= encoded.size()) {
+    const size_t end = encoded.find('&', start);
+    const std::string pair =
+        encoded.substr(start, end == std::string::npos ? std::string::npos
+                                                       : end - start);
+    const size_t equals = pair.find('=');
+    const std::string name =
+        equals == std::string::npos ? pair : pair.substr(0, equals);
+    if (DecodeFormValue(name) == key) {
+      const std::string value =
+          equals == std::string::npos ? "" : pair.substr(equals + 1);
+      return DecodeFormValue(value);
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return "";
+}
+
+std::string QueryString(const std::string &url) {
+  const size_t queryStart = url.find('?');
+  return queryStart == std::string::npos ? "" : url.substr(queryStart + 1);
+}
+
+bool IsDestructiveSettingsAction(const std::string &key) {
+  return key == "removeBookmark" || key == "removeHistory" ||
+         key == "removeDownload" || key == "openDownload" ||
+         key == "revealDownload" || key == "openDevTools" ||
+         key == "clearData" || key == "clearHistoryRange" ||
+         key == "resetSetting";
+}
+
+std::string PostBody(CefRefPtr<CefRequest> request) {
+  if (!request || !request->GetPostData()) {
+    return "";
+  }
+  std::vector<CefRefPtr<CefPostDataElement>> elements;
+  request->GetPostData()->GetElements(elements);
+  std::string body;
+  for (auto element : elements) {
+    if (!element || element->GetType() != PDE_TYPE_BYTES) {
+      continue;
+    }
+    const size_t size = element->GetBytesCount();
+    if (size == 0) {
+      continue;
+    }
+    const size_t offset = body.size();
+    body.resize(offset + size);
+    element->GetBytes(size, body.data() + offset);
+  }
+  return body;
+}
+
+std::string BrowserAppearance(BrowserWindow *window) {
   if (!window) {
     return "system";
   }
-  const std::string appearance = window->Store().Settings()->GetString("appearance");
+  const std::string appearance =
+      window->Store().GetSetting("appearance");
   if (appearance == "light" || appearance == "dark") {
     return appearance;
   }
@@ -121,7 +189,7 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
   const std::string sourceUrl = frame ? frame->GetURL().ToString() : "";
   if (!user_gesture || IsFubukiInternalUrl(sourceUrl)) {
     if (!window_->IsPrivate()) {
-      window_->Store().Log(
+      window_->Store().AddLog(
           "info", "Blocked popup from " + (sourceUrl.empty() ? "unknown source" : sourceUrl));
     }
     return true;
@@ -132,7 +200,7 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
       return true;
     }
     if (!window_->IsPrivate()) {
-      window_->Store().Log("info", "Opened blank popup as pending tab: " + popupTabId);
+      window_->Store().AddLog("info", "Opened blank popup as pending tab: " + popupTabId);
     }
     windowInfo = window_->PopupWindowInfo();
     client = new FubukiClient(window_, popupTabId, false);
@@ -160,7 +228,7 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
     return false;
   }
   if (!window_->IsPrivate()) {
-    window_->Store().Log("info", "Opened popup in new tab: " + url);
+    window_->Store().AddLog("info", "Opened popup in new tab: " + url);
   }
   const std::string windowId = window_->WindowId();
   CefPostTask(TID_UI, base::BindOnce(
@@ -293,7 +361,7 @@ bool FubukiClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownload
   }
   const std::string path = window_->DownloadPathFor(suggested_name.ToString());
   const bool askBeforeDownload =
-      window_->Store().Settings()->GetString("askBeforeDownload") == "on";
+      window_->Store().GetSetting("askBeforeDownload") == "on";
   window_->OnDownloadStarted(std::to_string(download_item->GetId()),
                              download_item->GetURL().ToString(), path);
   callback->Continue(path, askBeforeDownload);
@@ -350,7 +418,19 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
         !IsTrustedSettingsActionSource(frame->GetURL().ToString())) {
       return true;
     }
-    window_->HandleSettingsUrl(tabId_, url);
+    const std::string method = request->GetMethod().ToString();
+    const std::string query =
+        method == "POST" ? PostBody(request) : QueryString(url);
+    const std::string key = FormParam(query, "key");
+    if (method != "POST" && IsDestructiveSettingsAction(key)) {
+      if (!window_->IsPrivate()) {
+        window_->Store().AddLog("warning",
+                             "Blocked destructive settings action over GET: " +
+                                 key);
+      }
+      return true;
+    }
+    window_->HandleSettingsUrl(tabId_, "fubuki://settings/set?" + query);
     return true;
   }
   if (StartsWith(url, "fubuki://newtab/search")) {
@@ -376,7 +456,7 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
   }
 
   if (window_ && !window_->IsPrivate()) {
-    window_->Store().Log("info", "Permission denied for " + requesting_origin.ToString() + " (" +
+    window_->Store().AddLog("info", "Permission denied for " + requesting_origin.ToString() + " (" +
                                      std::to_string(requested_permissions) + ")");
   }
   callback->Continue(CEF_PERMISSION_RESULT_DENY);

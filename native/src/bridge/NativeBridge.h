@@ -29,9 +29,14 @@ public:
                              CefRefPtr<CefDictionaryValue> params);
   void EmitToUi(const std::string &eventName,
                 CefRefPtr<CefDictionaryValue> payload);
-  void SyncFrostFromHost();
-  std::string GetStateJson() const;
   CefRefPtr<CefDictionaryValue> TabToDictionary(const Tab &tab) const;
+  // Host command channel fed by FrostEngine. Returns true and fills
+  // |commandJson| when a pending host command is available.
+  bool PollHostCommandJson(std::string &commandJson);
+  // Pushes a host command result envelope back to FrostEngine.
+  bool PushHostCommandResultJson(const std::string &resultJson);
+  // Pushes a host event envelope back to FrostEngine.
+  bool PushHostEventJson(const std::string &eventJson);
 
 private:
   using MethodHandler =
@@ -45,8 +50,6 @@ private:
   CefRefPtr<CefValue> HostBackedFrostInvoke(
       const std::string &method, CefRefPtr<CefDictionaryValue> params,
       const std::function<bool()> &hostOperation);
-  CefRefPtr<CefValue> StateValue() const;
-  CefRefPtr<CefValue> FrostStateValue() const;
   CefRefPtr<CefDictionaryValue> WindowToFrostDictionary(
       const BrowserWindow &window) const;
   std::string WriteValue(CefRefPtr<CefValue> value) const;

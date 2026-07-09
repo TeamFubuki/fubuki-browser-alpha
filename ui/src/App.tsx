@@ -118,7 +118,7 @@ export default function App() {
   createEffect(() => {
     const appearance = browserState.settings.appearance || 'system';
     const root = document.documentElement;
-    
+
     root.dataset.theme =
       appearance === 'dark' || (appearance === 'system' && systemDark())
         ? 'dark'

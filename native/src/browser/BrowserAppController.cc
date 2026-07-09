@@ -5,6 +5,7 @@
 #include "browser/BrowserWindow.h"
 #include "include/base/cef_callback.h"
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 
@@ -24,17 +25,17 @@ ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
 }  // namespace
 
 BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
-    : profilePath_(std::move(profilePath)), store_(profilePath_) {
-  store_.Load();
-  store_.Log("info", "BrowserAppController initialized");
+    : profilePath_(std::move(profilePath)),
+      engine_(profilePath_.string() + "/frost-engine.sqlite3"),
+      store_(profilePath_, engine_.RawHandle()) {
+  store_.AddLog("info", "BrowserAppController initialized");
 }
 
 BrowserAppController::~BrowserAppController() = default;
 
 void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
-  const std::string startupBehavior =
-      store_.Settings()->GetString("startupBehavior");
+  const std::string startupBehavior = store_.GetSetting("startupBehavior");
   bool restored = false;
   if (startupBehavior == "restore") {
     restoring_ = true;
@@ -49,6 +50,100 @@ void BrowserAppController::Start() {
   }
   if (!restored) {
     NewWindow(false, nullptr);
+  }
+  StartHostCommandPoller();
+}
+
+namespace {
+
+// Self-rescheduling host command poller. Runs on the CEF UI thread and drains
+// FrostEngine HostCommands at a fixed cadence. The poller verifies the
+// controller is still the current instance before rescheduling, preventing a
+// use-after-free if the controller is destroyed between ticks.
+void PollHostCommands(BrowserAppController *app) {
+  if (app && app == GetBrowserAppController()) {
+    app->DispatchHostCommands();
+    CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, app), 16);
+  }
+}
+
+// Builds a HostCommandResult JSON envelope for the given command id.
+std::string HostCommandResultJson(const std::string &commandId, bool ok,
+                                  const std::string &error) {
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("commandId", commandId);
+  root->SetBool("ok", ok);
+  if (!ok) {
+    root->SetString("error", error);
+  }
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
+}
+
+}  // namespace
+
+void BrowserAppController::StartHostCommandPoller() {
+  CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, this), 16);
+}
+
+void BrowserAppController::DispatchHostCommands() {
+  for (const auto &context : windows_) {
+    BrowserWindow *window = context->window.get();
+    if (!window) {
+      continue;
+    }
+    NativeBridge *bridge = window->Bridge();
+    if (!bridge) {
+      continue;
+    }
+    std::string commandJson;
+    while (bridge->PollHostCommandJson(commandJson)) {
+      if (commandJson.empty()) {
+        continue;
+      }
+      CefRefPtr<CefValue> value =
+          CefParseJSON(commandJson, JSON_PARSER_ALLOW_TRAILING_COMMAS);
+      if (!value || value->GetType() != VTYPE_DICTIONARY) {
+        continue;
+      }
+      CefRefPtr<CefDictionaryValue> envelope = value->GetDictionary();
+      const std::string command = envelope->HasKey("command")
+                                      ? envelope->GetString("command").ToString()
+                                      : "";
+      const std::string commandId =
+          envelope->HasKey("id") ? envelope->GetString("id").ToString() : "";
+
+      if (command == "window.create") {
+        CefRefPtr<CefDictionaryValue> payload =
+            envelope->HasKey("payload")
+                ? envelope->GetDictionary("payload")
+                : CefDictionaryValue::Create();
+        const bool isPrivate =
+            payload->HasKey("isPrivate") && payload->GetBool("isPrivate");
+        const bool ok = NewWindow(isPrivate, nullptr) != nullptr;
+        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
+                                                                ok ? "" : "failed to create window"));
+      } else if (command == "window.close") {
+        CefRefPtr<CefDictionaryValue> payload =
+            envelope->HasKey("payload")
+                ? envelope->GetDictionary("payload")
+                : CefDictionaryValue::Create();
+        const std::string targetWindowId =
+            payload->HasKey("windowId") ? payload->GetString("windowId").ToString() : "";
+        const bool ok = (targetWindowId == window->WindowId())
+                            ? window->CloseWindow()
+                            : true;
+        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
+                                                                ok ? "" : "failed to close window"));
+      } else {
+        // Page/overlay/permission commands are owned by the window itself.
+        // Forward the already-polled command instead of re-draining the queue,
+        // so the specific command we just read is not discarded.
+        window->ExecuteHostCommand(commandJson);
+      }
+    }
   }
 }
 
@@ -191,7 +286,7 @@ std::string BrowserAppController::NextWindowId() {
 
 CefRefPtr<CefListValue> BrowserAppController::RestoredWindows() const {
   auto empty = CefListValue::Create();
-  const std::string json = store_.Settings()->GetString("sessionJson");
+  const std::string json = store_.GetSetting("sessionJson");
   if (json.empty()) {
     return empty;
   }

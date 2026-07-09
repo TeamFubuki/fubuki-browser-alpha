@@ -55,6 +55,14 @@ impl WindowService {
         self.active_window_id.as_deref()
     }
 
+    pub fn set_active_window(&mut self, window_id: &str) -> bool {
+        if self.windows.iter().any(|w| w.id == window_id) {
+            self.active_window_id = Some(window_id.to_owned());
+            return true;
+        }
+        false
+    }
+
     pub fn attach_tab(&mut self, window_id: &str, tab_id: &str, activate: bool) {
         if let Some(window) = self.windows.iter_mut().find(|w| w.id == window_id) {
             if !window.tab_ids.iter().any(|id| id == tab_id) {

@@ -256,4 +256,59 @@ impl TabService {
         tab.is_loading = true;
         true
     }
+
+    pub fn set_title(&mut self, tab_id: &str, title: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.title = title.to_owned();
+        true
+    }
+
+    pub fn set_url(&mut self, tab_id: &str, url: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.url = url.to_owned();
+        true
+    }
+
+    pub fn set_favicon_url(&mut self, tab_id: &str, favicon_url: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.favicon_url = favicon_url.to_owned();
+        true
+    }
+
+    pub fn set_loading(&mut self, tab_id: &str, is_loading: bool) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.is_loading = is_loading;
+        true
+    }
+
+    pub fn set_navigation_state(
+        &mut self,
+        tab_id: &str,
+        can_go_back: bool,
+        can_go_forward: bool,
+    ) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.can_go_back = can_go_back;
+        tab.can_go_forward = can_go_forward;
+        true
+    }
+
+    pub fn set_error_text(&mut self, tab_id: &str, error_text: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.error_text = error_text.to_owned();
+        tab.is_loading = false;
+        true
+    }
 }

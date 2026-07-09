@@ -1,21 +1,25 @@
 mod bookmark_service;
 mod download_service;
+mod external_router;
 mod history_service;
 mod settings_service;
 mod tab_service;
 mod window_service;
 
+pub use external_router::{ExternalPolicy, ExternalResponse};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
-use frost_engine_api::{EngineAdapter, NoopEngineAdapter};
+use frost_engine_api::{EngineAdapter, EngineError, EngineResult, NoopEngineAdapter};
 use frost_protocol::{
-    BrowserCommand, Event, EventEnvelope, ProtocolRequest, ProtocolResponse, Request, Response,
-    SettingChanged, TabActivated, TabClosed, TabPatch,
+    BrowserCommand, Event, EventEnvelope, HostCommand, HostCommandEnvelope,
+    HostCommandResultEnvelope, HostEvent, HostEventEnvelope, ProtocolRequest, ProtocolResponse,
+    Request, Response, SettingChanged, TabActivated, TabClosed, TabPatch,
 };
 use frost_store::{
-    BookmarkRepository, DownloadRepository, HistoryRepository, PermissionRepository,
-    SettingsRepository,
+    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRepository,
+    PermissionRepository, SessionRepository, SettingsRepository,
 };
 use thiserror::Error;
 
@@ -33,6 +37,83 @@ pub enum CoreError {
 }
 
 pub type CoreResult<T> = Result<T, CoreError>;
+
+pub struct HostCommandAdapter {
+    tx: Sender<HostCommandEnvelope>,
+}
+
+impl HostCommandAdapter {
+    pub fn new(tx: Sender<HostCommandEnvelope>) -> Self {
+        Self { tx }
+    }
+
+    fn send(&self, command: HostCommand) -> EngineResult<()> {
+        let id = format!("host-command-{}", uuid::Uuid::new_v4());
+        self.tx
+            .send(HostCommandEnvelope::new(id, command))
+            .map_err(|e| EngineError::Message(e.to_string()))
+    }
+}
+
+impl EngineAdapter for HostCommandAdapter {
+    fn create_page(&mut self, tab_id: &str, window_id: &str, url: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageCreate {
+            tab_id: tab_id.to_owned(),
+            window_id: window_id.to_owned(),
+            url: url.to_owned(),
+        })
+    }
+
+    fn close_page(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageClose {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageNavigate {
+            tab_id: tab_id.to_owned(),
+            url: input.to_owned(),
+        })
+    }
+
+    fn reload(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageReload {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn stop(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageStop {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn go_back(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageGoBack {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn go_forward(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageGoForward {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<()> {
+        self.send(HostCommand::WindowCreate {
+            window_id: window_id.to_owned(),
+            is_private,
+        })
+    }
+
+    fn close_window(&mut self, window_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::WindowClose {
+            window_id: window_id.to_owned(),
+        })
+    }
+}
 
 pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     adapter: A,
@@ -64,7 +145,10 @@ where
         + BookmarkRepository
         + HistoryRepository
         + DownloadRepository
-        + PermissionRepository,
+        + PermissionRepository
+        + LogRepository
+        + SessionRepository
+        + ClearRepository,
 {
     pub fn with_adapter_and_settings(adapter: A, repository: S) -> Self {
         let mut windows = WindowService::new();
@@ -128,9 +212,11 @@ where
                     active,
                 );
                 self.windows.attach_tab(&window_id, &tab.id, true);
-                self.adapter
-                    .create_page(&tab.id, &window_id, &tab.url)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_page(&tab.id, &window_id, &tab.url) {
+                    self.windows.detach_tab(&tab.id);
+                    self.tabs.remove_tab(&tab.id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
@@ -175,6 +261,11 @@ where
                     return Ok(Response::Bool(false));
                 };
                 self.windows.attach_tab(&tab.window_id, &tab.id, true);
+                if let Err(e) = self.adapter.create_page(&tab.id, &tab.window_id, &tab.url) {
+                    self.windows.detach_tab(&tab.id);
+                    self.tabs.remove_tab(&tab.id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
@@ -187,6 +278,14 @@ where
                 let created = tab.clone();
                 self.tabs.upsert_tab(tab);
                 self.windows.attach_tab(&window_id, &created.id, true);
+                if let Err(e) = self
+                    .adapter
+                    .create_page(&created.id, &window_id, &created.url)
+                {
+                    self.windows.detach_tab(&created.id);
+                    self.tabs.remove_tab(&created.id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 self.emit(Event::TabCreated(created));
                 Ok(Response::Bool(true))
             }
@@ -228,9 +327,18 @@ where
                 if !self.tabs.contains(&tab_id) {
                     return Ok(Response::Bool(false));
                 }
+                let previous_window = self.tabs.get_tab(&tab_id).map(|tab| tab.window_id.clone());
                 let window_id = self.windows.create_window(false);
                 self.tabs.move_tab_to_window(&tab_id, &window_id);
                 self.windows.move_tab_to_window(&tab_id, &window_id);
+                if let Err(e) = self.adapter.create_window(&window_id, false) {
+                    self.tabs
+                        .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
+                    self.windows
+                        .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
+                    self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -259,6 +367,9 @@ where
             Request::TabsStop { tab_id } => {
                 let ok = self.tabs.stop_tab(&tab_id);
                 if ok {
+                    self.adapter
+                        .stop(&tab_id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_loading: Some(false),
@@ -287,9 +398,10 @@ where
             Request::WindowsList => Ok(Response::WindowsList(self.windows.list())),
             Request::WindowsCreate => {
                 let window_id = self.windows.create_window(false);
-                self.adapter
-                    .create_window(&window_id)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_window(&window_id, false) {
+                    self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -297,9 +409,10 @@ where
             }
             Request::WindowsCreatePrivate => {
                 let window_id = self.windows.create_window(true);
-                self.adapter
-                    .create_window(&window_id)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                if let Err(e) = self.adapter.create_window(&window_id, true) {
+                    self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -440,13 +553,16 @@ where
             }
             Request::DataClear { target } => {
                 let target = target.unwrap_or_else(|| "all".into());
+                if target == "bookmarks" || target == "all" {
+                    let _ = self.repository.clear_bookmarks();
+                    self.emit(Event::BookmarkChanged { url: String::new() });
+                }
                 if target == "history" || target == "all" {
                     let _ = HistoryService::clear_range(&self.repository, "all");
                     self.emit(Event::HistoryChanged { url: None });
                 }
                 if target == "downloads" || target == "all" {
-                    // DownloadRepository intentionally has targeted removal;
-                    // clearing all remains host-backed until a clear trait is added.
+                    let _ = self.repository.clear_downloads();
                     self.emit(Event::DownloadChanged {
                         url: None,
                         path: None,
@@ -548,6 +664,165 @@ where
                 }
             }
         }
+    }
+
+    pub fn process_host_event(&mut self, envelope: HostEventEnvelope) -> CoreResult<()> {
+        match envelope.event {
+            HostEvent::PageCreated {
+                tab_id,
+                window_id,
+                url,
+            } => {
+                if let Some(mut tab) = self.tabs.get_tab(&tab_id) {
+                    tab.window_id = window_id.clone();
+                    tab.url = url;
+                    self.tabs.upsert_tab(tab);
+                    self.windows.attach_tab(&window_id, &tab_id, false);
+                }
+                Ok(())
+            }
+            HostEvent::PageClosed { tab_id } => {
+                let closed = self.tabs.close_tab(&tab_id);
+                if closed {
+                    self.windows.detach_tab(&tab_id);
+                    self.emit(Event::TabClosed(TabClosed { tab_id }));
+                }
+                Ok(())
+            }
+            HostEvent::PageTitleChanged { tab_id, title } => {
+                if self.tabs.set_title(&tab_id, &title) {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        title: Some(title),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::PageUrlChanged { tab_id, url } => {
+                if self.tabs.set_url(&tab_id, &url) {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        url: Some(url),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::PageFaviconChanged {
+                tab_id,
+                favicon_url,
+            } => {
+                if self.tabs.set_favicon_url(&tab_id, &favicon_url) {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        favicon_url: Some(favicon_url),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::PageLoadingChanged { tab_id, is_loading } => {
+                if self.tabs.set_loading(&tab_id, is_loading) {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        is_loading: Some(is_loading),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::PageNavigationStateChanged {
+                tab_id,
+                can_go_back,
+                can_go_forward,
+            } => {
+                if self
+                    .tabs
+                    .set_navigation_state(&tab_id, can_go_back, can_go_forward)
+                {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        can_go_back: Some(can_go_back),
+                        can_go_forward: Some(can_go_forward),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::PageLoadFailed { tab_id, error_text } => {
+                if self.tabs.set_error_text(&tab_id, &error_text) {
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        error_text: Some(error_text),
+                        is_loading: Some(false),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::DownloadUpdated {
+                url,
+                path,
+                state,
+                percent,
+            } => {
+                self.repository
+                    .upsert_download(&url, &path, &state, percent)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::DownloadChanged {
+                    url: Some(url),
+                    path: Some(path),
+                });
+                Ok(())
+            }
+            HostEvent::PermissionChanged {
+                origin,
+                permission,
+                value,
+            } => {
+                self.repository
+                    .set_permission(&origin, &permission, &value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::PermissionChanged { origin, permission });
+                Ok(())
+            }
+            HostEvent::WindowFocused { window_id } => {
+                self.windows.set_active_window(&window_id);
+                Ok(())
+            }
+            HostEvent::WindowClosed { window_id } => {
+                if self.windows.close_window(&window_id) {
+                    let tab_ids: Vec<String> = self
+                        .tabs
+                        .list()
+                        .into_iter()
+                        .filter(|tab| tab.window_id == window_id)
+                        .map(|tab| tab.id)
+                        .collect();
+                    for tab_id in tab_ids {
+                        self.tabs.remove_tab(&tab_id);
+                        self.emit(Event::TabClosed(TabClosed { tab_id }));
+                    }
+                    self.emit(Event::WindowClosed { window_id });
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub fn process_host_command_result(
+        &mut self,
+        result: HostCommandResultEnvelope,
+    ) -> CoreResult<()> {
+        if result.ok {
+            return Ok(());
+        }
+        Err(CoreError::Message(format!(
+            "Host command {} failed: {}",
+            result.command_id,
+            result.error.unwrap_or_else(|| "unknown error".into())
+        )))
     }
 
     fn host_tab_action(&mut self, tab_id: &str, action: HostTabAction) -> CoreResult<Response> {
@@ -889,9 +1164,45 @@ impl PermissionRepository for InMemoryStore {
     }
 }
 
+impl frost_store::LogRepository for InMemoryStore {
+    fn add_log(&self, _level: &str, _message: &str) -> frost_store::StoreResult<()> {
+        Ok(())
+    }
+
+    fn list_logs(&self, _limit: usize) -> frost_store::StoreResult<Vec<frost_store::LogRecord>> {
+        Ok(Vec::new())
+    }
+
+    fn clear_logs(&self) -> frost_store::StoreResult<()> {
+        Ok(())
+    }
+}
+
+impl frost_store::SessionRepository for InMemoryStore {
+    fn get_session(&self) -> frost_store::StoreResult<Option<String>> {
+        Ok(None)
+    }
+
+    fn set_session(&self, _json: &str) -> frost_store::StoreResult<()> {
+        Ok(())
+    }
+}
+
+impl frost_store::ClearRepository for InMemoryStore {
+    fn clear_bookmarks(&self) -> frost_store::StoreResult<()> {
+        self.bookmarks.borrow_mut().clear();
+        Ok(())
+    }
+
+    fn clear_downloads(&self) -> frost_store::StoreResult<()> {
+        self.downloads.borrow_mut().clear();
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use frost_protocol::{Request, Response};
+    use frost_protocol::{HostCommand, HostEvent, HostEventEnvelope, Request, Response};
 
     use super::*;
 
@@ -930,6 +1241,85 @@ mod tests {
 
         let event = rx.try_recv().unwrap();
         assert!(matches!(event.event, Event::TabCreated(_)));
+    }
+
+    #[test]
+    fn emits_host_command_for_host_side_effects() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+
+        let response = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+        }));
+
+        assert_eq!(response.response, Response::Bool(true));
+        let command = host_rx.try_recv().unwrap();
+        assert!(matches!(
+            command.command,
+            HostCommand::PageCreate { url, .. } if url == "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn applies_host_page_events_to_core_state() {
+        let mut core = BrowserCore::new();
+        let create = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+        }));
+        assert!(create.ok);
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        let tab_id = state.tabs[0].id.clone();
+
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PageTitleChanged {
+            tab_id: tab_id.clone(),
+            title: "Example Domain".into(),
+        }))
+        .unwrap();
+
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(state.tabs[0].title, "Example Domain");
+        assert!(matches!(
+            core.recent_events().last().map(|event| &event.event),
+            Some(Event::TabUpdated(TabPatch { tab_id: updated, title: Some(title), .. }))
+                if updated == &tab_id && title == "Example Domain"
+        ));
+    }
+
+    #[test]
+    fn host_command_result_ok_is_noop() {
+        let mut core = BrowserCore::new();
+        let result = HostCommandResultEnvelope {
+            version: frost_protocol::PROTOCOL_VERSION,
+            command_id: "cmd-1".into(),
+            ok: true,
+            error: None,
+        };
+        assert!(core.process_host_command_result(result).is_ok());
+    }
+
+    #[test]
+    fn host_command_result_error_is_core_error() {
+        let mut core = BrowserCore::new();
+        let result = HostCommandResultEnvelope {
+            version: frost_protocol::PROTOCOL_VERSION,
+            command_id: "cmd-2".into(),
+            ok: false,
+            error: Some("host blew up".into()),
+        };
+        let err = core.process_host_command_result(result).unwrap_err();
+        assert!(err.to_string().contains("cmd-2"));
+        assert!(err.to_string().contains("host blew up"));
     }
 
     #[test]

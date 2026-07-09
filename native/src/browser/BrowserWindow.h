@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "bridge/NativeBridge.h"
-#include "browser/BrowserDataStore.h"
+#include "browser/FrostStore.h"
 #include "browser/TabManager.h"
 #include "commands/CommandRegistry.h"
 #include "events/EventBus.h"
@@ -34,12 +34,15 @@ class BrowserWindow {
 
   void Show(CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool CloseWindow();
-  bool CreateTab(const std::string& input, bool active);
-  std::string CreatePendingPopupTab(const std::string& url, bool active);
-  bool ActivateTab(const std::string& tabId);
-  bool CloseTab(const std::string& tabId);
-  bool PinTab(const std::string& tabId, bool pinned);
-  bool DuplicateTab(const std::string& tabId);
+  bool CreateTab(const std::string &input, bool active);
+  // Creates a tab whose id is owned by an external authority (FrostEngine).
+  bool CreateTabWithId(const std::string &input, const std::string &tabId,
+                       bool active);
+  std::string CreatePendingPopupTab(const std::string &url, bool active);
+  bool ActivateTab(const std::string &tabId);
+  bool CloseTab(const std::string &tabId);
+  bool PinTab(const std::string &tabId, bool pinned);
+  bool DuplicateTab(const std::string &tabId);
   bool ReopenClosedTab();
   bool CloseOtherTabs(const std::string& tabId);
   bool CloseTabsToRight(const std::string& tabId);
@@ -78,10 +81,19 @@ class BrowserWindow {
   bool SetPermission(const std::string& origin, const std::string& permission,
                      const std::string& value);
   bool SetLiveSidebarWidth(double width);
-  bool SetUiOverlayActive(bool active, double overlayWidth = 392.0, double overlayHeight = 560.0);
-  bool HandleSettingsUrl(const std::string& tabId, const std::string& url);
-  bool HandleNewTabSearchUrl(const std::string& tabId, const std::string& url);
-  std::string DownloadPathFor(const std::string& suggestedName) const;
+  bool SetUiOverlayActive(bool active, double overlayWidth = 392.0,
+                          double overlayHeight = 560.0);
+  bool HandleSettingsUrl(const std::string &tabId, const std::string &url);
+  bool HandleNewTabSearchUrl(const std::string &tabId, const std::string &url);
+  // Polls pending HostCommands from FrostEngine and executes them, routing
+  // host side effects (page/window I/O) back as HostEvents/results.
+  void PollAndExecuteHostCommands();
+  // Executes a single HostCommand JSON envelope. Returns true if the command
+  // was recognized and dispatched (regardless of host-side success).
+  bool ExecuteHostCommand(const std::string &commandJson);
+  // Pushes a HostEvent JSON envelope back to FrostEngine.
+  bool PushHostEventJson(const std::string &eventJson);
+  std::string DownloadPathFor(const std::string &suggestedName) const;
 
   void SetUiBrowser(CefRefPtr<CefBrowser> browser);
   void OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefBrowser> browser);
@@ -113,12 +125,8 @@ class BrowserWindow {
   const TabManager& Tabs() const {
     return tabManager_;
   }
-  BrowserDataStore& Store() {
-    return *dataStore_;
-  }
-  const BrowserDataStore& Store() const {
-    return *dataStore_;
-  }
+  FrostStore &Store();
+  const FrostStore &Store() const;
   BrowserAppController& App() {
     return app_;
   }
@@ -162,7 +170,6 @@ class BrowserWindow {
   EventBus& eventBus_;
   TabManager& tabManager_;
   CommandRegistry commands_;
-  BrowserDataStore* dataStore_ = nullptr;
   std::unique_ptr<NativeBridge> bridge_;
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;

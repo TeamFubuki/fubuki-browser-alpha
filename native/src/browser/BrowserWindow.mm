@@ -220,6 +220,14 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 
 namespace fubuki {
 
+FrostStore &BrowserWindow::Store() {
+  return app_.Store();
+}
+
+const FrostStore &BrowserWindow::Store() const {
+  return app_.Store();
+}
+
 namespace {
 
 constexpr CGFloat kNavHeight = 42.0;
@@ -360,13 +368,12 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
     : app_(app),
       eventBus_(app.Events()),
       tabManager_(tabManager),
-      dataStore_(&app.Store()),
       bridge_(std::make_unique<NativeBridge>(*this)),
       windowId_(std::move(windowId)),
       privateWindow_(privateWindow) {
   gActiveBrowserWindow = this;
   if (!privateWindow_) {
-    dataStore_->Log("info", "BrowserWindow initialized");
+    Store().AddLog("info", "BrowserWindow initialized");
   }
   if (privateWindow_) {
     CefRequestContextSettings settings;
@@ -413,12 +420,11 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
     }
   }
   if (!restored) {
-    const std::string startupBehavior = dataStore_->Settings()->GetString("startupBehavior");
-    const std::string homeUrl = dataStore_->Settings()->GetString("homeUrl").empty()
-                                    ? dataStore_->Settings()->GetString("homepage").ToString()
-                                    : dataStore_->Settings()->GetString("homeUrl").ToString();
-    std::string startUrl =
-        dataStore_->Settings()->GetString("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
+    const std::string startupBehavior = Store().GetSetting("startupBehavior");
+    const std::string homeUrl = Store().GetSetting("homeUrl").empty()
+                                    ? Store().GetSetting("homepage")
+                                    : Store().GetSetting("homeUrl");
+    std::string startUrl = Store().GetSetting("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
     if (startupBehavior == "homePage") {
       startUrl = homeUrl;
     }
@@ -436,10 +442,25 @@ bool BrowserWindow::CloseWindow() {
 }
 
 bool BrowserWindow::CreateTab(const std::string& input, bool active) {
-  const std::string url =
-      NormalizeNavigationInput(input, dataStore_->Settings()->GetString("searchEngine"),
-                               dataStore_->Settings()->GetString("customSearchUrl"));
+  const std::string url = NormalizeNavigationInput(input,
+                                                   Store().GetSetting("searchEngine"),
+                                                   Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active);
+  CreateTabBrowser(tab);
+  ResizeViews();
+  SetActiveContentView();
+  if (!privateWindow_) {
+    app_.PersistSession();
+  }
+  return true;
+}
+
+bool BrowserWindow::CreateTabWithId(const std::string& input,
+                                    const std::string& tabId, bool active) {
+  const std::string url = NormalizeNavigationInput(input,
+                                                   Store().GetSetting("searchEngine"),
+                                                   Store().GetSetting("customSearchUrl"));
+  Tab& tab = tabManager_.CreateTab(url, active, tabId);
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
@@ -594,9 +615,9 @@ bool BrowserWindow::Navigate(const std::string& tabId, const std::string& input)
   if (!tab || !tab->browser) {
     return false;
   }
-  tab->browser->GetMainFrame()->LoadURL(
-      NormalizeNavigationInput(input, dataStore_->Settings()->GetString("searchEngine"),
-                               dataStore_->Settings()->GetString("customSearchUrl")));
+  tab->browser->GetMainFrame()->LoadURL(NormalizeNavigationInput(input,
+                                                                  Store().GetSetting("searchEngine"),
+                                                                  Store().GetSetting("customSearchUrl")));
   return true;
 }
 
@@ -635,11 +656,11 @@ bool BrowserWindow::GoForward(const std::string& tabId) {
 bool BrowserWindow::GoHome() {
   Tab* tab = tabManager_.GetActiveTab();
   if (!tab) {
-    return CreateTab(dataStore_->Settings()->GetString("homeUrl"), true);
+    return CreateTab(Store().GetSetting("homeUrl"), true);
   }
-  const std::string home = dataStore_->Settings()->GetString("homeUrl").empty()
-                               ? dataStore_->Settings()->GetString("homepage").ToString()
-                               : dataStore_->Settings()->GetString("homeUrl").ToString();
+  const std::string home = Store().GetSetting("homeUrl").empty()
+                               ? Store().GetSetting("homepage")
+                               : Store().GetSetting("homeUrl");
   return Navigate(tab->id, home);
 }
 
@@ -744,7 +765,7 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
   }
   if (commandDown && (character == 'b' || character == 'B')) {
-    const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
+    const std::string current = Store().GetSetting("sidebarVisible");
     return SetSetting("sidebarVisible", current == "hide" ? "show" : "hide");
   }
   if (commandDown && (character == 'd' || character == 'D')) {
@@ -823,54 +844,47 @@ bool BrowserWindow::AddActiveBookmark() {
   if (!tab) {
     return false;
   }
-  const bool ok = dataStore_->AddBookmark(tab->title, tab->url, tab->faviconUrl);
-  dataStore_->Log("info", "Bookmark added: " + tab->url);
-  eventBus_.Publish(
-      {EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
+  const bool ok = Store().AddBookmark(tab->title, tab->url, tab->faviconUrl);
+  Store().AddLog("info", "Bookmark added: " + tab->url);
+  eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
-bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& url,
-                                 const std::string& faviconUrl) {
-  const bool ok = dataStore_->AddBookmark(title, url, faviconUrl);
+bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
+  const bool ok = Store().AddBookmark(title, url, faviconUrl);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
+  PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
 bool BrowserWindow::RemoveBookmark(const std::string& url) {
-  const bool ok = dataStore_->RemoveBookmark(url);
+  const bool ok = Store().RemoveBookmark(url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
+  PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
 bool BrowserWindow::RemoveHistory(const std::string& url) {
-  const bool ok = dataStore_->RemoveHistory(url);
+  const bool ok = Store().RemoveHistory(url);
   eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://history");
+  PageCache::Instance().Invalidate("fubuki://history");
   return ok;
 }
 
 bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& path) {
-  const bool ok = dataStore_->RemoveDownload(url, path);
-  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
-  eventBus_.Publish({EventType::DownloadChanged,
-                     "download.changed",
-                     {},
-                     windowId_,
-                     "",
-                     path.empty() ? url : path});
+  const bool ok = Store().RemoveDownload(url, path);
+  PageCache::Instance().Invalidate("fubuki://downloads");
+  eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path.empty() ? url : path});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
 bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
-  if (path.empty() || !dataStore_->HasDownloadPath(path) || !std::filesystem::exists(path)) {
+  if (path.empty() || !Store().HasDownloadPath(path) || !std::filesystem::exists(path)) {
     return false;
   }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
@@ -878,7 +892,7 @@ bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
 }
 
 bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
-  if (path.empty() || !dataStore_->HasDownloadPath(path) || !std::filesystem::exists(path)) {
+  if (path.empty() || !Store().HasDownloadPath(path) || !std::filesystem::exists(path)) {
     return false;
   }
   NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
@@ -889,13 +903,13 @@ bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
 bool BrowserWindow::ClearBrowsingData(const std::string& target) {
   bool ok = false;
   if (target == "bookmarks") {
-    ok = dataStore_->ClearBookmarks();
+    ok = Store().ClearBookmarks();
   } else if (target == "history") {
-    ok = dataStore_->ClearHistory();
+    ok = Store().ClearHistory();
   } else if (target == "downloads") {
-    ok = dataStore_->ClearDownloads();
+    ok = Store().ClearDownloads();
   } else if (target == "logs") {
-    ok = dataStore_->ClearLogs();
+    ok = Store().ClearLogs();
   } else if (target == "cookies" || target == "cache" || target == "siteData") {
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
@@ -920,11 +934,11 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     cookieManager->DeleteCookies("", "", nullptr);
     context->ClearHttpCache(nullptr);
-    ok = dataStore_->ClearHistory() && dataStore_->ClearDownloads() && dataStore_->ClearLogs();
+    ok = Store().ClearHistory() && Store().ClearDownloads() && Store().ClearLogs();
   }
   if (ok) {
     if (target != "logs" && target != "all") {
-      dataStore_->Log("info", "Browsing data cleared: " + target);
+      Store().AddLog("info", "Browsing data cleared: " + target);
     }
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
@@ -932,7 +946,7 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
 }
 
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
-  const bool ok = dataStore_->ClearHistoryRange(range);
+  const bool ok = Store().ClearHistoryRange(range);
   if (ok) {
     eventBus_.Publish(
         {EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
@@ -963,7 +977,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
     }
   }
-  dataStore_->SetSetting(key, savedValue);
+  Store().SetSetting(key, savedValue);
   if (key == "sidebarWidth") {
     liveSidebarWidth_ = 0.0;
   }
@@ -971,28 +985,27 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     UpdateContentFrame();
   }
   if (!privateWindow_) {
-    dataStore_->Log("info", "Setting updated: " + key);
+    Store().AddLog("info", "Setting updated: " + key);
   }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   if (!privateWindow_) {
     app_.PersistSession();
   }
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
 bool BrowserWindow::ResetSetting(const std::string& key) {
-  dataStore_->ResetSetting(key);
+  Store().ResetSetting(key);
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
-bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission,
-                                  const std::string& value) {
-  const bool ok = dataStore_->SetPermission(origin, permission, value);
+bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
+  const bool ok = Store().SetPermission(origin, permission, value);
   if (ok) {
     eventBus_.Publish(
         {EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
@@ -1084,8 +1097,187 @@ bool BrowserWindow::HandleNewTabSearchUrl(const std::string& tabId, const std::s
   return Navigate(tabId, query);
 }
 
+namespace {
+
+// Wraps a string as a JSON string value. CEF's JSON writer escapes it, so
+// values like tabId/url/title can never produce broken JSON.
+CefRefPtr<CefValue> JsonStringValue(const std::string& s) {
+  auto v = CefValue::Create();
+  v->SetString(s);
+  return v;
+}
+
+CefRefPtr<CefValue> JsonBoolValue(bool b) {
+  auto v = CefValue::Create();
+  v->SetBool(b);
+  return v;
+}
+
+CefRefPtr<CefValue> JsonIntValue(int n) {
+  auto v = CefValue::Create();
+  v->SetInt(n);
+  return v;
+}
+
+// Builds a HostCommandResult JSON envelope for the given command id. Values are
+// written through CEF's JSON writer so strings are always correctly escaped.
+std::string HostCommandResultJson(const std::string& commandId, bool ok,
+                                  const std::string& error) {
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("commandId", commandId);
+  root->SetBool("ok", ok);
+  if (!ok) {
+    root->SetString("error", error);
+  }
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
+}
+
+// Builds a HostEvent JSON envelope. Field values are passed as typed CefValue
+// handles so that strings are always correctly JSON-escaped (no hand-built
+// fragments that can produce broken JSON for tabId/url/etc.).
+std::string HostEventJson(const std::string& event,
+                          const std::map<std::string, CefRefPtr<CefValue>>& fields) {
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("event", event);
+  auto payload = CefDictionaryValue::Create();
+  for (const auto& kv : fields) {
+    payload->SetValue(kv.first, kv.second);
+  }
+  root->SetDictionary("payload", payload);
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
+}
+
+std::string JsonString(const CefRefPtr<CefDictionaryValue>& dict,
+                       const std::string& key, const std::string& fallback = "") {
+  return dict->HasKey(key) ? dict->GetString(key).ToString() : fallback;
+}
+
+bool JsonBool(const CefRefPtr<CefDictionaryValue>& dict, const std::string& key) {
+  return dict->HasKey(key) && dict->GetBool(key);
+}
+
+}  // namespace
+
+bool BrowserWindow::PushHostEventJson(const std::string& eventJson) {
+  return bridge_->PushHostEventJson(eventJson);
+}
+
+bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
+  CefRefPtr<CefValue> value = CefParseJSON(commandJson, JSON_PARSER_ALLOW_TRAILING_COMMAS);
+  if (!value || value->GetType() != VTYPE_DICTIONARY) {
+    return false;
+  }
+  CefRefPtr<CefDictionaryValue> envelope = value->GetDictionary();
+  const std::string commandId = JsonString(envelope, "id");
+  const std::string command = JsonString(envelope, "command");
+  CefRefPtr<CefDictionaryValue> payload =
+      envelope->HasKey("payload")
+          ? envelope->GetDictionary("payload")
+          : CefDictionaryValue::Create();
+
+  bool ok = false;
+  std::string error;
+  if (command == "page.create") {
+    const std::string tabId = JsonString(payload, "tabId");
+    const std::string url = JsonString(payload, "url");
+    ok = !tabId.empty() &&
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
+    if (ok) {
+      PushHostEventJson(HostEventJson("page.created",
+                                      {{ "tabId", JsonStringValue(tabId) },
+                                       { "windowId", JsonStringValue(windowId_) },
+                                       { "url", JsonStringValue(url) }}));
+    } else {
+      error = "failed to create page";
+    }
+  } else if (command == "page.close") {
+    ok = CloseTab(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.navigate") {
+    ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.reload") {
+    ok = Reload(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.stop") {
+    ok = Stop(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.goBack") {
+    ok = GoBack(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.goForward") {
+    ok = GoForward(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "window.create") {
+    // Window creation is owned by the app controller; acknowledge only.
+    ok = true;
+  } else if (command == "window.close") {
+    // Window close is owned by the app controller; acknowledge only.
+    ok = true;
+  } else if (command == "devtools.open") {
+    ok = OpenDevTools();
+    if (!ok) {
+      error = "failed to open devtools";
+    }
+  } else if (command == "ui.overlay.set") {
+    const bool active = JsonBool(payload, "active");
+    const double width =
+        payload->HasKey("width") ? payload->GetDouble("width") : 392.0;
+    const double height =
+        payload->HasKey("height") ? payload->GetDouble("height") : 560.0;
+    ok = SetUiOverlayActive(active, width, height);
+    if (!ok) {
+      error = "failed to set overlay";
+    }
+  } else if (command == "permission.changed") {
+    ok = SetPermission(JsonString(payload, "origin"),
+                       JsonString(payload, "permission"),
+                       JsonString(payload, "value"));
+    if (!ok) {
+      error = "failed to set permission";
+    }
+  } else {
+    // file.open / file.reveal / browsingData.clear are not yet routed to host
+    // I/O in this build; acknowledge to avoid stale commands.
+    ok = true;
+  }
+
+  return bridge_->PushHostCommandResultJson(
+      HostCommandResultJson(commandId, ok, error));
+}
+
+void BrowserWindow::PollAndExecuteHostCommands() {
+  if (!bridge_) {
+    return;
+  }
+  std::string commandJson;
+  while (bridge_->PollHostCommandJson(commandJson)) {
+    if (!commandJson.empty()) {
+      ExecuteHostCommand(commandJson);
+    }
+  }
+}
+
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
-  std::string directory = dataStore_->Settings()->GetString("downloadDirectory");
+  std::string directory = Store().GetSetting("downloadDirectory");
   if (directory.empty()) {
     const char* home = std::getenv("HOME");
     directory = home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
@@ -1110,7 +1302,7 @@ void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefB
   tabManager_.SetBrowser(tabId, browser);
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     try {
-      tab->zoomLevel = std::stod(dataStore_->Settings()->GetString("defaultZoomLevel").ToString());
+      tab->zoomLevel = std::stod(Store().GetSetting("defaultZoomLevel"));
     } catch (...) {
       tab->zoomLevel = 0.0;
     }
@@ -1122,6 +1314,7 @@ void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefB
 void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& title) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, title, tab->url, tab->isLoading, tab->canGoBack, tab->canGoForward);
+    PushHostEventJson(HostEventJson("page.titleChanged", {{ "tabId", JsonStringValue(tabId) }, { "title", JsonStringValue(title) }}));
   }
 }
 
@@ -1131,6 +1324,7 @@ void BrowserWindow::OnTabUrl(const std::string& tabId, const std::string& url) {
       tab->isPendingPopup = false;
     }
     UpdateTabPatch(tabId, tab->title, url, tab->isLoading, tab->canGoBack, tab->canGoForward);
+    PushHostEventJson(HostEventJson("page.urlChanged", {{ "tabId", JsonStringValue(tabId) }, { "url", JsonStringValue(url) }}));
   }
 }
 
@@ -1139,6 +1333,7 @@ void BrowserWindow::OnTabFavicon(const std::string& tabId, const std::string& fa
     Tab patch = *tab;
     patch.faviconUrl = faviconUrl;
     tabManager_.UpdateTab(tabId, patch);
+    PushHostEventJson(HostEventJson("page.faviconChanged", {{ "tabId", JsonStringValue(tabId) }, { "faviconUrl", JsonStringValue(faviconUrl) }}));
   }
 }
 
@@ -1146,6 +1341,12 @@ void BrowserWindow::OnTabLoadingState(const std::string& tabId, bool isLoading, 
                                       bool canGoForward) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     UpdateTabPatch(tabId, tab->title, tab->url, isLoading, canGoBack, canGoForward);
+    PushHostEventJson(HostEventJson("page.loadingChanged",
+                                    {{ "tabId", JsonStringValue(tabId) }, { "isLoading", JsonBoolValue(isLoading) }}));
+    PushHostEventJson(HostEventJson("page.navigationStateChanged",
+                                    {{ "tabId", JsonStringValue(tabId) },
+                                     { "canGoBack", JsonBoolValue(canGoBack) },
+                                     { "canGoForward", JsonBoolValue(canGoForward) }}));
   }
 }
 
@@ -1159,7 +1360,7 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      dataStore_->AddHistory(tab->title, tab->url);
+      Store().AddHistory(tab->title, tab->url, tab->faviconUrl);
       app_.PersistSession();
     }
     eventBus_.Publish(
@@ -1172,8 +1373,9 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
     Tab patch = *tab;
     patch.errorText = message;
     tabManager_.UpdateTab(tabId, patch);
+    PushHostEventJson(HostEventJson("page.loadFailed", {{ "tabId", JsonStringValue(tabId) }, { "errorText", JsonStringValue(message) }}));
     if (!privateWindow_) {
-      dataStore_->Log("error", "Navigation failed: " + tab->url + " - " + message);
+      Store().AddLog("error", "Navigation failed: " + tab->url + " - " + message);
       app_.PersistSession();
     }
     eventBus_.Publish(
@@ -1198,12 +1400,12 @@ void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  dataStore_->AddDownload(downloadId, url, path, "started");
-  dataStore_->Log("info", "Download started: " + path);
+  Store().AddDownload(url, path, "started");
+  Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
+  PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
 void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::string& url,
@@ -1212,11 +1414,15 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  dataStore_->UpdateDownload(downloadId, url, path, state, percent);
-  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
+  Store().UpdateDownload(url, path, state, percent);
   if (state != "in_progress") {
-    dataStore_->Log("info", "Download " + state + ": " + path);
+    Store().AddLog("info", "Download " + state + ": " + path);
   }
+  PushHostEventJson(HostEventJson("download.updated",
+                                  {{ "url", JsonStringValue(url) },
+                                   { "path", JsonStringValue(path) },
+                                   { "state", JsonStringValue(state) },
+                                   { "percent", JsonIntValue(percent) }}));
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
@@ -1238,7 +1444,7 @@ CefRefPtr<CefDictionaryValue> BrowserWindow::SessionSnapshot() const {
   snapshot->SetString("id", windowId_);
   snapshot->SetBool("private", privateWindow_);
   snapshot->SetString("activeTabId", tabManager_.GetActiveTabId());
-  snapshot->SetString("sidebarVisible", dataStore_->Settings()->GetString("sidebarVisible"));
+  snapshot->SetString("sidebarVisible", Store().GetSetting("sidebarVisible"));
   if (window_) {
     NSRect frame = [window_ frame];
     auto frameDict = CefDictionaryValue::Create();
@@ -1456,154 +1662,128 @@ void BrowserWindow::RegisterCommands() {
     value->SetBool(GoHome());
     return value;
   });
-  commands_.Register("tabs.activateNext", "Next Tab", "Tabs", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(tabManager_.ActivateNext());
-                       SetActiveContentView();
-                       return value;
-                     });
-  commands_.Register("tabs.activatePrevious", "Previous Tab", "Tabs", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(tabManager_.ActivatePrevious());
-                       SetActiveContentView();
-                       return value;
-                     });
-  commands_.Register("windows.create", "New Window", "Windows", "Cmd+N",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(app_.RequestNewWindow(false, nullptr));
-                       return value;
-                     });
-  commands_.Register("windows.createPrivate", "New Private Window", "Windows", "Cmd+Shift+N",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(app_.RequestNewPrivateWindow());
-                       return value;
-                     });
-  commands_.Register("windows.close", "Close Window", "Windows", "Cmd+Shift+W",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(CloseWindow());
-                       return value;
-                     });
-  commands_.Register("windows.reopenClosed", "Reopen Closed Window", "Windows", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(app_.ReopenClosedWindow());
-                       return value;
-                     });
-  commands_.Register(
-      "ui.setOverlayActive", "Set UI Overlay", "UI", "",
-      [this](CefRefPtr<CefDictionaryValue> args) {
-        auto value = CefValue::Create();
-        const double overlayWidth = args->HasKey("width") ? args->GetDouble("width") : 392.0;
-        const double overlayHeight = args->HasKey("height") ? args->GetDouble("height") : 560.0;
-        value->SetBool(SetUiOverlayActive(args->HasKey("active") && args->GetBool("active"),
-                                          overlayWidth, overlayHeight));
-        return value;
-      });
-  commands_.Register("app.focusOmnibox", "Open Location", "Navigation", "Cmd+L",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(FocusOmnibox());
-                       return value;
-                     });
-  commands_.Register("app.openSettings", "Settings", "App", "Cmd+,",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       Tab* tab = tabManager_.GetActiveTab();
-                       value->SetBool(tab ? Navigate(tab->id, "fubuki://settings/")
-                                          : CreateTab("fubuki://settings/", true));
-                       return value;
-                     });
-  commands_.Register("app.openHistory", "History", "App", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       Tab* tab = tabManager_.GetActiveTab();
-                       value->SetBool(tab ? Navigate(tab->id, "fubuki://history/")
-                                          : CreateTab("fubuki://history/", true));
-                       return value;
-                     });
-  commands_.Register("app.openDownloads", "Downloads", "App", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       Tab* tab = tabManager_.GetActiveTab();
-                       value->SetBool(tab ? Navigate(tab->id, "fubuki://downloads/")
-                                          : CreateTab("fubuki://downloads/", true));
-                       return value;
-                     });
-  commands_.Register("app.openBookmarks", "Bookmarks", "App", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       Tab* tab = tabManager_.GetActiveTab();
-                       value->SetBool(tab ? Navigate(tab->id, "fubuki://bookmarks/")
-                                          : CreateTab("fubuki://bookmarks/", true));
-                       return value;
-                     });
-  commands_.Register("app.openDebug", "Debug", "Developer", "",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       Tab* tab = tabManager_.GetActiveTab();
-                       value->SetBool(tab ? Navigate(tab->id, "fubuki://debug/")
-                                          : CreateTab("fubuki://debug/", true));
-                       return value;
-                     });
-  commands_.Register(
-      "app.toggleSidebar", "Toggle Sidebar", "UI", "Cmd+B", [this](CefRefPtr<CefDictionaryValue>) {
-        auto value = CefValue::Create();
-        const std::string current = dataStore_->Settings()->GetString("sidebarVisible");
-        value->SetBool(SetSetting("sidebarVisible", current == "hide" ? "show" : "hide"));
-        return value;
-      });
-  commands_.Register("app.openDevTools", "Developer Tools", "Developer", "Cmd+Option+I",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(OpenDevTools());
-                       return value;
-                     });
-  commands_.Register(
-      "page.find", "Find in Page", "Page", "Cmd+F", [this](CefRefPtr<CefDictionaryValue> args) {
-        auto value = CefValue::Create();
-        if (!args->HasKey("query") || args->GetString("query").empty()) {
-          if (uiBrowser_) {
-            uiBrowser_->GetMainFrame()->ExecuteJavaScript(
-                "window.dispatchEvent(new CustomEvent('fubuki:show-find'));", "fubuki://app/", 0);
-            value->SetBool(true);
-          } else {
-            value->SetBool(false);
-          }
-          return value;
-        }
-        value->SetBool(FindInPage(args->GetString("query"),
-                                  !args->HasKey("forward") || args->GetBool("forward")));
-        return value;
-      });
-  commands_.Register(
-      "page.stopFinding", "Stop Finding", "Page", "", [this](CefRefPtr<CefDictionaryValue> args) {
-        auto value = CefValue::Create();
-        value->SetBool(StopFinding(!args->HasKey("clear") || args->GetBool("clear")));
-        return value;
-      });
-  commands_.Register("page.zoomIn", "Zoom In", "Page", "Cmd++",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(ZoomIn());
-                       return value;
-                     });
-  commands_.Register("page.zoomOut", "Zoom Out", "Page", "Cmd+-",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(ZoomOut());
-                       return value;
-                     });
-  commands_.Register("page.zoomReset", "Actual Size", "Page", "Cmd+0",
-                     [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(ResetZoom());
-                       return value;
-                     });
+  commands_.Register("tabs.activateNext", "Next Tab", "Tabs", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(tabManager_.ActivateNext());
+    SetActiveContentView();
+    return value;
+  });
+  commands_.Register("tabs.activatePrevious", "Previous Tab", "Tabs", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(tabManager_.ActivatePrevious());
+    SetActiveContentView();
+    return value;
+  });
+  commands_.Register("windows.create", "New Window", "Windows", "Cmd+N", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(app_.RequestNewWindow(false, nullptr));
+    return value;
+  });
+  commands_.Register("windows.createPrivate", "New Private Window", "Windows", "Cmd+Shift+N", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(app_.RequestNewPrivateWindow());
+    return value;
+  });
+  commands_.Register("windows.close", "Close Window", "Windows", "Cmd+Shift+W", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(CloseWindow());
+    return value;
+  });
+  commands_.Register("windows.reopenClosed", "Reopen Closed Window", "Windows", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(app_.ReopenClosedWindow());
+    return value;
+  });
+  commands_.Register("ui.setOverlayActive", "Set UI Overlay", "UI", "", [this](CefRefPtr<CefDictionaryValue> args) {
+    auto value = CefValue::Create();
+    const double overlayWidth = args->HasKey("width") ? args->GetDouble("width") : 392.0;
+    const double overlayHeight = args->HasKey("height") ? args->GetDouble("height") : 560.0;
+    value->SetBool(SetUiOverlayActive(args->HasKey("active") && args->GetBool("active"), overlayWidth, overlayHeight));
+    return value;
+  });
+  commands_.Register("app.focusOmnibox", "Open Location", "Navigation", "Cmd+L", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(FocusOmnibox());
+    return value;
+  });
+  commands_.Register("app.openSettings", "Settings", "App", "Cmd+,", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    Tab* tab = tabManager_.GetActiveTab();
+    value->SetBool(tab ? Navigate(tab->id, "fubuki://settings/") : CreateTab("fubuki://settings/", true));
+    return value;
+  });
+  commands_.Register("app.openHistory", "History", "App", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    Tab* tab = tabManager_.GetActiveTab();
+    value->SetBool(tab ? Navigate(tab->id, "fubuki://history/") : CreateTab("fubuki://history/", true));
+    return value;
+  });
+  commands_.Register("app.openDownloads", "Downloads", "App", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    Tab* tab = tabManager_.GetActiveTab();
+    value->SetBool(tab ? Navigate(tab->id, "fubuki://downloads/") : CreateTab("fubuki://downloads/", true));
+    return value;
+  });
+  commands_.Register("app.openBookmarks", "Bookmarks", "App", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    Tab* tab = tabManager_.GetActiveTab();
+    value->SetBool(tab ? Navigate(tab->id, "fubuki://bookmarks/") : CreateTab("fubuki://bookmarks/", true));
+    return value;
+  });
+  commands_.Register("app.openDebug", "Debug", "Developer", "", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    Tab* tab = tabManager_.GetActiveTab();
+    value->SetBool(tab ? Navigate(tab->id, "fubuki://debug/") : CreateTab("fubuki://debug/", true));
+    return value;
+  });
+  commands_.Register("app.toggleSidebar", "Toggle Sidebar", "UI", "Cmd+B", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    const std::string current = Store().GetSetting("sidebarVisible");
+    value->SetBool(SetSetting("sidebarVisible", current == "hide" ? "show" : "hide"));
+    return value;
+  });
+  commands_.Register("app.openDevTools", "Developer Tools", "Developer", "Cmd+Option+I", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(OpenDevTools());
+    return value;
+  });
+  commands_.Register("page.find", "Find in Page", "Page", "Cmd+F", [this](CefRefPtr<CefDictionaryValue> args) {
+    auto value = CefValue::Create();
+    if (!args->HasKey("query") || args->GetString("query").empty()) {
+      if (uiBrowser_) {
+        uiBrowser_->GetMainFrame()->ExecuteJavaScript(
+            "window.dispatchEvent(new CustomEvent('fubuki:show-find'));",
+            "fubuki://app/",
+            0);
+        value->SetBool(true);
+      } else {
+        value->SetBool(false);
+      }
+      return value;
+    }
+    value->SetBool(FindInPage(args->GetString("query"), !args->HasKey("forward") || args->GetBool("forward")));
+    return value;
+  });
+  commands_.Register("page.stopFinding", "Stop Finding", "Page", "", [this](CefRefPtr<CefDictionaryValue> args) {
+    auto value = CefValue::Create();
+    value->SetBool(StopFinding(!args->HasKey("clear") || args->GetBool("clear")));
+    return value;
+  });
+  commands_.Register("page.zoomIn", "Zoom In", "Page", "Cmd++", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(ZoomIn());
+    return value;
+  });
+  commands_.Register("page.zoomOut", "Zoom Out", "Page", "Cmd+-", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(ZoomOut());
+    return value;
+  });
+  commands_.Register("page.zoomReset", "Actual Size", "Page", "Cmd+0", [this](CefRefPtr<CefDictionaryValue>) {
+    auto value = CefValue::Create();
+    value->SetBool(ResetZoom());
+    return value;
+  });
   commands_.Register("page.print", "Print", "Page", "Cmd+P", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
     value->SetBool(PrintPage());
@@ -1644,10 +1824,8 @@ void BrowserWindow::WireEvents() {
     payload->SetString("message", event.message);
     if (event.type == EventType::SettingChanged) {
       payload->SetString("key", event.message);
-      auto settings = dataStore_->Settings();
-      payload->SetString("value", settings && settings->HasKey(event.message)
-                                      ? settings->GetString(event.message)
-                                      : "");
+      const std::string value = Store().GetSetting(event.message);
+      payload->SetString("value", value);
     }
     if (event.type == EventType::BookmarkChanged || event.type == EventType::HistoryChanged) {
       payload->SetString("url", event.message);
@@ -1662,26 +1840,21 @@ void BrowserWindow::WireEvents() {
 
     if (event.type == EventType::TabCreated) {
       bridge_->EmitToUi("tab.created", bridge_->TabToDictionary(event.tab));
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabUpdated) {
       auto patch = bridge_->TabToDictionary(event.tab);
       patch->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.updated", patch);
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabClosed) {
       auto closed = CefDictionaryValue::Create();
       closed->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.closed", closed);
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabActivated) {
       auto activated = CefDictionaryValue::Create();
       activated->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.activated", activated);
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::NavigationStarted ||
                event.type == EventType::NavigationFinished ||
                event.type == EventType::NavigationFailed) {
-      bridge_->SyncFrostFromHost();
     }
   };
   auto subscribe = [this, &emit](EventType type) {
@@ -1718,7 +1891,12 @@ void BrowserWindow::UpdateContentFrame() {
   if (!contentHostView_ || !uiHostView_) {
     return;
   }
-  const auto settings = dataStore_->Settings();
+  const std::string allSettingsJson = Store().GetAllSettings();
+  auto settingsValue = CefParseJSON(allSettingsJson, JSON_PARSER_RFC);
+  CefRefPtr<CefDictionaryValue> settings =
+      (settingsValue && settingsValue->GetType() == VTYPE_DICTIONARY)
+          ? settingsValue->GetDictionary()
+          : CefDictionaryValue::Create();
   const std::string sidebarState = settings->GetString("sidebarVisible");
   const bool sidebarVisible = sidebarState == "show";
   double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;

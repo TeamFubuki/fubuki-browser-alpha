@@ -14,6 +14,10 @@ public:
   explicit TabManager(EventBus &eventBus);
 
   Tab &CreateTab(const std::string &url, bool active);
+  // Creates a tab with an explicit id. Used when the id is owned by an
+  // external authority (e.g. FrostEngine HostCommand page.create) so that
+  // host-side and engine-side tab ids stay in sync.
+  Tab &CreateTab(const std::string &url, bool active, const std::string &tabId);
   bool CloseTab(const std::string &tabId);
   bool ActivateTab(const std::string &tabId);
   bool ActivateNext();

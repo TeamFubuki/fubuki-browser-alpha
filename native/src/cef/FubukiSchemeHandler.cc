@@ -58,30 +58,31 @@ std::string MimeForPath(const std::string& path) {
 }
 
 std::string HtmlEscape(const std::string& value) {
-  std::ostringstream out;
+  std::string out;
+  out.reserve(value.size() + 16);
   for (const char c : value) {
     switch (c) {
       case '&':
-        out << "&amp;";
+        out += "&amp;";
         break;
       case '<':
-        out << "&lt;";
+        out += "&lt;";
         break;
       case '>':
-        out << "&gt;";
+        out += "&gt;";
         break;
       case '"':
-        out << "&quot;";
+        out += "&quot;";
         break;
       case '\'':
-        out << "&#39;";
+        out += "&#39;";
         break;
       default:
-        out << c;
+        out += c;
         break;
     }
   }
-  return out.str();
+  return out;
 }
 
 void Execute(sqlite3* db, const std::string& sql) {
@@ -94,35 +95,48 @@ std::string ColumnText(sqlite3_stmt* statement, int column) {
 }
 
 sqlite3* OpenDatabase() {
+  // Cache a single process-lifetime connection. Opening the database (and
+  // running the DDL) on every Setting()/QueryRecords() call was a major source
+  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
+  // The connection is now opened once and reused for the process lifetime.
+  static sqlite3* cached = nullptr;
+  static bool initialized = false;
+  if (initialized) {
+    return cached;
+  }
   std::filesystem::create_directories(ProfilePath());
-  sqlite3* db = nullptr;
-  if (sqlite3_open(DatabasePath().string().c_str(), &db) != SQLITE_OK) {
+  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
+    cached = nullptr;
     return nullptr;
   }
-  Execute(db,
+  // Only mark as initialized after a successful open so retries are possible.
+  initialized = true;
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
           "TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL "
           "UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at "
           "TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
           "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  Execute(db, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
-  Execute(db,
+  // Migration for existing databases that lack download_id column.
+  // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
+  Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT "
           "NULL,permission TEXT NOT NULL,value TEXT NOT NULL,updated_at "
           "TEXT NOT NULL,PRIMARY KEY(origin,permission))");
-  return db;
+  return cached;
 }
 
 std::string Setting(const std::string& key, const std::string& fallback = "") {
@@ -137,7 +151,6 @@ std::string Setting(const std::string& key, const std::string& fallback = "") {
     value = ColumnText(statement, 0);
   }
   sqlite3_finalize(statement);
-  sqlite3_close(db);
   return value.empty() ? fallback : value;
 }
 
@@ -244,10 +257,6 @@ std::string NormalizedDownloadState(const Record& record) {
   return record.state.empty() ? "unknown" : record.state;
 }
 
-bool IsActiveDownloadState(const std::string& state) {
-  return state == "started" || state == "in_progress";
-}
-
 std::string DownloadStatusText(const std::string& state, int percent) {
   if (state == "completed") {
     return Label("Completed");
@@ -301,7 +310,6 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
   }
 
   sqlite3_finalize(statement);
-  sqlite3_close(db);
   return records;
 }
 
@@ -350,11 +358,19 @@ html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#2529
   return html.str();
 }
 
-std::string ActionLink(const std::string& key, const std::string& value,
-                       const std::string& returnUrl) {
-  return "fubuki://settings/set?key=" + key + "&value=" + CefURIEncode(value, false).ToString() +
-         "&return=" + CefURIEncode(returnUrl, false).ToString();
+std::string HiddenInput(const std::string &name, const std::string &value) {
+  return "<input type=\"hidden\" name=\"" + HtmlEscape(name) + "\" value=\"" +
+         HtmlEscape(value) + "\">";
 }
+
+std::string ActionForm(const std::string &key, const std::string &value,
+                       const std::string &returnUrl, const std::string &label,
+                       const std::string &classes) {
+  return "<form method=\"post\" action=\"fubuki://settings/set\" "
+         "style=\"display:inline\">" +
+         HiddenInput("key", key) + HiddenInput("value", value) +
+         HiddenInput("return", returnUrl) + "<button class=\"" +
+         HtmlEscape(classes) + "\">" + HtmlEscape(label) + "</button></form>";}
 
 std::string FileName(const std::string& path, const std::string& url) {
   const std::string source = path.empty() ? url : path;
@@ -377,11 +393,11 @@ std::string BookmarksHtml() {
       body << "</span><a href=\"" << HtmlEscape(record.url) << "\" title=\""
            << HtmlEscape(record.url) << "\"><div class=\"title\">"
            << HtmlEscape(record.title.empty() ? record.url : record.title)
-           << "</div><div class=\"meta\">" << HtmlEscape(record.url) << "</div></a>"
-           << "<a class=\"button danger\" href=\""
-           << ActionLink("removeBookmark", record.url, "fubuki://bookmarks/") << "\">"
-           << Label("Delete") << "</a></div>";
-    }
+           << "</div><div class=\"meta\">" << HtmlEscape(record.url)
+           << "</div></a>"
+           << ActionForm("removeBookmark", record.url, "fubuki://bookmarks/",
+                         Label("Delete"), "button danger")
+           << "</div>";    }
     body << "</div>";
   }
   return PageChrome("Bookmarks", body.str());
@@ -390,10 +406,10 @@ std::string BookmarksHtml() {
 std::string DownloadsHtml() {
   std::ostringstream body;
   const auto records = QueryRecords("downloads", 50);
-  body << "<div class=\"segmented\" style=\"margin-bottom:12px\"><a "
-          "class=\"chip danger\" href=\""
-       << ActionLink("clearData", "downloads", "fubuki://downloads/") << "\">"
-       << Label("Clear downloads") << "</a></div>";
+  body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
+       << ActionForm("clearData", "downloads", "fubuki://downloads/",
+                     Label("Clear downloads"), "chip danger")
+       << "</div>";
   if (records.empty()) {
     body << "<p class=\"empty\">" << Label("No downloads") << "</p>";
   } else {
@@ -408,28 +424,17 @@ std::string DownloadsHtml() {
               "aria-hidden=\"true\">↓</span><div class=\"download-main\"><div><div class=\"title\">"
            << HtmlEscape(FileName(record.path, record.url)) << "</div><div class=\"meta\">"
            << HtmlEscape(record.path.empty() ? record.url : record.path)
-           << "</div></div><div class=\"download-status\">";
-      if (IsActiveDownloadState(state)) {
-        body << "<span class=\"download-bar\" aria-hidden=\"true\" style=\"--progress:" << percent
-             << "%\"><span></span></span>";
-      }
-      body << "<span>" << HtmlEscape(status) << "</span></div></div><span class=\"segmented\">"
-           << (hasPath ? "<a class=\"chip\" href=\""
-                       : "<span class=\"chip disabled\" aria-disabled=\"true\">");
-      if (hasPath) {
-        body << ActionLink("openDownload", record.path, "fubuki://downloads/") << "\">";
-      }
-      body << Label("Open") << (hasPath ? "</a>" : "</span>")
-           << (hasPath ? "<a class=\"chip\" href=\""
-                       : "<span class=\"chip disabled\" aria-disabled=\"true\">");
-      if (hasPath) {
-        body << ActionLink("revealDownload", record.path, "fubuki://downloads/") << "\">";
-      }
-      body << Label("Reveal") << (hasPath ? "</a>" : "</span>")
-           << "<a class=\"chip danger\" href=\""
-           << ActionLink("removeDownload", removeValue, "fubuki://downloads/") << "\">"
-           << Label("Remove") << "</a></span></article>";
-    }
+           << "</div></div><span class=\"segmented\">"
+           << ActionForm("openDownload", record.path, "fubuki://downloads/",
+                         Label("Open"), "chip")
+           << ActionForm("revealDownload", record.path, "fubuki://downloads/",
+                         Label("Reveal"), "chip")
+           << ActionForm("removeDownload", record.path, "fubuki://downloads/",
+                         Label("Remove"), "chip danger")
+           << "</span></article><div class=\"meta\" style=\"padding:0 10px 6px "
+              "42px\">"
+           << HtmlEscape(record.state.empty() ? "unknown" : record.state) << " "
+           << record.percent << "%</div>";    }
     body << "</div>";
   }
   return PageChrome("Downloads", body.str());
@@ -445,15 +450,14 @@ std::string HistoryHtml() {
           "document.querySelectorAll('[data-history-row]')) "
           "row.style.display=row.textContent.toLowerCase().includes(this.value."
           "toLowerCase())?'grid':'none'\"></form>";
-  body << "<div class=\"segmented\" style=\"margin-bottom:12px\"><a "
-          "class=\"chip danger\" href=\""
-       << ActionLink("clearHistoryRange", "lastHour", "fubuki://history/") << "\">"
-       << Label("Clear last hour") << "</a><a class=\"chip danger\" href=\""
-       << ActionLink("clearHistoryRange", "today", "fubuki://history/") << "\">"
-       << Label("Clear today") << "</a><a class=\"chip danger\" href=\""
-       << ActionLink("clearHistoryRange", "all", "fubuki://history/") << "\">" << Label("Clear all")
-       << "</a></div>";
-  if (records.empty()) {
+  body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
+       << ActionForm("clearHistoryRange", "lastHour", "fubuki://history/",
+                     Label("Clear last hour"), "chip danger")
+       << ActionForm("clearHistoryRange", "today", "fubuki://history/",
+                     Label("Clear today"), "chip danger")
+       << ActionForm("clearHistoryRange", "all", "fubuki://history/",
+                     Label("Clear all"), "chip danger")
+       << "</div>";  if (records.empty()) {
     body << "<p class=\"empty\">" << Label("No history") << "</p>";
   } else {
     body << "<div class=\"list\">";
@@ -472,11 +476,12 @@ std::string HistoryHtml() {
            << HtmlEscape(record.url) << "\" title=\"" << HtmlEscape(record.url)
            << "\"><span class=\"title\">"
            << HtmlEscape(record.title.empty() ? record.url : record.title)
-           << "</span><span class=\"meta\">" << HtmlEscape(record.createdAt + " · " + record.url)
-           << "</span></a><a class=\"button danger\" href=\""
-           << ActionLink("removeHistory", record.url, "fubuki://history/") << "\">"
-           << Label("Delete") << "</a></div>";
-    }
+           << "</span><span class=\"meta\">"
+           << HtmlEscape(record.createdAt + " · " + record.url)
+           << "</span></a>"
+           << ActionForm("removeHistory", record.url, "fubuki://history/",
+                         Label("Delete"), "button danger")
+           << "</div>";    }
     body << "</div>";
   }
   return PageChrome("History", body.str());
@@ -493,152 +498,170 @@ std::string SettingsHtml() {
   const std::string sidebarVisible = Setting("sidebarVisible", "show") == "hide" ? "hide" : "show";
   const std::string language = Setting("language", "system");
 
-  auto chip = [](const std::string& key, const std::string& current, const std::string& value,
-                 const std::string& label) {
-    return "<a class=\"chip" + std::string(current == value ? " selected" : "") + "\" href=\"" +
-           ActionLink(key, value, "fubuki://settings/") + "\">" + HtmlEscape(label) + "</a>";
+  auto chip = [](const std::string &key, const std::string &current,
+                 const std::string &value, const std::string &label) {
+    return ActionForm(key, value, "fubuki://settings/", label,
+                      "chip" + std::string(current == value ? " selected" : ""));
   };
 
   std::ostringstream body;
-  body << "<div class=\"settings-layout\">"
-       << "<nav class=\"settings-nav\" aria-label=\"Settings sections\">"
-       << "<a href=\"#general\">" << Label("General") << "</a><a href=\"#appearance\">"
-       << Label("Appearance") << "</a><a href=\"#language\">" << Label("Language")
-       << "</a><a href=\"#tabs\">" << Label("Tabs") << "</a>"
-       << "<a href=\"#windows\">" << Label("Windows") << "</a><a href=\"#search\">"
-       << Label("Search") << "</a><a href=\"#privacy\">" << Label("Privacy") << "</a>"
-       << "<a href=\"#downloads\">" << Label("Downloads section") << "</a><a href=\"#developer\">"
-       << Label("Developer") << "</a>"
-       << "</nav><section class=\"settings-content\">"
-       << "<form class=\"inline-form settings-search\"><input type=\"search\" "
-          "placeholder=\""
-       << Label("Search settings")
-       << "\" oninput=\"for(const field of "
-          "document.querySelectorAll('[data-setting-section]')) "
-          "field.style.display=field.textContent.toLowerCase().includes(this."
-          "value.toLowerCase())?'grid':'none'\"></form>"
-       << "<div id=\"general\" class=\"field\" data-setting-section><span>" << Label("General")
-       << "</span><div class=\"section-kicker\">Choose how Fubuki starts and "
-          "where Home opens.</div><div class=\"segmented\">"
-       << chip("startupBehavior", startupBehavior, "newTab", Label("New tab"))
-       << chip("startupBehavior", startupBehavior, "restore", Label("Restore previous session"))
-       << chip("startupBehavior", startupBehavior, "homePage", Label("Home page"))
-       << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
-          "method=\"get\"><input type=\"hidden\" name=\"key\" "
-          "value=\"homeUrl\"><input type=\"hidden\" name=\"return\" "
-          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
-       << HtmlEscape(Setting("homeUrl", "https://example.com")) << "\" placeholder=\""
-       << Label("Home page URL") << "\"><button class=\"button\">" << Label("Save")
-       << "</button><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "startupBehavior", "fubuki://settings/") << "\">"
-       << Label("Reset") << "</a></form></div>"
-       << "<div id=\"appearance\" class=\"field\" data-setting-section><span>"
-       << Label("Appearance")
-       << "</span><div class=\"section-kicker\">Use a flat system, light, or "
-          "dark internal page theme.</div><div class=\"segmented\">"
-       << chip("appearance", appearance, "system", Label("System"))
-       << chip("appearance", appearance, "light", Label("Light"))
-       << chip("appearance", appearance, "dark", Label("Dark"))
-       << "</div><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "appearance", "fubuki://settings/") << "\">" << Label("Reset")
-       << "</a></div>"
-       << "<div id=\"language\" class=\"field\" data-setting-section><span>" << Label("Language")
-       << "</span><div class=\"section-kicker\">Choose UI language. System "
-          "follows your macOS language when possible.</div><div "
-          "class=\"segmented\">"
-       << chip("language", language, "system", Label("System"))
-       << chip("language", language, "ja", Label("Japanese"))
-       << chip("language", language, "en", Label("English")) << "</div><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "language", "fubuki://settings/") << "\">" << Label("Reset")
-       << "</a></div>"
-       << "<div id=\"tabs\" class=\"field\" data-setting-section><span>" << Label("Tabs")
-       << "</span><div class=\"section-kicker\">Tune the new tab destination "
-          "and page zoom default.</div><div class=\"segmented\">"
-       << chip("newTabPage", newTabPage, "blank", Label("Blank new tab"))
-       << chip("newTabPage", newTabPage, "home", Label("Home on new tab"))
-       << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
-          "method=\"get\"><input type=\"hidden\" name=\"key\" "
-          "value=\"defaultZoomLevel\"><input type=\"hidden\" name=\"return\" "
-          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
-       << HtmlEscape(Setting("defaultZoomLevel", "0")) << "\" placeholder=\""
-       << Label("Default zoom level") << "\"><button class=\"button\">" << Label("Save")
-       << "</button><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "defaultZoomLevel", "fubuki://settings/") << "\">"
-       << Label("Reset") << "</a></form></div>"
-       << "<div id=\"windows\" class=\"field\" data-setting-section><span>" << Label("Windows")
-       << "</span><div class=\"section-kicker\">Control browser chrome "
-          "visibility.</div><div class=\"segmented\">"
-       << chip("sidebarVisible", sidebarVisible, "show", Label("Show sidebar"))
-       << chip("sidebarVisible", sidebarVisible, "hide", Label("Hide sidebar"))
-       << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
-          "method=\"get\"><input type=\"hidden\" name=\"key\" "
-          "value=\"sidebarWidth\"><input type=\"hidden\" name=\"return\" "
-          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
-       << HtmlEscape(Setting("sidebarWidth", "196")) << "\" placeholder=\""
-       << Label("Sidebar width") << "\"><button class=\"button\">" << Label("Save")
-       << "</button><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "sidebarWidth", "fubuki://settings/") << "\">"
-       << Label("Reset sidebar width") << "</a></form></div>"
-       << "<div id=\"search\" class=\"field\" data-setting-section><span>" << Label("Search")
-       << "</span><div class=\"section-kicker\">Set the engine used from the "
-          "omnibox and new tab page.</div><div class=\"segmented\">"
-       << chip("searchEngine", searchEngine, "google", "Google")
-       << chip("searchEngine", searchEngine, "duckduckgo", "DuckDuckGo")
-       << chip("searchEngine", searchEngine, "bing", "Bing")
-       << chip("searchEngine", searchEngine, "custom", "Custom")
-       << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
-          "method=\"get\"><input type=\"hidden\" name=\"key\" "
-          "value=\"customSearchUrl\"><input type=\"hidden\" name=\"return\" "
-          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
-       << HtmlEscape(customSearchUrl)
-       << "\" placeholder=\"https://example.com/search?q={query}\"><button "
-          "class=\"button\">"
-       << Label("Save") << "</button><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "searchEngine", "fubuki://settings/") << "\">"
-       << Label("Reset") << "</a></form></div>"
-       << "<div id=\"privacy\" class=\"field\" data-setting-section><span>" << Label("Privacy")
-       << "</span><div class=\"section-kicker\">Clear local browsing records "
-          "and web storage.</div><div class=\"segmented\">"
-       << "<a class=\"chip danger\" href=\""
-       << ActionLink("clearData", "history", "fubuki://settings/") << "\">" << Label("History")
-       << "</a>"
-       << "<a class=\"chip danger\" href=\""
-       << ActionLink("clearData", "cookies", "fubuki://settings/") << "\">Cookies</a>"
-       << "<a class=\"chip danger\" href=\""
-       << ActionLink("clearData", "cache", "fubuki://settings/") << "\">Cache</a>"
-       << "<a class=\"chip danger\" href=\""
-       << ActionLink("clearData", "downloads", "fubuki://settings/") << "\">" << Label("Downloads")
-       << "</a>"
-       << "<a class=\"chip danger\" href=\"" << ActionLink("clearData", "all", "fubuki://settings/")
-       << "\">" << Label("Clear all") << "</a>"
-       << "</div></div>"
-       << "<div id=\"downloads\" class=\"field\" data-setting-section><span>"
-       << Label("Downloads section")
-       << "</span><div class=\"section-kicker\">Set download confirmation and "
-          "the default folder.</div><div class=\"segmented\">"
-       << chip("askBeforeDownload", askBeforeDownload, "on", Label("Ask before download"))
-       << chip("askBeforeDownload", askBeforeDownload, "off", Label("Download automatically"))
-       << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
-          "method=\"get\"><input type=\"hidden\" name=\"key\" "
-          "value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" "
-          "value=\"fubuki://settings/\"><input name=\"value\" value=\""
-       << HtmlEscape(Setting("downloadDirectory", "")) << "\" placeholder=\""
-       << Label("Download directory") << "\"><button class=\"button\">" << Label("Save")
-       << "</button><a class=\"button\" href=\""
-       << ActionLink("resetSetting", "downloadDirectory", "fubuki://settings/") << "\">"
-       << Label("Reset") << "</a></form></div>"
-       << "<div class=\"field\" data-setting-section><span>Shortcuts</span><div "
-          "class=\"meta\">Cmd+T, Cmd+N, Cmd+Shift+N, Cmd+W, Cmd+Shift+T, Cmd+L, "
-          "Cmd+R, Cmd+F, Cmd+,, Cmd+Plus, Cmd+Minus, Cmd+0</div></div>"
-       << "<div id=\"developer\" class=\"field\" data-setting-section><span>" << Label("Developer")
-       << "</span><div class=\"section-kicker\">Inspect the app shell and "
-          "internal diagnostics.</div><div class=\"segmented\"><a "
-          "class=\"chip\" href=\""
-       << ActionLink("openDevTools", "1", "fubuki://settings/") << "\">" << Label("Open DevTools")
-       << "</a><a class=\"chip\" href=\"fubuki://debug/\">" << Label("Debug page")
-       << "</a></div></div>"
-       << "</section></div>";
-  return PageChrome("Settings", body.str());
+  body
+      << "<div class=\"settings-layout\">"
+      << "<nav class=\"settings-nav\" aria-label=\"Settings sections\">"
+      << "<a href=\"#general\">" << Label("General")
+      << "</a><a href=\"#appearance\">" << Label("Appearance")
+      << "</a><a href=\"#language\">" << Label("Language")
+      << "</a><a href=\"#tabs\">" << Label("Tabs") << "</a>"
+      << "<a href=\"#windows\">" << Label("Windows")
+      << "</a><a href=\"#search\">" << Label("Search")
+      << "</a><a href=\"#privacy\">" << Label("Privacy") << "</a>"
+      << "<a href=\"#downloads\">" << Label("Downloads section")
+      << "</a><a href=\"#developer\">" << Label("Developer") << "</a>"
+      << "</nav><section class=\"settings-content\">"
+      << "<form class=\"inline-form settings-search\"><input type=\"search\" "
+         "placeholder=\""
+      << Label("Search settings")
+      << "\" oninput=\"for(const field of "
+         "document.querySelectorAll('[data-setting-section]')) "
+         "field.style.display=field.textContent.toLowerCase().includes(this."
+         "value.toLowerCase())?'grid':'none'\"></form>"
+      << "<div id=\"general\" class=\"field\" data-setting-section><span>"
+      << Label("General")
+      << "</span><div class=\"section-kicker\">Choose how Fubuki starts and "
+         "where Home opens.</div><div class=\"segmented\">"
+      << chip("startupBehavior", startupBehavior, "newTab", Label("New tab"))
+      << chip("startupBehavior", startupBehavior, "restore",
+              Label("Restore previous session"))
+      << chip("startupBehavior", startupBehavior, "homePage",
+              Label("Home page"))
+      << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
+         "method=\"get\"><input type=\"hidden\" name=\"key\" "
+         "value=\"homeUrl\"><input type=\"hidden\" name=\"return\" "
+         "value=\"fubuki://settings/\"><input name=\"value\" value=\""
+      << HtmlEscape(Setting("homeUrl", "https://example.com"))
+      << "\" placeholder=\"" << Label("Home page URL")
+      << "\"><button class=\"button\">" << Label("Save")
+      << "</button></form>"
+      << ActionForm("resetSetting", "startupBehavior", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
+      << "<div id=\"appearance\" class=\"field\" data-setting-section><span>"
+      << Label("Appearance")
+      << "</span><div class=\"section-kicker\">Use a flat system, light, or "
+         "dark internal page theme.</div><div class=\"segmented\">"
+      << chip("appearance", appearance, "system", Label("System"))
+      << chip("appearance", appearance, "light", Label("Light"))
+      << chip("appearance", appearance, "dark", Label("Dark"))
+      << "</div>"
+      << ActionForm("resetSetting", "appearance", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
+      << "<div id=\"language\" class=\"field\" data-setting-section><span>"
+      << Label("Language")
+      << "</span><div class=\"section-kicker\">Choose UI language. System "
+         "follows your macOS language when possible.</div><div "
+         "class=\"segmented\">"
+      << chip("language", language, "system", Label("System"))
+      << chip("language", language, "ja", Label("Japanese"))
+      << chip("language", language, "en", Label("English"))
+      << "</div>"
+      << ActionForm("resetSetting", "language", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
+      << "<div id=\"tabs\" class=\"field\" data-setting-section><span>"
+      << Label("Tabs")
+      << "</span><div class=\"section-kicker\">Tune the new tab destination "
+         "and page zoom default.</div><div class=\"segmented\">"
+      << chip("newTabPage", newTabPage, "blank", Label("Blank new tab"))
+      << chip("newTabPage", newTabPage, "home", Label("Home on new tab"))
+      << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
+         "method=\"get\"><input type=\"hidden\" name=\"key\" "
+         "value=\"defaultZoomLevel\"><input type=\"hidden\" name=\"return\" "
+         "value=\"fubuki://settings/\"><input name=\"value\" value=\""
+      << HtmlEscape(Setting("defaultZoomLevel", "0")) << "\" placeholder=\""
+      << Label("Default zoom level") << "\"><button class=\"button\">"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "defaultZoomLevel", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
+      << "<div id=\"windows\" class=\"field\" data-setting-section><span>"
+      << Label("Windows")
+      << "</span><div class=\"section-kicker\">Control browser chrome "
+         "visibility.</div><div class=\"segmented\">"
+      << chip("sidebarVisible", sidebarVisible, "show", Label("Show sidebar"))
+      << chip("sidebarVisible", sidebarVisible, "hide", Label("Hide sidebar"))
+      << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
+         "method=\"get\"><input type=\"hidden\" name=\"key\" "
+         "value=\"sidebarWidth\"><input type=\"hidden\" name=\"return\" "
+         "value=\"fubuki://settings/\"><input name=\"value\" value=\""
+      << HtmlEscape(Setting("sidebarWidth", "196")) << "\" placeholder=\""
+      << Label("Sidebar width") << "\"><button class=\"button\">"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "sidebarWidth", "fubuki://settings/",
+                    Label("Reset sidebar width"), "button")
+      << "</div>"
+      << "<div id=\"search\" class=\"field\" data-setting-section><span>"
+      << Label("Search")
+      << "</span><div class=\"section-kicker\">Set the engine used from the "
+         "omnibox and new tab page.</div><div class=\"segmented\">"
+      << chip("searchEngine", searchEngine, "google", "Google")
+      << chip("searchEngine", searchEngine, "duckduckgo", "DuckDuckGo")
+      << chip("searchEngine", searchEngine, "bing", "Bing")
+      << chip("searchEngine", searchEngine, "custom", "Custom")
+      << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
+         "method=\"get\"><input type=\"hidden\" name=\"key\" "
+         "value=\"customSearchUrl\"><input type=\"hidden\" name=\"return\" "
+         "value=\"fubuki://settings/\"><input name=\"value\" value=\""
+      << HtmlEscape(customSearchUrl)
+      << "\" placeholder=\"https://example.com/search?q={query}\"><button "
+         "class=\"button\">"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "searchEngine", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
+      << "<div id=\"privacy\" class=\"field\" data-setting-section><span>"
+      << Label("Privacy")
+      << "</span><div class=\"section-kicker\">Clear local browsing records "
+         "and web storage.</div><div class=\"segmented\">"
+      << ActionForm("clearData", "history", "fubuki://settings/",
+                    Label("History"), "chip danger")
+      << ActionForm("clearData", "cookies", "fubuki://settings/", "Cookies",
+                    "chip danger")
+      << ActionForm("clearData", "cache", "fubuki://settings/", "Cache",
+                    "chip danger")
+      << ActionForm("clearData", "downloads", "fubuki://settings/",
+                    Label("Downloads"), "chip danger")
+      << ActionForm("clearData", "all", "fubuki://settings/",
+                    Label("Clear all"), "chip danger")
+      << "</div></div>"
+      << "<div id=\"downloads\" class=\"field\" data-setting-section><span>"
+      << Label("Downloads section")
+      << "</span><div class=\"section-kicker\">Set download confirmation and "
+         "the default folder.</div><div class=\"segmented\">"
+      << chip("askBeforeDownload", askBeforeDownload, "on",
+              Label("Ask before download"))
+      << chip("askBeforeDownload", askBeforeDownload, "off",
+              Label("Download automatically"))
+      << "</div><form class=\"inline-form\" action=\"fubuki://settings/set\" "
+         "method=\"get\"><input type=\"hidden\" name=\"key\" "
+         "value=\"downloadDirectory\"><input type=\"hidden\" name=\"return\" "
+         "value=\"fubuki://settings/\"><input name=\"value\" value=\""
+      << HtmlEscape(Setting("downloadDirectory", "")) << "\" placeholder=\""
+      << Label("Download directory") << "\"><button class=\"button\">"
+      << Label("Save") << "</button></form>"
+      << ActionForm("resetSetting", "downloadDirectory", "fubuki://settings/",
+                    Label("Reset"), "button")
+      << "</div>"
+      << "<div class=\"field\" data-setting-section><span>Shortcuts</span><div "
+         "class=\"meta\">Cmd+T, Cmd+N, Cmd+Shift+N, Cmd+W, Cmd+Shift+T, Cmd+L, "
+         "Cmd+R, Cmd+F, Cmd+,, Cmd+Plus, Cmd+Minus, Cmd+0</div></div>"
+      << "<div id=\"developer\" class=\"field\" data-setting-section><span>"
+      << Label("Developer")
+      << "</span><div class=\"section-kicker\">Inspect the app shell and "
+         "internal diagnostics.</div><div class=\"segmented\"><a "
+         "class=\"chip\" href=\"fubuki://debug/\">"
+      << Label("Debug page") << "</a></div></div>"
+      << "</section></div>";  return PageChrome("Settings", body.str());
 }
 
 std::string DebugHtml() {
@@ -702,10 +725,10 @@ std::string DebugHtml() {
   }
   body << "</div></div>";
   body << "<div class=\"field\"><span>" << Label("Actions")
-       << "</span><div class=\"segmented\"><a class=\"chip\" href=\""
-       << ActionLink("openDevTools", "1", "fubuki://debug/") << "\">" << Label("Open DevTools")
-       << "</a></div></div>";
-  body << "</section>";
+       << "</span><div class=\"segmented\">"
+       << ActionForm("openDevTools", "1", "fubuki://debug/",
+                     Label("Open DevTools"), "chip")
+       << "</div></div>";  body << "</section>";
   return PageChrome("Debug", body.str());
 }
 
@@ -861,6 +884,20 @@ std::string SearchRedirectUrl(const std::string& query) {
 bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
   offset_ = 0;
   auto& cache = PageCache::Instance();
+
+  // Destructive internal-page actions must never execute from a URL GET.
+  // `fubuki://settings/set?...` is only honored when submitted as a POST form
+  // body (see SettingsHtml), never from a navigation/link click. Reject any
+  // GET-style query-string invocation to avoid CSRF-style state changes.
+  if (url.rfind("fubuki://settings/set", 0) == 0) {
+    const std::string html =
+        "<!doctype html><meta charset=\"utf-8\"><title>Rejected</title>"
+        "<body style=\"font:14px -apple-system,sans-serif;padding:24px\">"
+        "<h1>Action rejected</h1><p>Settings changes must be submitted through "
+        "the UI, not a URL request.</p></body>";
+    LoadText(html, "text/html", 403);
+    return true;
+  }
 
   // Handle new tab search: fubuki://newtab/search?q=...
   if (url.rfind("fubuki://newtab/search", 0) == 0) {

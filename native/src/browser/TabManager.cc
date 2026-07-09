@@ -36,6 +36,37 @@ Tab &TabManager::CreateTab(const std::string &url, bool active) {
   return tabs_.back();
 }
 
+Tab &TabManager::CreateTab(const std::string &url, bool active,
+                           const std::string &tabId) {
+  if (tabs_.empty()) {
+    active = true;
+  }
+  if (active) {
+    for (auto &tab : tabs_) {
+      tab.isActive = false;
+    }
+  }
+
+  Tab tab;
+  tab.id = tabId.empty() ? NextId() : tabId;
+  tab.title = "New Tab";
+  tab.url = url;
+  tab.isActive = active;
+  tabs_.push_back(tab);
+
+  if (active) {
+    activeTabId_ = tabs_.back().id;
+  }
+
+  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), "",
+                     tabs_.back().id, ""});
+  if (active) {
+    eventBus_.Publish({EventType::TabActivated, "tabs.activated", tabs_.back(),
+                       "", tabs_.back().id, ""});
+  }
+  return tabs_.back();
+}
+
 bool TabManager::CloseTab(const std::string &tabId) {
   const auto it = std::find_if(tabs_.begin(), tabs_.end(),
                                [&](const Tab &tab) { return tab.id == tabId; });

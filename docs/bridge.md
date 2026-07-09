@@ -11,7 +11,15 @@ The UI talks to native code through `window.fubuki`.
   older host.
 
 Native bridge access is intended for `fubuki://app/` only. Internal content pages such as
-`fubuki://settings/` use trusted `fubuki://settings/set?...` actions handled by native code.
+`fubuki://settings/` may use trusted `fubuki://settings/set` actions handled by native code,
+but destructive actions are POST-only. The host rejects destructive `fubuki://settings/set?...`
+GET requests.
+
+FrostEngine-to-host side effects use a separate versioned JSON boundary:
+
+- FrostEngine emits `HostCommand` messages.
+- Native executes host side effects and returns `HostCommandResult`.
+- Native forwards CEF callbacks and OS observations as `HostEvent`.
 
 Common methods:
 
