@@ -220,6 +220,14 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 
 namespace fubuki {
 
+FrostStore &BrowserWindow::Store() {
+  return app_.Store();
+}
+
+const FrostStore &BrowserWindow::Store() const {
+  return app_.Store();
+}
+
 namespace {
 
 constexpr CGFloat kNavHeight = 42.0;
@@ -847,7 +855,7 @@ bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& ur
   const bool ok = Store().AddBookmark(title, url, faviconUrl);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
+  PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
@@ -855,7 +863,7 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
   const bool ok = Store().RemoveBookmark(url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://bookmarks");
+  PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
@@ -863,7 +871,7 @@ bool BrowserWindow::RemoveHistory(const std::string& url) {
   const bool ok = Store().RemoveHistory(url);
   eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://history");
+  PageCache::Instance().Invalidate("fubuki://history");
   return ok;
 }
 
@@ -983,7 +991,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     app_.PersistSession();
   }
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
@@ -991,7 +999,7 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
   Store().ResetSetting(key);
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
@@ -1351,7 +1359,7 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      Store().AddHistory(tab->title, tab->url);
+      Store().AddHistory(tab->title, tab->url, tab->faviconUrl);
       app_.PersistSession();
     }
     eventBus_.Publish(
@@ -1396,7 +1404,7 @@ void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  fubuki::PageCache::Instance().Invalidate("fubuki://downloads");
+  PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
 void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::string& url,
@@ -1831,26 +1839,21 @@ void BrowserWindow::WireEvents() {
 
     if (event.type == EventType::TabCreated) {
       bridge_->EmitToUi("tab.created", bridge_->TabToDictionary(event.tab));
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabUpdated) {
       auto patch = bridge_->TabToDictionary(event.tab);
       patch->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.updated", patch);
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabClosed) {
       auto closed = CefDictionaryValue::Create();
       closed->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.closed", closed);
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::TabActivated) {
       auto activated = CefDictionaryValue::Create();
       activated->SetString("tabId", event.tabId);
       bridge_->EmitToUi("tab.activated", activated);
-      bridge_->SyncFrostFromHost();
     } else if (event.type == EventType::NavigationStarted ||
                event.type == EventType::NavigationFinished ||
                event.type == EventType::NavigationFailed) {
-      bridge_->SyncFrostFromHost();
     }
   };
   auto subscribe = [this, &emit](EventType type) {

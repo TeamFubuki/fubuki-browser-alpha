@@ -189,7 +189,7 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
   const std::string sourceUrl = frame ? frame->GetURL().ToString() : "";
   if (!user_gesture || IsFubukiInternalUrl(sourceUrl)) {
     if (!window_->IsPrivate()) {
-      window_->Store().Log(
+      window_->Store().AddLog(
           "info", "Blocked popup from " + (sourceUrl.empty() ? "unknown source" : sourceUrl));
     }
     return true;
@@ -200,7 +200,7 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
       return true;
     }
     if (!window_->IsPrivate()) {
-      window_->Store().Log("info", "Opened blank popup as pending tab: " + popupTabId);
+      window_->Store().AddLog("info", "Opened blank popup as pending tab: " + popupTabId);
     }
     windowInfo = window_->PopupWindowInfo();
     client = new FubukiClient(window_, popupTabId, false);
@@ -228,7 +228,7 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
     return false;
   }
   if (!window_->IsPrivate()) {
-    window_->Store().Log("info", "Opened popup in new tab: " + url);
+    window_->Store().AddLog("info", "Opened popup in new tab: " + url);
   }
   const std::string windowId = window_->WindowId();
   CefPostTask(TID_UI, base::BindOnce(
@@ -424,7 +424,7 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     const std::string key = FormParam(query, "key");
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
       if (!window_->IsPrivate()) {
-        window_->Store().Log("warning",
+        window_->Store().AddLog("warning",
                              "Blocked destructive settings action over GET: " +
                                  key);
       }
@@ -456,7 +456,7 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
   }
 
   if (window_ && !window_->IsPrivate()) {
-    window_->Store().Log("info", "Permission denied for " + requesting_origin.ToString() + " (" +
+    window_->Store().AddLog("info", "Permission denied for " + requesting_origin.ToString() + " (" +
                                      std::to_string(requested_permissions) + ")");
   }
   callback->Continue(CEF_PERMISSION_RESULT_DENY);

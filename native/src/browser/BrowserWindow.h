@@ -125,12 +125,8 @@ class BrowserWindow {
   const TabManager& Tabs() const {
     return tabManager_;
   }
-  FrostStore &Store() {
-    return app_.Store();
-  }
-  const FrostStore &Store() const {
-    return app_.Store();
-  }
+  FrostStore &Store();
+  const FrostStore &Store() const;
   BrowserAppController& App() {
     return app_;
   }
