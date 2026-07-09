@@ -1,21 +1,22 @@
 # Fubuki Browser Alpha
 
-**A macOS-first browser shell powered by C++20, CEF, Rust, and SolidJS.**
+**A macOS-first browser foundation built on C++20, CEF, Rust, and SolidJS.**
 
-Fubuki Browser Alpha は、Chromium Embedded Framework を直接扱う macOS 向けブラウザシェルです。Electron / Tauri / WKWebView には依存せず、CEF を描画・Web 実行基盤として使い、ブラウザの論理状態は Rust 製の FrostEngine に集約します。
+Fubuki Browser Alpha は、Chromium Embedded Framework を直接扱う macOS 向けブラウザ基盤です。Electron / Tauri / WKWebView には依存せず、CEF を描画・Web 実行基盤として使い、タブ、ウィンドウ、設定、セッションなどのブラウザ状態は Rust 製の FrostEngine に集約します。
 
-このリポジトリは「ブラウザ UI を作る」だけではなく、タブ・ウィンドウ・セッション・設定・永続化・ホスト連携を分離し、将来的に自動操作や別ホストへ拡張できるブラウザ基盤を作ることを目的としています。
-
-> Status: Alpha / MVP. 実験的な実装を含みます。コード署名、ノータリゼーション、アップデーター、同期、拡張機能互換などはまだ提供していません。
+`Alpha` は、このリポジトリにおけるプロダクト名・コードネームです。リリース段階としての「アルファ版」を意味しません。現在の実装は MVP スコープで開発中のため、プロダクション用途のブラウザとしてはまだ扱いません。
 
 ## Concept
 
 Fubuki は、単なる CEF ラッパーではありません。
 
-- **Native-first** — macOS ネイティブホストが CEF とウィンドウを管理します。
+UI、エンジン、ネイティブホストを分離し、ブラウザの論理状態を FrostEngine に集約することで、UI の差し替え、ホスト境界の安定化、永続化、テスト、自動操作の拡張を前提にしたブラウザ基盤を目指します。
+
+- **Native-first** — macOS ネイティブホストが NSWindow と CEF Browser を管理します。
 - **Engine-owned state** — タブ、ウィンドウ、設定、セッションは FrostEngine が所有します。
-- **Protocol boundary** — UI とホストは Frost Protocol を通して状態を読み書きします。
-- **Replaceable layers** — UI、Engine、Host を分離し、実装の差し替えや自動操作境界を作りやすくします。
+- **Protocol boundary** — UI と Host は Frost Protocol / HostCommand / HostEvent を通して接続します。
+- **Replaceable layers** — UI、Engine、Host を分離し、将来的な置き換えや別ホスト実装を妨げません。
+- **Automation-ready boundary** — 外部操作は capability check と audit event を前提に、エンジンのコマンド層へ接続します。
 - **No heavyweight app wrapper** — Electron、Tauri、WKWebView、WebView2 は使用しません。
 
 ## Architecture
@@ -41,15 +42,17 @@ CEF / macOS Host (C++20)
 
 ## Requirements
 
-| Tool | Version |
+| Tool | Version / Notes |
 |---|---|
 | macOS | 12 or later |
 | Xcode Command Line Tools | latest |
 | CMake | 3.21 or later |
-| Rust | 1.96.1 or later |
-| Node.js | 20 or later |
-| pnpm | 11 or later |
-| LLVM via Homebrew | latest, for `clang-format` / `clang-tidy` |
+| Rust | stable toolchain with `clippy` and `rustfmt` |
+| Node.js | 22 or later |
+| pnpm | 11.x; `ui/package.json` pins `pnpm@11.9.0` |
+| LLVM via Homebrew | for `clang-format` / `clang-tidy` |
+| cppcheck | for native lint checks |
+| python3 / curl / tar | required by the CEF fetch script |
 
 Apple Silicon を主なターゲットにしています。Intel Mac でも CEF の `macosx64` ビルドを使う構成はありますが、互換性は利用する CEF ビルドに依存します。
 
@@ -71,7 +74,7 @@ make run
 make cef
 ```
 
-`make cef` は実行環境に応じて Apple Silicon では `macosarm64`、Intel では `macosx64` の CEF binary distribution を `third_party/cef/` に配置します。
+`make cef` は実行環境に応じて Apple Silicon では `macosarm64`、Intel では `macosx64` の CEF binary distribution を `third_party/cef/` に配置します。対象は CEF Automated Builds の stable channel から選ばれ、取得したアーカイブは公開されている SHA-1 がある場合に検証されます。
 
 手動で配置する場合は、[CEF Automated Builds](https://cef-builds.spotifycdn.com/index.html) から macOS 用 binary distribution を取得し、`third_party/cef/` に展開するか、CMake 設定時に `CEF_ROOT` を指定してください。
 
@@ -118,7 +121,7 @@ make test-ui       # Vitest
 make test-native   # CMake + GoogleTest / CTest
 ```
 
-## Lint and Format
+## Lint, Format, and Audit
 
 ```bash
 make lint-all       # UI + Rust + C++ linters
@@ -131,16 +134,12 @@ make lint-native    # Clang-Tidy / cppcheck
 make format         # Oxfmt for UI
 make format-rust    # rustfmt
 make format-native  # clang-format
+
+make audit          # cargo-audit
+make audit-deny     # cargo-deny
 ```
 
-## Security and Policy Checks
-
-```bash
-make audit       # cargo-audit
-make audit-deny  # cargo-deny
-```
-
-CI also runs UI checks, Rust checks, Rust FFI build verification, dependency audits, native unit tests, Rust docs, and repository hygiene checks.
+CI runs UI checks, Rust checks, Rust FFI build verification, Rust dependency audits, UI dependency audit, native unit tests, Rust docs, repository hygiene checks, and a heavier macOS CEF build on `main` or manual dispatch.
 
 ## Make Targets
 
@@ -158,9 +157,9 @@ CI also runs UI checks, Rust checks, Rust FFI build verification, dependency aud
 | `make clean` | Remove build outputs. |
 | `make distclean` | Remove build outputs, CEF binaries, and local caches. |
 
-## Implemented Scope
+## Current Scope
 
-The Alpha currently includes:
+Current implementation includes:
 
 - macOS CEF host with native window / browser instance management
 - SolidJS browser UI loaded through `fubuki://app/`
@@ -168,10 +167,10 @@ The Alpha currently includes:
 - Rust-owned browser state for windows, tabs, settings, and sessions
 - HostCommand / HostEvent bridge between FrostEngine and the native host
 - SQLite persistence for settings, history, bookmarks, downloads, and session snapshots
-- Normal and private window handling, with private windows using an off-the-record CEF request context
-- Internal pages for browser-owned surfaces such as settings, history, bookmarks, downloads, debug, and new tab
-- External command boundary with capability checks, audit events, and rate limiting
-- Local test, lint, format, audit, and CI workflows
+- normal and private window handling, with private windows using an off-the-record CEF request context
+- internal browser-owned pages such as settings, history, bookmarks, downloads, debug, and new tab
+- external command boundary with capability checks, audit events, and rate limiting
+- local test, lint, format, audit, and CI workflows
 
 ## Known Limitations
 
@@ -179,12 +178,13 @@ Fubuki Browser Alpha is not a production browser yet.
 
 - CEF binaries are configured externally and are not vendored.
 - Code signing, notarization, update delivery, and release packaging are out of scope for the current MVP.
-- Password manager, browser sync, Chrome extension compatibility, and polished import / export are not implemented.
+- Password manager, browser sync, Chrome extension compatibility, updater, and polished import / export are not included.
 - Session restore restores windows and last tab URLs, not full in-page navigation stacks.
-- Private windows use an off-the-record request context, but downloaded files still exist on disk if the user saves them.
+- Private windows use an off-the-record CEF request context and skip normal app data writes, but downloaded files still exist on disk if the user saves them.
 - Cache and site-data clearing is conservative and depends on CEF request-context behavior.
-- Bookmark folders and browser-compatible import / export still need more UX and persistence work.
+- Bookmark folders and browser-compatible import / export need more complete UX and persistence work.
 - The UI and content layout still uses native child views; there is no fully native toolbar yet.
+- macOS Apple Silicon is the primary target; Intel compatibility depends on the CEF build used.
 
 See [docs/known-limitations.md](docs/known-limitations.md) for the current list.
 
