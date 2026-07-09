@@ -58,30 +58,31 @@ std::string MimeForPath(const std::string& path) {
 }
 
 std::string HtmlEscape(const std::string& value) {
-  std::ostringstream out;
+  std::string out;
+  out.reserve(value.size() + 16);
   for (const char c : value) {
     switch (c) {
       case '&':
-        out << "&amp;";
+        out += "&amp;";
         break;
       case '<':
-        out << "&lt;";
+        out += "&lt;";
         break;
       case '>':
-        out << "&gt;";
+        out += "&gt;";
         break;
       case '"':
-        out << "&quot;";
+        out += "&quot;";
         break;
       case '\'':
-        out << "&#39;";
+        out += "&#39;";
         break;
       default:
-        out << c;
+        out += c;
         break;
     }
   }
-  return out.str();
+  return out;
 }
 
 void Execute(sqlite3* db, const std::string& sql) {
@@ -94,35 +95,45 @@ std::string ColumnText(sqlite3_stmt* statement, int column) {
 }
 
 sqlite3* OpenDatabase() {
+  // Cache a single process-lifetime connection. Opening the database (and
+  // running the DDL) on every Setting()/QueryRecords() call was a major source
+  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
+  // The connection is now opened once and reused for the process lifetime.
+  static sqlite3* cached = nullptr;
+  static bool initialized = false;
+  if (initialized) {
+    return cached;
+  }
+  initialized = true;
   std::filesystem::create_directories(ProfilePath());
-  sqlite3* db = nullptr;
-  if (sqlite3_open(DatabasePath().string().c_str(), &db) != SQLITE_OK) {
+  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
+    cached = nullptr;
     return nullptr;
   }
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
           "TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL "
           "UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at "
           "TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
           "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  Execute(db, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
-  Execute(db,
+  Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
-  Execute(db,
+  Execute(cached,
           "CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT "
           "NULL,permission TEXT NOT NULL,value TEXT NOT NULL,updated_at "
           "TEXT NOT NULL,PRIMARY KEY(origin,permission))");
-  return db;
+  return cached;
 }
 
 std::string Setting(const std::string& key, const std::string& fallback = "") {
@@ -137,7 +148,6 @@ std::string Setting(const std::string& key, const std::string& fallback = "") {
     value = ColumnText(statement, 0);
   }
   sqlite3_finalize(statement);
-  sqlite3_close(db);
   return value.empty() ? fallback : value;
 }
 
@@ -244,10 +254,6 @@ std::string NormalizedDownloadState(const Record& record) {
   return record.state.empty() ? "unknown" : record.state;
 }
 
-bool IsActiveDownloadState(const std::string& state) {
-  return state == "started" || state == "in_progress";
-}
-
 std::string DownloadStatusText(const std::string& state, int percent) {
   if (state == "completed") {
     return Label("Completed");
@@ -301,7 +307,6 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
   }
 
   sqlite3_finalize(statement);
-  sqlite3_close(db);
   return records;
 }
 
