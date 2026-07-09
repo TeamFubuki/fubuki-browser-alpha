@@ -3,7 +3,11 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/TeamFubuki/fubuki-browser-alpha/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/TeamFubuki/fubuki-browser-alpha/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/TeamFubuki/fubuki-browser-alpha?style=flat-square&label=License)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS-111111?style=flat-square)
-![Stack](https://img.shields.io/badge/stack-C%2B%2B20%20%2F%20CEF%20%2F%20Rust%20%2F%20SolidJS-444444?style=flat-square)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square)
+![Rust](https://img.shields.io/badge/Rust-stable-b7410e?style=flat-square)
+![SolidJS](https://img.shields.io/badge/UI-SolidJS-2c4f7c?style=flat-square)
+![CEF](https://img.shields.io/badge/CEF-external-555555?style=flat-square)
+![Node.js](https://img.shields.io/badge/Node.js-22%2B-3c873a?style=flat-square)
 
 **Native browser core for macOS. Built with C++20, CEF, Rust, and SolidJS.**
 
