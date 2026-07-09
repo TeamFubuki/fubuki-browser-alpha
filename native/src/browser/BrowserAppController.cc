@@ -27,9 +27,7 @@ ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
 BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
     : profilePath_(std::move(profilePath)),
       engine_(profilePath_.string() + "/frost-engine.sqlite3"),
-      store_(profilePath_,
-             engine_.IsAvailable() ? static_cast<void *>(&engine_)
-                                   : nullptr) {
+      store_(profilePath_, engine_.RawHandle()) {
   store_.AddLog("info", "BrowserAppController initialized");
 }
 
@@ -59,12 +57,14 @@ void BrowserAppController::Start() {
 namespace {
 
 // Self-rescheduling host command poller. Runs on the CEF UI thread and drains
-// FrostEngine HostCommands at a fixed cadence.
+// FrostEngine HostCommands at a fixed cadence. The poller verifies the
+// controller is still the current instance before rescheduling, preventing a
+// use-after-free if the controller is destroyed between ticks.
 void PollHostCommands(BrowserAppController *app) {
-  if (app) {
+  if (app && app == GetBrowserAppController()) {
     app->DispatchHostCommands();
+    CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, app), 16);
   }
-  CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, app), 16);
 }
 
 // Builds a HostCommandResult JSON envelope for the given command id.

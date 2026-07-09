@@ -104,12 +104,13 @@ sqlite3* OpenDatabase() {
   if (initialized) {
     return cached;
   }
-  initialized = true;
   std::filesystem::create_directories(ProfilePath());
   if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
     cached = nullptr;
     return nullptr;
   }
+  // Only mark as initialized after a successful open so retries are possible.
+  initialized = true;
   Execute(cached,
           "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
           "TEXT NOT NULL)");
@@ -125,6 +126,8 @@ sqlite3* OpenDatabase() {
           "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
           "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
+  // Migration for existing databases that lack download_id column.
+  // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
   Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
   Execute(cached,
           "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "

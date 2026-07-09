@@ -18,6 +18,10 @@ public:
     return handle_ != nullptr;
   }
 
+  // Returns the raw FrostEngine handle. Only used by FrostStore which
+  // needs the raw handle for protocol delegation.
+  void *RawHandle() const { return handle_; }
+
   std::string ProcessJson(const std::string &requestJson);
   bool PollEventJson(std::string &eventJson);
   bool PollHostCommandJson(std::string &commandJson);

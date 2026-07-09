@@ -21,6 +21,8 @@ pub struct FrostEngineHandle {
     host_command_rx: Receiver<HostCommandEnvelope>,
     host_event_tx: Sender<HostEventEnvelope>,
     host_result_tx: Sender<HostCommandResultEnvelope>,
+    // Channel for external audit/rate-limit events emitted by the FFI layer.
+    external_event_tx: Sender<frost_protocol::ExternalEventEnvelope>,
     external_policy: std::sync::Mutex<ExternalPolicy>,
     // Serializes the request_tx send + response_rx recv pair so that the JSON
     // processing path and the external routing path (which share the same
@@ -59,6 +61,7 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
     let (host_command_tx, host_command_rx) = crossbeam_channel::unbounded();
     let (host_event_tx, host_event_rx) = crossbeam_channel::unbounded();
     let (host_result_tx, host_result_rx) = crossbeam_channel::unbounded();
+    let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
 
     let join_handle = if path.is_null() {
         spawn_core(
@@ -110,6 +113,7 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         host_command_rx,
         host_event_tx,
         host_result_tx,
+        external_event_tx,
         external_policy: std::sync::Mutex::new(ExternalPolicy::new()),
         request_response_lock: std::sync::Mutex::new(()),
         join_handle: Some(join_handle),
@@ -457,10 +461,34 @@ fn route_external_to_core(
     // Gate by the caller origin, never by the correlation id, and never trust
     // the capability declared inside the command envelope.
     if !policy.is_granted(&envelope.origin, &capability) {
+        // Emit audit event for denied capability.
+        let _ = handle.external_event_tx.send(
+            frost_protocol::ExternalEventEnvelope::new(frost_protocol::ExternalEvent::Audit {
+                command_id: envelope.id.clone(),
+                capability,
+                allowed: false,
+                reason: Some("capability not granted".into()),
+            }),
+        );
         return serde_json::json!({ "allowed": false, "error": "capability not granted" })
             .to_string();
     }
     if !policy.check_rate(&envelope.origin) {
+        // Emit rate-limit and audit events.
+        let _ = handle.external_event_tx.send(
+            frost_protocol::ExternalEventEnvelope::new(frost_protocol::ExternalEvent::RateLimited {
+                command_id: envelope.id.clone(),
+                retry_after_ms: 60_000,
+            }),
+        );
+        let _ = handle.external_event_tx.send(
+            frost_protocol::ExternalEventEnvelope::new(frost_protocol::ExternalEvent::Audit {
+                command_id: envelope.id.clone(),
+                capability,
+                allowed: false,
+                reason: Some("rate limited".into()),
+            }),
+        );
         return serde_json::json!({ "allowed": false, "error": "rate limited" }).to_string();
     }
 
@@ -513,6 +541,15 @@ fn route_external_to_core(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             if handle.request_tx.send(req).is_err() {
+                // Emit audit for engine unavailable.
+                let _ = handle.external_event_tx.send(
+                    frost_protocol::ExternalEventEnvelope::new(frost_protocol::ExternalEvent::Audit {
+                        command_id: envelope.id.clone(),
+                        capability,
+                        allowed: false,
+                        reason: Some("engine unavailable".into()),
+                    }),
+                );
                 return serde_json::json!({ "allowed": false, "error": "engine unavailable" })
                     .to_string();
             }
@@ -521,6 +558,17 @@ fn route_external_to_core(
                     let mut obj = serde_json::Map::new();
                     obj.insert("allowed".into(), serde_json::json!(resp.ok));
                     obj.insert("ok".into(), serde_json::json!(resp.ok));
+                    // Emit audit for successful or failed routing.
+                    let _ = handle.external_event_tx.send(
+                        frost_protocol::ExternalEventEnvelope::new(
+                            frost_protocol::ExternalEvent::Audit {
+                                command_id: envelope.id.clone(),
+                                capability,
+                                allowed: resp.ok,
+                                reason: if resp.ok { None } else { Some("request failed".into()) },
+                            },
+                        ),
+                    );
                     // Surface the snapshot body for state reads instead of just
                     // an `ok` flag.
                     if let Response::AppSnapshot(state) = &resp.response {
@@ -532,6 +580,17 @@ fn route_external_to_core(
                     serde_json::Value::Object(obj).to_string()
                 }
                 Err(_) => {
+                    // Emit audit for no response.
+                    let _ = handle.external_event_tx.send(
+                        frost_protocol::ExternalEventEnvelope::new(
+                            frost_protocol::ExternalEvent::Audit {
+                                command_id: envelope.id.clone(),
+                                capability,
+                                allowed: false,
+                                reason: Some("no response".into()),
+                            },
+                        ),
+                    );
                     serde_json::json!({ "allowed": false, "error": "no response" }).to_string()
                 }
             }
@@ -539,6 +598,15 @@ fn route_external_to_core(
         None => {
             // DebugOpenDevTools (and any unsupported command) is a host/CEF
             // concern the engine must not perform; never report success.
+            // Emit audit for unsupported command.
+            let _ = handle.external_event_tx.send(
+                frost_protocol::ExternalEventEnvelope::new(frost_protocol::ExternalEvent::Audit {
+                    command_id: envelope.id.clone(),
+                    capability,
+                    allowed: false,
+                    reason: Some("command not supported via external router".into()),
+                }),
+            );
             serde_json::json!({ "allowed": false, "error": "command not supported via external router" })
                 .to_string()
         }

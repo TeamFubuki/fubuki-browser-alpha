@@ -22,6 +22,9 @@ std::string CStrOrEmpty(char *value) {
 
 FrostStore::FrostStore(std::filesystem::path profilePath, void *engineHandle)
     : profilePath_(std::move(profilePath)), engine_(engineHandle) {
+  // Ensure the profile directory exists before opening the database.
+  std::error_code ec;
+  std::filesystem::create_directories(profilePath_, ec);
   const std::filesystem::path dbPath = profilePath_ / "frost-engine.sqlite3";
   handle_ = frost_store_open(dbPath.string().c_str());
   if (!handle_) {

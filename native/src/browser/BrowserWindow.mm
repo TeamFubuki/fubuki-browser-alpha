@@ -877,6 +877,7 @@ bool BrowserWindow::RemoveHistory(const std::string& url) {
 
 bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& path) {
   const bool ok = Store().RemoveDownload(url, path);
+  PageCache::Instance().Invalidate("fubuki://downloads");
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path.empty() ? url : path});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
