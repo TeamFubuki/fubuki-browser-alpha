@@ -165,7 +165,7 @@ CEF / macOS Host (C++20)
 feat(protocol): add tab duplicate request
 fix(native): reject destructive settings GET navigation
 docs(architecture): clarify host state ownership
-deps/ui: update Tailwind CSS
+deps(ui): update Tailwind CSS
 ```
 
 ## Pull Requests / プルリクエスト
