@@ -128,13 +128,11 @@ export function useSidebarResize() {
     handle.addEventListener('lostpointercapture', onLostPointerCapture);
   };
 
-  const resetWidth = async () => {
+  const resetWidth = () => {
     const width = clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-    try {
-      await saveWidth(width);
-    } catch (error) {
-      console.error('[Fubuki] Failed to reset sidebar width:', error);
-    }
+    void saveWidth(width).catch((error) =>
+      console.error('[Fubuki] Failed to reset sidebar width:', error),
+    );
   };
 
   onCleanup(() => {

@@ -1,8 +1,14 @@
 export type SidebarWidthSender = (width: number) => Promise<unknown>;
+
+/**
+ * Called after a native update completes successfully.
+ * Never called after `dispose()` has been invoked.
+ */
 export type SidebarWidthCallback = (width: number) => void;
 
 export interface SidebarWidthSyncOptions {
   send: SidebarWidthSender;
+  /** Called after each successful native update. Not called after dispose. */
   onApplied?: SidebarWidthCallback;
 }
 
@@ -52,9 +58,15 @@ export function createSidebarWidthSync(
 
   const flush = async (width: number) => {
     update(width);
-    // Wait until the loop drains (queuedWidth becomes undefined and running
-    // finishes). The finally block in `start` re-arms if needed.
-    while (running) await running;
+    // Wait until the loop fully drains: running must be undefined AND
+    // queuedWidth must be consumed. The finally block in `start` may
+    // re-arm the loop if a new update arrived while we were waiting, so
+    // we keep polling until both conditions are met.
+    for (;;) {
+      const p = running;
+      if (p) await p;
+      if (queuedWidth === undefined && running === undefined) break;
+    }
   };
 
   const dispose = () => {

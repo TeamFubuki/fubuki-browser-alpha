@@ -17,7 +17,8 @@
   grid-template-rows: 0 minmax(0, 1fr);
 }
 
-/* Disable all transitions during live resize for instant feedback. */
+/* Disable all transitions during live resize for instant feedback.
+   !important is used to override any component-level transitions. */
 :root[data-sidebar-resizing='true'] .browser-shell,
 :root[data-sidebar-resizing='true'] .sidebar,
 :root[data-sidebar-resizing='true'] .top-bar,
