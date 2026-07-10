@@ -9,14 +9,18 @@ pub enum EngineError {
 pub type EngineResult<T> = Result<T, EngineError>;
 
 pub trait EngineAdapter {
-    fn create_page(
+    fn create_page(&mut self, tab_id: &str, window_id: &str, url: &str) -> EngineResult<()>;
+    fn close_page(&mut self, tab_id: &str) -> EngineResult<()>;
+    fn activate_page(&mut self, tab_id: &str) -> EngineResult<()>;
+    fn pin_page(&mut self, tab_id: &str, pinned: bool) -> EngineResult<()>;
+    fn move_page(&mut self, tab_id: &str, to_index: usize) -> EngineResult<()>;
+    fn set_overlay(
         &mut self,
-        tab_id: &str,
         window_id: &str,
-        url: &str,
         active: bool,
+        width: Option<f64>,
+        height: Option<f64>,
     ) -> EngineResult<()>;
-    fn close_page(&mut self, tab_id: &str, successor_tab_id: Option<&str>) -> EngineResult<()>;
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()>;
     fn reload(&mut self, tab_id: &str) -> EngineResult<()>;
     fn stop(&mut self, tab_id: &str) -> EngineResult<()>;
@@ -47,11 +51,30 @@ pub trait WindowHost {
 pub struct NoopEngineAdapter;
 
 impl EngineAdapter for NoopEngineAdapter {
-    fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
+    fn create_page(&mut self, _: &str, _: &str, _: &str) -> EngineResult<()> {
         Ok(())
     }
 
-    fn close_page(&mut self, _: &str, _: Option<&str>) -> EngineResult<()> {
+    fn close_page(&mut self, _: &str) -> EngineResult<()> {
+        Ok(())
+    }
+
+    fn activate_page(&mut self, _: &str) -> EngineResult<()> {
+        Ok(())
+    }
+    fn pin_page(&mut self, _: &str, _: bool) -> EngineResult<()> {
+        Ok(())
+    }
+    fn move_page(&mut self, _: &str, _: usize) -> EngineResult<()> {
+        Ok(())
+    }
+    fn set_overlay(
+        &mut self,
+        _: &str,
+        _: bool,
+        _: Option<f64>,
+        _: Option<f64>,
+    ) -> EngineResult<()> {
         Ok(())
     }
 
