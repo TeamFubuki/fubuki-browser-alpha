@@ -9,6 +9,8 @@
   --tab-height: 32px;
   --button-size: 28px;
   --window-control-space: 96px;
+  --resize-transition-duration: 0.16s;
+  --resize-transition-easing: cubic-bezier(0.4, 0, 0.2, 1);
   --bg: #f5f6f8;
   --sidebar-bg: #eceff3;
   --topbar-bg: #f8f9fb;

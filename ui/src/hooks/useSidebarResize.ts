@@ -30,7 +30,6 @@ export function useSidebarResize() {
   let startX = 0;
   let startWidth = DEFAULT_SIDEBAR_WIDTH;
   let pendingWidth = DEFAULT_SIDEBAR_WIDTH;
-  let animationFrame = 0;
   const nativeWidth = createSidebarWidthSync((width) =>
     fubuki.invoke('ui.setSidebarWidth', { width }),
   );
@@ -41,18 +40,6 @@ export function useSidebarResize() {
       key: 'sidebarWidth',
       value: String(width),
     });
-  };
-
-  const flushLiveWidth = () => {
-    animationFrame = 0;
-    applyCssSidebarWidth(pendingWidth);
-    nativeWidth.update(pendingWidth);
-  };
-
-  const scheduleLiveWidth = () => {
-    if (!animationFrame) {
-      animationFrame = requestAnimationFrame(flushLiveWidth);
-    }
   };
 
   const removeListeners = () => {
@@ -75,11 +62,6 @@ export function useSidebarResize() {
     );
     pendingWidth = width;
 
-    if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
-      animationFrame = 0;
-    }
-
     removeListeners();
     delete document.documentElement.dataset.sidebarResizing;
     setResizing(false);
@@ -97,7 +79,10 @@ export function useSidebarResize() {
   const onPointerMove = (event: PointerEvent) => {
     if (!active || event.pointerId !== activePointerId) return;
     pendingWidth = clampSidebarWidth(startWidth + event.clientX - startX);
-    scheduleLiveWidth();
+    // Apply both halves of the split view from the same pointer event. The
+    // bridge coalesces only native updates that are still in flight.
+    applyCssSidebarWidth(pendingWidth);
+    nativeWidth.update(pendingWidth);
   };
 
   const onPointerUp = (event: PointerEvent) => {
@@ -146,9 +131,6 @@ export function useSidebarResize() {
   };
 
   onCleanup(() => {
-    if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
-    }
     removeListeners();
     if (active && handle?.hasPointerCapture(activePointerId)) {
       handle.releasePointerCapture(activePointerId);

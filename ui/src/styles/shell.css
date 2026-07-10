@@ -11,7 +11,6 @@
   background: var(--bg);
   pointer-events: none;
   contain: layout style;
-  transition: grid-template-columns 0.16s ease;
 }
 
 .browser-shell.quiet-mode {
@@ -38,4 +37,8 @@
   border-top: 1px solid var(--line);
   pointer-events: none;
   contain: layout style paint;
+}
+
+:root[data-sidebar-resizing='true'] .webview-area {
+  transition: none;
 }
