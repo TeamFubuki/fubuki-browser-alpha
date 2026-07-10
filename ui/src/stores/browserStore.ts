@@ -46,34 +46,45 @@ export const [browserState, setBrowserState] = createStore(initialState);
 
 // --- Lightweight targeted refresh (no full snapshot) ---
 
-let bookmarksPending = false;
-let historyPending = false;
+function createRefreshQueue<T>(
+  load: () => Promise<T>,
+  apply: (value: T) => void,
+) {
+  let queued = false;
+  let running: Promise<void> | undefined;
 
-async function refreshBookmarks() {
-  if (bookmarksPending) return;
-  bookmarksPending = true;
-  try {
-    const list = await invokeBridge('bookmarks.list');
-    setBrowserState('bookmarks', list as BookmarkRecord[]);
-  } catch {
-    // ignore
-  } finally {
-    bookmarksPending = false;
-  }
+  return () => {
+    queued = true;
+    if (running) return running;
+
+    running = (async () => {
+      while (queued) {
+        queued = false;
+        try {
+          apply(await load());
+        } catch {
+          // A later native event or snapshot will retry the refresh.
+        }
+      }
+    })().finally(() => {
+      running = undefined;
+    });
+    return running;
+  };
 }
 
-async function refreshHistory() {
-  if (historyPending) return;
-  historyPending = true;
-  try {
-    const list = await invokeBridge('history.list');
-    setBrowserState('history', list as HistoryRecord[]);
-  } catch {
-    // ignore
-  } finally {
-    historyPending = false;
-  }
-}
+const refreshBookmarks = createRefreshQueue(
+  () => invokeBridge('bookmarks.list'),
+  (list: BookmarkRecord[]) => setBrowserState('bookmarks', list),
+);
+const refreshHistory = createRefreshQueue(
+  () => invokeBridge('history.list'),
+  (list: HistoryRecord[]) => setBrowserState('history', list),
+);
+const refreshDownloads = createRefreshQueue(
+  () => invokeBridge('downloads.list'),
+  (list) => setBrowserState('downloads', list),
+);
 
 // --- Full snapshot refresh (used only on startup and app.stateChanged) ---
 
@@ -321,11 +332,11 @@ export function bindNativeEvents() {
 
     // --- Downloads (targeted refresh) ---
     onBridgeEvent('downloads.updated', () => {
-      void refreshFullState('downloads.updated');
+      void refreshDownloads();
     }),
 
     onBridgeEvent('download.changed', () => {
-      void refreshFullState('download.changed');
+      void refreshDownloads();
     }),
 
     // --- Full app state changed (edge cases) ---

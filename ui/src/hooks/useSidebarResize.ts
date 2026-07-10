@@ -1,11 +1,11 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { fubuki } from '../bridge/fubuki';
-import { browserState, refreshState } from '../stores/browserStore';
+import { browserState } from '../stores/browserStore';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
+import { createSidebarWidthSync } from '../sidebarWidthSync';
 
-function applyLiveSidebarWidth(width: number) {
+function applyCssSidebarWidth(width: number) {
   document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
-  void fubuki.invoke('ui.setSidebarWidth', { width });
 }
 
 function currentSidebarWidth() {
@@ -31,15 +31,22 @@ export function useSidebarResize() {
   let startWidth = DEFAULT_SIDEBAR_WIDTH;
   let pendingWidth = DEFAULT_SIDEBAR_WIDTH;
   let animationFrame = 0;
+  const nativeWidth = createSidebarWidthSync((width) =>
+    fubuki.invoke('ui.setSidebarWidth', { width }),
+  );
 
-  const saveWidth = (width: number) =>
-    fubuki
-      .invoke('settings.set', { key: 'sidebarWidth', value: String(width) })
-      .then(() => refreshState('settings.saved'));
+  const saveWidth = async (width: number) => {
+    await nativeWidth.flush(width);
+    await fubuki.invoke('settings.set', {
+      key: 'sidebarWidth',
+      value: String(width),
+    });
+  };
 
   const flushLiveWidth = () => {
     animationFrame = 0;
-    applyLiveSidebarWidth(pendingWidth);
+    applyCssSidebarWidth(pendingWidth);
+    nativeWidth.update(pendingWidth);
   };
 
   const scheduleLiveWidth = () => {
@@ -76,13 +83,15 @@ export function useSidebarResize() {
     removeListeners();
     delete document.documentElement.dataset.sidebarResizing;
     setResizing(false);
-    applyLiveSidebarWidth(width);
+    applyCssSidebarWidth(width);
 
     if (handle?.hasPointerCapture(activePointerId)) {
       handle.releasePointerCapture(activePointerId);
     }
     activePointerId = -1;
-    void saveWidth(width);
+    void saveWidth(width).catch((error) =>
+      console.error('[Fubuki] Failed to save sidebar width:', error),
+    );
   };
 
   const onPointerMove = (event: PointerEvent) => {
@@ -130,8 +139,10 @@ export function useSidebarResize() {
 
   const resetWidth = () => {
     const width = clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-    applyLiveSidebarWidth(width);
-    void saveWidth(width);
+    applyCssSidebarWidth(width);
+    void saveWidth(width).catch((error) =>
+      console.error('[Fubuki] Failed to reset sidebar width:', error),
+    );
   };
 
   onCleanup(() => {
@@ -139,6 +150,12 @@ export function useSidebarResize() {
       cancelAnimationFrame(animationFrame);
     }
     removeListeners();
+    if (active && handle?.hasPointerCapture(activePointerId)) {
+      handle.releasePointerCapture(activePointerId);
+    }
+    active = false;
+    activePointerId = -1;
+    nativeWidth.dispose();
     delete document.documentElement.dataset.sidebarResizing;
   });
 
