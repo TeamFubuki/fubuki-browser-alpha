@@ -4,6 +4,7 @@ import BrowserShell from './components/BrowserShell';
 import CommandPalette from './components/commandPalette/CommandPalette';
 import { resolveLanguage } from './i18n';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from './sidebarSizing';
+import { adjacentTabId, tabIdForNumberShortcut } from './tabShortcuts';
 import {
   activeTab,
   bindNativeEvents,
@@ -17,11 +18,41 @@ import {
 let omniboxInput: HTMLInputElement | null = null;
 
 function onKeyDown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey && !event.metaKey && key === 'tab') {
+    const target = adjacentTabId(
+      browserState.tabs,
+      browserState.activeTabId,
+      !event.shiftKey,
+    );
+    if (target) void tabs.activate(target);
+    event.preventDefault();
+    return;
+  }
+
   const command = event.metaKey || event.ctrlKey;
   if (!command) return;
 
   const tab = activeTab();
-  const key = event.key.toLowerCase();
+  const numberedTab = tabIdForNumberShortcut(browserState.tabs, event.key);
+  if (numberedTab) {
+    void tabs.activate(numberedTab);
+    event.preventDefault();
+    return;
+  }
+  if (
+    event.altKey &&
+    (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+  ) {
+    const target = adjacentTabId(
+      browserState.tabs,
+      browserState.activeTabId,
+      event.key === 'ArrowRight',
+    );
+    if (target) void tabs.activate(target);
+    event.preventDefault();
+    return;
+  }
   if (key === 'k') {
     window.dispatchEvent(new CustomEvent('fubuki:open-palette'));
     event.preventDefault();

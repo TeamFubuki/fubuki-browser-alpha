@@ -39,6 +39,13 @@ export const dictionaries = {
     'tabs.pinned': 'Pinned tabs',
     'tabs.search': 'Search tabs',
     'tabs.open': 'Open tabs',
+    'tabs.actions': 'Tab actions',
+    'tabs.closeOther': 'Close other tabs',
+    'tabs.closeToRight': 'Close tabs to the right',
+    'tabs.duplicate': 'Duplicate tab',
+    'tabs.moveToNewWindow': 'Move tab to new window',
+    'tabs.pin': 'Pin tab',
+    'tabs.unpin': 'Unpin tab',
   },
   ja: {
     'action.addBookmark': 'ブックマークに追加',
@@ -80,6 +87,13 @@ export const dictionaries = {
     'tabs.pinned': '固定タブ',
     'tabs.search': 'タブを検索',
     'tabs.open': '開いているタブ',
+    'tabs.actions': 'タブ操作',
+    'tabs.closeOther': '他のタブを閉じる',
+    'tabs.closeToRight': '右側のタブを閉じる',
+    'tabs.duplicate': 'タブを複製',
+    'tabs.moveToNewWindow': '新しいウィンドウへ移動',
+    'tabs.pin': 'タブを固定',
+    'tabs.unpin': 'タブの固定を解除',
   },
 } as const;
 

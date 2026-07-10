@@ -62,8 +62,9 @@ function createRefreshQueue<T>(
         queued = false;
         try {
           apply(await load());
-        } catch {
-          // A later native event or snapshot will retry the refresh.
+        } catch (error) {
+          console.error('[Fubuki] Targeted state refresh failed:', error);
+          setBrowserState('status', 'Error');
         }
       }
     })().finally(() => {

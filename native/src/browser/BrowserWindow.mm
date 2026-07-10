@@ -742,9 +742,39 @@ CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId,
   return commands_.Execute(commandId, args);
 }
 
-bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, char character) {
+bool BrowserWindow::ActivateRelativeTab(bool forward) {
+  const auto tabs = tabManager_.GetTabs();
+  if (tabs.empty()) {
+    return false;
+  }
+  const std::string activeTabId = tabManager_.GetActiveTabId();
+  const auto active = std::find_if(tabs.begin(), tabs.end(),
+                                   [&activeTabId](const Tab& tab) {
+                                     return tab.id == activeTabId;
+                                   });
+  const size_t current = active == tabs.end()
+                             ? 0
+                             : static_cast<size_t>(std::distance(tabs.begin(), active));
+  const size_t target = forward ? (current + 1) % tabs.size()
+                                : (current + tabs.size() - 1) % tabs.size();
+  auto params = CefDictionaryValue::Create();
+  params->SetString("tabId", tabs[target].id);
+  return app_.RequestEngineCommand("tabs.activate", params);
+}
+
+bool BrowserWindow::HandleShortcut(bool commandDown, bool controlDown,
+                                   bool shiftDown, bool altDown, int keyCode,
+                                   char character) {
   Tab* tab = tabManager_.GetActiveTab();
   const std::string tabId = tab ? tab->id : "";
+  auto requestTabCommand = [this, &tabId](const std::string& method) {
+    if (tabId.empty()) {
+      return false;
+    }
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabId);
+    return app_.RequestEngineCommand(method, params);
+  };
   if ((commandDown && character == 'l') || (commandDown && character == 'L')) {
     return FocusOmnibox();
   }
@@ -756,11 +786,23 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
                                      : false;
   }
   if (commandDown && character == ',') {
-    return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
+    if (!tab) {
+      auto params = CefDictionaryValue::Create();
+      params->SetString("url", "fubuki://settings/");
+      params->SetBool("active", true);
+      return app_.RequestEngineCommand("tabs.create", params);
+    }
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabId);
+    params->SetString("input", "fubuki://settings/");
+    return app_.RequestEngineCommand("tabs.navigate", params);
   }
   if (commandDown && (character == 'b' || character == 'B')) {
     const std::string current = Store().GetSetting("sidebarVisible");
-    return SetSetting("sidebarVisible", current == "hide" ? "show" : "hide");
+    auto params = CefDictionaryValue::Create();
+    params->SetString("key", "sidebarVisible");
+    params->SetString("value", current == "hide" ? "show" : "hide");
+    return app_.RequestEngineCommand("settings.set", params);
   }
   if (commandDown && (character == 'd' || character == 'D')) {
     if (uiBrowser_) {
@@ -774,8 +816,32 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
   if (!tab) {
     return false;
   }
+  if (controlDown && !commandDown && keyCode == 0x09) {
+    return ActivateRelativeTab(!shiftDown);
+  }
+  if (commandDown && character >= '1' && character <= '9') {
+    const auto tabs = tabManager_.GetTabs();
+    if (tabs.empty()) {
+      return false;
+    }
+    const size_t requested = character == '9'
+                                 ? tabs.size() - 1
+                                 : static_cast<size_t>(character - '1');
+    if (requested >= tabs.size()) {
+      return false;
+    }
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabs[requested].id);
+    return app_.RequestEngineCommand("tabs.activate", params);
+  }
+  if (commandDown && altDown && keyCode == 0x25) {
+    return ActivateRelativeTab(false);
+  }
+  if (commandDown && altDown && keyCode == 0x27) {
+    return ActivateRelativeTab(true);
+  }
   if (commandDown && character == 'T') {
-    return ReopenClosedTab();
+    return app_.RequestEngineCommand("tabs.reopenClosed");
   }
   if (commandDown && character == '+') {
     return ZoomIn();
@@ -795,19 +861,28 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return false;
   }
   if (commandDown && (character == 'r' || character == 'R')) {
-    return Reload(tabId);
+    return requestTabCommand("tabs.reload");
   }
   if (commandDown && character == 't') {
-    return CreateTab("fubuki://newtab/", true);
+    return app_.RequestEngineCommand("tabs.create");
   }
-  if (commandDown && (character == 'w' || character == 'W')) {
-    return CloseTab(tabId);
+  if (commandDown && character == 'W') {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("windowId", windowId_);
+    return app_.RequestEngineCommand("windows.close", params);
+  }
+  if (commandDown && character == 'w') {
+    return requestTabCommand("tabs.close");
   }
   if ((commandDown && character == '[') || (altDown && keyCode == 0x25)) {
-    return GoBack(tabId);
+    return requestTabCommand("tabs.goBack");
   }
   if ((commandDown && character == ']') || (altDown && keyCode == 0x27)) {
-    return GoForward(tabId);
+    return requestTabCommand("tabs.goForward");
+  }
+  if (!commandDown && !controlDown && !altDown && keyCode == 0x1B &&
+      tab->isLoading) {
+    return requestTabCommand("tabs.stop");
   }
   return false;
 }
@@ -991,6 +1066,28 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   return true;
 }
 
+bool BrowserWindow::ApplySetting(const std::string& key,
+                                 const std::string& value) {
+  if (key == "sidebarWidth") {
+    try {
+      liveSidebarWidth_ = std::clamp(std::stod(value),
+                                     static_cast<double>(kMinSidebarWidth),
+                                     static_cast<double>(kMaxSidebarWidth));
+    } catch (const std::exception&) {
+      return false;
+    }
+  }
+  if (key == "sidebarVisible" || key == "sidebarWidth" ||
+      key == "toolbarDensity") {
+    UpdateContentFrame();
+  }
+  if (key == "appearance" || key == "theme" || key == "language" ||
+      key == "sidebarVisible" || key == "sidebarWidth") {
+    PageCache::Instance().Invalidate("fubuki://settings");
+  }
+  return true;
+}
+
 bool BrowserWindow::ResetSetting(const std::string& key) {
   Store().ResetSetting(key);
   if (key == "sidebarWidth") {
@@ -1057,6 +1154,17 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   const std::string key = QueryParam(url, "key");
   const std::string value = QueryParam(url, "value");
   const std::string returnPage = QueryParam(url, "return");
+  const std::string safeReturnPage =
+      IsSafeSettingsReturnPage(returnPage) ? returnPage : "";
+  const std::string destination = safeReturnPage.rfind("fubuki://", 0) == 0
+                                      ? safeReturnPage
+                                      : safeReturnPage.empty()
+                                            ? "fubuki://settings/"
+                                            : "fubuki://settings/" + safeReturnPage;
+
+  if (key == "resetSetting") {
+    return app_.RequestSettingChange(tabId, value, "", true, destination);
+  }
   bool ok = false;
   if (key == "removeBookmark") {
     ok = RemoveBookmark(value);
@@ -1074,19 +1182,11 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = ClearBrowsingData(value);
   } else if (key == "clearHistoryRange") {
     ok = ClearHistoryRange(value);
-  } else if (key == "resetSetting") {
-    ok = ResetSetting(value);
   } else {
-    ok = SetSetting(key, value);
+    return app_.RequestSettingChange(tabId, key, value, false, destination);
   }
   if (ok && tabManager_.GetTab(tabId)) {
-    const std::string safeReturnPage = IsSafeSettingsReturnPage(returnPage) ? returnPage : "";
-    if (safeReturnPage.rfind("fubuki://", 0) == 0) {
-      Navigate(tabId, safeReturnPage);
-    } else {
-      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/"
-                                             : "fubuki://settings/" + safeReturnPage);
-    }
+    Navigate(tabId, destination);
   }
   return ok;
 }
@@ -1264,6 +1364,11 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     ok = SetUiOverlayActive(active, width, height);
     if (!ok) {
       error = "failed to set overlay";
+    }
+  } else if (command == "settings.apply") {
+    ok = ApplySetting(JsonString(payload, "key"), JsonString(payload, "value"));
+    if (!ok) {
+      error = "failed to apply setting";
     }
   } else if (command == "permission.changed") {
     ok = SetPermission(JsonString(payload, "origin"),

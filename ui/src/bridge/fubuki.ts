@@ -336,7 +336,21 @@ async function invoke<T = unknown>(
         method,
         params,
       }),
-      onSuccess: (response) => resolve(JSON.parse(response) as T),
+      onSuccess: (response) => {
+        try {
+          const parsed = JSON.parse(response) as T & {
+            ok?: boolean;
+            error?: string;
+          };
+          if (parsed && typeof parsed === 'object' && parsed.ok === false) {
+            reject(new Error(parsed.error || `${method} failed`));
+            return;
+          }
+          resolve(parsed);
+        } catch (error) {
+          reject(error);
+        }
+      },
       onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });
   });

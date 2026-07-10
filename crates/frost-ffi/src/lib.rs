@@ -1,5 +1,7 @@
+use std::ffi::c_void;
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, select};
@@ -21,6 +23,7 @@ pub struct FrostEngineHandle {
     host_command_rx: Receiver<HostCommandEnvelope>,
     host_event_tx: Sender<HostEventEnvelope>,
     host_result_tx: Sender<HostCommandResultEnvelope>,
+    host_command_notify: Arc<Mutex<HostCommandNotify>>,
     // Channel for external audit/rate-limit events emitted by the FFI layer.
     external_event_tx: Sender<frost_protocol::ExternalEventEnvelope>,
     external_policy: std::sync::Mutex<ExternalPolicy>,
@@ -29,6 +32,12 @@ pub struct FrostEngineHandle {
     // request/response channels) never read another caller's response.
     request_response_lock: std::sync::Mutex<()>,
     join_handle: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct HostCommandNotify {
+    callback: Option<unsafe extern "C" fn(*mut c_void)>,
+    context: usize,
 }
 
 /// Creates a new FrostEngine instance and returns a handle to it.
@@ -62,18 +71,33 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
     let (host_event_tx, host_event_rx) = crossbeam_channel::unbounded();
     let (host_result_tx, host_result_rx) = crossbeam_channel::unbounded();
     let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
+    let host_command_notify = Arc::new(Mutex::new(HostCommandNotify::default()));
+    let notify_state = host_command_notify.clone();
+    let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let target = notify_state
+            .lock()
+            .ok()
+            .map(|guard| *guard)
+            .unwrap_or_default();
+        if let Some(callback) = target.callback {
+            unsafe { callback(target.context as *mut c_void) };
+        }
+    });
 
     let join_handle = if path.is_null() {
         spawn_core(
             BrowserCore::with_adapter_and_settings(
-                HostCommandAdapter::new(host_command_tx),
+                HostCommandAdapter::with_results(
+                    host_command_tx,
+                    host_result_rx.clone(),
+                    notify.clone(),
+                ),
                 frost_core::InMemoryStore::default(),
             ),
             event_tx.clone(),
             request_rx.clone(),
             response_tx.clone(),
             host_event_rx,
-            host_result_rx,
         )
     } else {
         let path = unsafe { CStr::from_ptr(path) }
@@ -83,25 +107,31 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         match frost_store::SqliteStore::open(path) {
             Ok(store) => spawn_core(
                 BrowserCore::with_adapter_and_settings(
-                    HostCommandAdapter::new(host_command_tx.clone()),
+                    HostCommandAdapter::with_results(
+                        host_command_tx.clone(),
+                        host_result_rx.clone(),
+                        notify.clone(),
+                    ),
                     store,
                 ),
                 event_tx.clone(),
                 request_rx.clone(),
                 response_tx.clone(),
                 host_event_rx.clone(),
-                host_result_rx.clone(),
             ),
             Err(_) => spawn_core(
                 BrowserCore::with_adapter_and_settings(
-                    HostCommandAdapter::new(host_command_tx.clone()),
+                    HostCommandAdapter::with_results(
+                        host_command_tx.clone(),
+                        host_result_rx.clone(),
+                        notify.clone(),
+                    ),
                     frost_core::InMemoryStore::default(),
                 ),
                 event_tx.clone(),
                 request_rx.clone(),
                 response_tx.clone(),
                 host_event_rx.clone(),
-                host_result_rx.clone(),
             ),
         }
     };
@@ -113,6 +143,7 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         host_command_rx,
         host_event_tx,
         host_result_tx,
+        host_command_notify,
         external_event_tx,
         external_policy: std::sync::Mutex::new(ExternalPolicy::new()),
         request_response_lock: std::sync::Mutex::new(()),
@@ -126,7 +157,6 @@ fn spawn_core<A, S>(
     request_rx: Receiver<ProtocolRequest>,
     response_tx: Sender<ProtocolResponse>,
     host_event_rx: Receiver<HostEventEnvelope>,
-    host_result_rx: Receiver<HostCommandResultEnvelope>,
 ) -> JoinHandle<()>
 where
     A: EngineAdapter + Send + 'static,
@@ -143,6 +173,7 @@ where
 {
     core.set_event_sender(event_tx);
     std::thread::spawn(move || {
+        let session_tick = crossbeam_channel::tick(std::time::Duration::from_millis(100));
         loop {
             select! {
                 recv(request_rx) -> message => {
@@ -159,16 +190,43 @@ where
                         let _ = core.process_host_event(event);
                     }
                 }
-                recv(host_result_rx) -> message => {
-                    if let Ok(result) = message
-                        && let Err(e) = core.process_host_command_result(result)
-                    {
-                        eprintln!("[frost-engine] host command failed: {e}");
+                recv(session_tick) -> _ => {
+                    if let Err(error) = core.flush_session(false) {
+                        eprintln!("[frost-engine] session save failed: {error}");
                     }
                 }
             }
         }
+        if let Err(error) = core.flush_session(true) {
+            eprintln!("[frost-engine] final session save failed: {error}");
+        }
     })
+}
+
+/// Registers a callback invoked whenever the Engine enqueues a HostCommand.
+/// The callback may run on the Engine worker thread and must only schedule work.
+///
+/// # Safety
+/// `handle` must come from `frost_engine_new*`, and `context` must remain valid
+/// until the engine is freed or the callback is cleared.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_set_host_command_notify(
+    handle: *mut FrostEngineHandle,
+    callback: Option<unsafe extern "C" fn(*mut c_void)>,
+    context: *mut c_void,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let handle = unsafe { &*handle };
+    let Ok(mut target) = handle.host_command_notify.lock() else {
+        return false;
+    };
+    *target = HostCommandNotify {
+        callback,
+        context: context as usize,
+    };
+    true
 }
 
 /// # Safety

@@ -55,6 +55,8 @@ pub enum HostCommand {
         width: Option<f64>,
         height: Option<f64>,
     },
+    #[serde(rename = "settings.apply", rename_all = "camelCase")]
+    SettingsApply { key: String, value: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

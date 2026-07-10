@@ -49,9 +49,35 @@ impl SettingsService {
     }
 
     pub fn set<S: SettingsRepository>(repository: &S, key: &str, value: &str) -> StoreResult<()> {
+        Self::validate(key, value)?;
+        repository.set_setting(key, value)
+    }
+
+    pub fn validate(key: &str, value: &str) -> StoreResult<()> {
         if !Self::VALID_KEYS.contains(&key) {
             return Err(StoreError::InvalidKey(key.to_owned()));
         }
-        repository.set_setting(key, value)
+        let valid = match key {
+            "startupBehavior" => matches!(value, "restore" | "newTab" | "homePage"),
+            "appearance" => matches!(value, "system" | "light" | "dark"),
+            "theme" => matches!(value, "light" | "dark" | "system"),
+            "sidebarVisible" => matches!(value, "show" | "hide"),
+            "sidebarWidth" => value
+                .parse::<u16>()
+                .is_ok_and(|width| (168..=400).contains(&width)),
+            "defaultZoomLevel" => value
+                .parse::<f64>()
+                .is_ok_and(|zoom| (-5.0..=5.0).contains(&zoom)),
+            "askBeforeDownload" => matches!(value, "on" | "off"),
+            _ => !value.contains('\0'),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(StoreError::InvalidValue {
+                key: key.into(),
+                value: value.into(),
+            })
+        }
     }
 }

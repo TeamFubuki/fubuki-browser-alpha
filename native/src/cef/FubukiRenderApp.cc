@@ -29,7 +29,8 @@ void InstallWebAuthnGuard(CefRefPtr<CefFrame> frame) {
     if (nativeGet) {
       Object.defineProperty(credentials, "get", { configurable: true, value: (options) => options && options.publicKey ? rejectPasskey() : nativeGet(options) });
     }
-  } catch {
+  } catch (error) {
+    console.warn("[Fubuki] Failed to install WebAuthn guard", error);
   }
 })();
 )JS",

@@ -208,13 +208,21 @@ impl TabService {
         if local_pos == local_to {
             return true; // no-op
         }
-        // Remove the tab and insert at the new local position.
+        // Remove the tab and calculate positions again after removal. Original
+        // indices cannot be reused here because every item after `index`
+        // shifts left (which previously made forward moves land one slot late).
         let tab = self.tabs.remove(index);
-        // Recalculate window_indices after removal (all indices shifted if > index).
-        let window_indices_after: Vec<usize> =
-            window_indices.into_iter().filter(|&i| i != index).collect();
+        let window_indices_after: Vec<usize> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.window_id == window_id)
+            .map(|(index, _)| index)
+            .collect();
         let insert_at = if local_to >= window_indices_after.len() {
-            self.tabs.len()
+            window_indices_after
+                .last()
+                .map_or(self.tabs.len(), |index| index + 1)
         } else {
             window_indices_after[local_to]
         };

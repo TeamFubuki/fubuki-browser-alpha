@@ -3,7 +3,13 @@
 #include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
+#include "include/base/cef_callback.h"
 #include "include/wrapper/cef_helpers.h"
+#include "include/wrapper/cef_closure_task.h"
+
+#include <thread>
+#include <unordered_set>
 
 namespace fubuki {
 
@@ -17,6 +23,23 @@ CefRefPtr<CefValue> BoolValue(bool value) {
   auto result = CefValue::Create();
   result->SetBool(value);
   return result;
+}
+
+bool IsFrostMethod(const std::string &method) {
+  static const std::unordered_set<std::string> methods = {
+      "app.snapshot", "tabs.list", "tabs.create", "tabs.activate",
+      "tabs.close", "tabs.pin", "tabs.duplicate", "tabs.reopenClosed",
+      "tabs.closeOther", "tabs.closeToRight", "tabs.move",
+      "tabs.moveToNewWindow", "tabs.navigate", "tabs.reload", "tabs.stop",
+      "tabs.goBack", "tabs.goForward", "tabs.home", "windows.create",
+      "windows.list", "windows.createPrivate", "windows.close",
+      "windows.reopenClosed", "bookmarks.list", "bookmarks.save",
+      "bookmarks.remove", "history.remove", "history.list",
+      "history.clearRange", "downloads.list", "downloads.remove",
+      "data.clear", "settings.get", "settings.set", "settings.reset",
+      "permissions.set", "ui.setOverlayActive", "commands.execute",
+      "commands.list"};
+  return methods.contains(method);
 }
 
 }  // namespace
@@ -274,6 +297,30 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
     params = dict->GetDictionary("params");
   }
 
+  if (IsFrostMethod(method)) {
+    auto frostRequest = CefDictionaryValue::Create();
+    frostRequest->SetInt("version", 0);
+    frostRequest->SetString("method", method);
+    frostRequest->SetDictionary("params", params->Copy(false));
+    auto frostValue = CefValue::Create();
+    frostValue->SetDictionary(frostRequest);
+    const std::string requestJson = WriteValue(frostValue);
+    FrostBridge *bridge = &frostBridge_;
+    std::thread([bridge, requestJson, callback]() {
+      std::string responseJson = bridge->ProcessJson(requestJson);
+      CefPostTask(TID_UI, base::BindOnce(
+          [](CefRefPtr<Callback> callback, std::string responseJson) {
+            if (auto *app = GetBrowserAppController()) {
+              app->DispatchEngineEvents();
+            }
+            auto response = NativeBridge::FrostResultValue(responseJson);
+            callback->Success(NativeBridge::WriteValue(response));
+          },
+          callback, std::move(responseJson)));
+    }).detach();
+    return true;
+  }
+
   auto response = Invoke(method, params);
   callback->Success(WriteValue(response));
   return true;
@@ -293,7 +340,7 @@ CefRefPtr<CefValue> NativeBridge::Invoke(const std::string &method,
 }
 
 CefRefPtr<CefValue>
-NativeBridge::FrostResultValue(const std::string &responseJson) const {
+NativeBridge::FrostResultValue(const std::string &responseJson) {
   auto parsed = CefParseJSON(responseJson, JSON_PARSER_RFC);
   if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
     return ErrorValue("FrostEngine returned invalid JSON");
@@ -348,7 +395,7 @@ void NativeBridge::EmitToUi(const std::string &eventName,
   }
 }
 
-CefRefPtr<CefValue> NativeBridge::ErrorValue(const std::string &message) const {
+CefRefPtr<CefValue> NativeBridge::ErrorValue(const std::string &message) {
   auto dict = CefDictionaryValue::Create();
   dict->SetBool("ok", false);
   dict->SetString("error", message);
@@ -389,7 +436,7 @@ NativeBridge::WindowToFrostDictionary(const BrowserWindow &window) const {
   return dict;
 }
 
-std::string NativeBridge::WriteValue(CefRefPtr<CefValue> value) const {
+std::string NativeBridge::WriteValue(CefRefPtr<CefValue> value) {
   return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
 }
 

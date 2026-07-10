@@ -1,6 +1,6 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { fubuki } from '../bridge/fubuki';
-import { browserState } from '../stores/browserStore';
+import { browserState, setBrowserState } from '../stores/browserStore';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
 import { createSidebarWidthSync } from '../sidebarWidthSync';
 
@@ -30,6 +30,7 @@ export function useSidebarResize() {
   let startX = 0;
   let startWidth = DEFAULT_SIDEBAR_WIDTH;
   let pendingWidth = DEFAULT_SIDEBAR_WIDTH;
+  let nativeFrame = 0;
   const nativeWidth = createSidebarWidthSync({
     send: (width) => fubuki.invoke('ui.setSidebarWidth', { width }),
     onApplied: (width) => applyCssSidebarWidth(width),
@@ -64,6 +65,11 @@ export function useSidebarResize() {
     );
     pendingWidth = width;
 
+    if (nativeFrame) {
+      cancelAnimationFrame(nativeFrame);
+      nativeFrame = 0;
+    }
+
     removeListeners();
     delete document.documentElement.dataset.sidebarResizing;
     setResizing(false);
@@ -73,16 +79,26 @@ export function useSidebarResize() {
     }
     activePointerId = -1;
 
-    void saveWidth(width).catch((error) =>
-      console.error('[Fubuki] Failed to save sidebar width:', error),
-    );
+    void saveWidth(width).catch((error) => {
+      console.error('[Fubuki] Failed to save sidebar width:', error);
+      applyCssSidebarWidth(startWidth);
+      setBrowserState('settings', 'sidebarWidth', String(startWidth));
+      setBrowserState('status', 'Error');
+      void nativeWidth.flush(startWidth);
+    });
   };
 
   const onPointerMove = (event: PointerEvent) => {
     if (!active || event.pointerId !== activePointerId) return;
 
     pendingWidth = clampSidebarWidth(startWidth + event.clientX - startX);
-    nativeWidth.update(pendingWidth);
+    applyCssSidebarWidth(pendingWidth);
+    if (!nativeFrame) {
+      nativeFrame = requestAnimationFrame(() => {
+        nativeFrame = 0;
+        nativeWidth.update(pendingWidth);
+      });
+    }
   };
 
   const onPointerUp = (event: PointerEvent) => {
@@ -136,6 +152,7 @@ export function useSidebarResize() {
     }
     active = false;
     activePointerId = -1;
+    if (nativeFrame) cancelAnimationFrame(nativeFrame);
     nativeWidth.dispose();
     delete document.documentElement.dataset.sidebarResizing;
   });
