@@ -142,7 +142,6 @@ export async function refreshFullState(status = 'Ready') {
         setBrowserState('commands', state.commands);
       }
       setBrowserState('status', status);
-
     } catch (error) {
       console.error('[Fubuki] Full state refresh failed:', error);
       setBrowserState('status', 'Error');
@@ -269,7 +268,8 @@ export function bindNativeEvents() {
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
       setBrowserState('tabs', remaining);
 
-      if (browserState.activeTabId === tabId) setBrowserState('activeTabId', '');
+      if (browserState.activeTabId === tabId)
+        setBrowserState('activeTabId', '');
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {
