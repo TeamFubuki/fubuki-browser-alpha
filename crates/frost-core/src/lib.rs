@@ -229,7 +229,8 @@ where
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
-                if let Some(tab) = self.tabs.get_tab(&tab_id) {
+                let closing_tab = self.tabs.get_tab(&tab_id);
+                if let Some(tab) = closing_tab.clone() {
                     self.closed_tabs.push(tab);
                     if self.closed_tabs.len() > 50 {
                         self.closed_tabs.remove(0);
@@ -242,6 +243,24 @@ where
                         .close_page(&tab_id)
                         .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabClosed(TabClosed { tab_id }));
+
+                    // Keep the browser usable, but do so in the engine rather
+                    // than letting the native tab manager invent a second tab.
+                    if let Some(tab) = closing_tab
+                        && !self.tabs.has_tabs_in_window(&tab.window_id)
+                    {
+                        let replacement = self.tabs.create_tab(
+                            tab.window_id.clone(),
+                            "fubuki://newtab/".into(),
+                            true,
+                        );
+                        self.windows
+                            .attach_tab(&tab.window_id, &replacement.id, true);
+                        self.adapter
+                            .create_page(&replacement.id, &tab.window_id, &replacement.url)
+                            .map_err(|e| CoreError::Message(e.to_string()))?;
+                        self.emit(Event::TabCreated(replacement));
+                    }
                 }
                 Ok(Response::Bool(closed))
             }
@@ -293,6 +312,9 @@ where
                 let closed = self.tabs.close_other_tabs(&tab_id);
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
+                    self.adapter
+                        .close_page(&tab.id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabClosed(TabClosed {
                         tab_id: tab.id.clone(),
                     }));
@@ -305,6 +327,9 @@ where
                 let closed = self.tabs.close_tabs_to_right(&tab_id);
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
+                    self.adapter
+                        .close_page(&tab.id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabClosed(TabClosed {
                         tab_id: tab.id.clone(),
                     }));
@@ -1207,6 +1232,24 @@ mod tests {
         assert_eq!(state.tabs[0].url, "https://example.com");
         assert!(state.tabs[0].is_active);
         assert_eq!(state.windows[0].tab_ids, vec![state.tabs[0].id.clone()]);
+    }
+
+    #[test]
+    fn closing_the_last_tab_creates_an_engine_owned_replacement() {
+        let mut core = BrowserCore::new();
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: None,
+            active: true,
+        }));
+        let tab_id = core.snapshot().tabs[0].id.clone();
+
+        let response = core.process(ProtocolRequest::new(Request::TabsClose { tab_id }));
+
+        assert!(matches!(response.response, Response::Bool(true)));
+        let state = core.snapshot();
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.tabs[0].is_active);
+        assert_eq!(state.tabs[0].url, "fubuki://newtab/");
     }
 
     #[test]
