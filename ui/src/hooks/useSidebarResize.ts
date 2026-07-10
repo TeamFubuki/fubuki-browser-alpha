@@ -30,9 +30,10 @@ export function useSidebarResize() {
   let startX = 0;
   let startWidth = DEFAULT_SIDEBAR_WIDTH;
   let pendingWidth = DEFAULT_SIDEBAR_WIDTH;
-  const nativeWidth = createSidebarWidthSync((width) =>
-    fubuki.invoke('ui.setSidebarWidth', { width }),
-  );
+  const nativeWidth = createSidebarWidthSync({
+    send: (width) => fubuki.invoke('ui.setSidebarWidth', { width }),
+    onApplied: (width) => applyCssSidebarWidth(width),
+  });
 
   const saveWidth = async (width: number) => {
     await nativeWidth.flush(width);
@@ -55,6 +56,7 @@ export function useSidebarResize() {
     if (!active) return;
 
     active = false;
+
     const width = clampSidebarWidth(
       typeof clientX === 'number'
         ? startWidth + clientX - startX
@@ -65,12 +67,12 @@ export function useSidebarResize() {
     removeListeners();
     delete document.documentElement.dataset.sidebarResizing;
     setResizing(false);
-    applyCssSidebarWidth(width);
 
     if (handle?.hasPointerCapture(activePointerId)) {
       handle.releasePointerCapture(activePointerId);
     }
     activePointerId = -1;
+
     void saveWidth(width).catch((error) =>
       console.error('[Fubuki] Failed to save sidebar width:', error),
     );
@@ -78,10 +80,8 @@ export function useSidebarResize() {
 
   const onPointerMove = (event: PointerEvent) => {
     if (!active || event.pointerId !== activePointerId) return;
+
     pendingWidth = clampSidebarWidth(startWidth + event.clientX - startX);
-    // Apply both halves of the split view from the same pointer event. The
-    // bridge coalesces only native updates that are still in flight.
-    applyCssSidebarWidth(pendingWidth);
     nativeWidth.update(pendingWidth);
   };
 
@@ -124,7 +124,6 @@ export function useSidebarResize() {
 
   const resetWidth = () => {
     const width = clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-    applyCssSidebarWidth(width);
     void saveWidth(width).catch((error) =>
       console.error('[Fubuki] Failed to reset sidebar width:', error),
     );

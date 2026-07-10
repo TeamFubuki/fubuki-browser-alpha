@@ -82,34 +82,60 @@
   -webkit-app-region: no-drag;
   position: absolute;
   top: 0;
-  right: -3px;
+  right: -6px;
   bottom: 0;
-  width: 6px;
+  width: 12px;
   cursor: col-resize;
   touch-action: none;
+  z-index: 10;
+}
+
+.sidebar-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 5px;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.sidebar-resize-handle:hover::before {
+  opacity: 1;
 }
 
 .sidebar-resize-handle::after {
   content: '';
   position: absolute;
-  top: 8px;
-  right: 2px;
-  bottom: 8px;
-  width: 1px;
+  top: 50%;
+  right: 3px;
+  width: 3px;
+  height: 24px;
+  transform: translateY(-50%);
+  border-radius: 2px;
   background: transparent;
   transition:
     background-color 0.14s ease,
-    transform 0.14s ease;
+    opacity 0.14s ease;
+  opacity: 0;
 }
 
 .sidebar-resize-handle:hover::after {
-  background: color-mix(in srgb, var(--accent) 55%, var(--line));
-  transform: scaleX(1.5);
+  background: var(--accent);
+  opacity: 0.6;
 }
 
+.sidebar-resize-handle:active::after,
 .sidebar.resizing .sidebar-resize-handle::after {
   background: var(--accent);
-  transform: scaleX(2);
+  opacity: 1;
+}
+
+.sidebar.resizing .sidebar-resize-handle::before {
+  opacity: 1;
+  background: var(--accent);
 }
 
 .sidebar.resizing .sidebar-resize-handle {
@@ -117,7 +143,7 @@
   background: linear-gradient(
     to right,
     transparent 0%,
-    color-mix(in srgb, var(--accent) 10%, transparent) 50%,
-    transparent 100%
+    color-mix(in srgb, var(--accent) 8%, transparent) 50%,
+    color-mix(in srgb, var(--accent) 4%, transparent) 100%
   );
 }
