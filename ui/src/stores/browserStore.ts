@@ -242,14 +242,12 @@ export function bindNativeEvents() {
         setBrowserState('tabs', (item) => item.id !== nextTab.id, {
           isActive: false,
         });
-      }
-      setBrowserState('tabs', (tabs) => [
-        ...tabs.filter((item) => item.id !== nextTab.id),
-        nextTab,
-      ]);
-      if (nextTab.isActive) {
         setBrowserState('activeTabId', nextTab.id);
       }
+      setBrowserState('tabs', (prev) => [
+        ...prev.filter((item) => item.id !== nextTab.id),
+        nextTab,
+      ]);
     }),
 
     onBridgeEvent('tab.updated', (patch) => {
@@ -269,15 +267,19 @@ export function bindNativeEvents() {
     onBridgeEvent('tab.closed', ({ tabId }) => {
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
       setBrowserState('tabs', remaining);
-      if (browserState.activeTabId === tabId) {
-        setBrowserState('activeTabId', remaining[0]?.id ?? '');
-      }
+
+      if (browserState.activeTabId === tabId)
+        setBrowserState('activeTabId', '');
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {
-      setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
-      setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
       setBrowserState('activeTabId', tabId);
+      setBrowserState('tabs', (tab) => tab.id === tabId, {
+        isActive: true,
+      });
+      setBrowserState('tabs', (tab) => tab.id !== tabId, {
+        isActive: false,
+      });
     }),
 
     // --- Window lifecycle (direct patches) ---
@@ -345,7 +347,6 @@ export function bindNativeEvents() {
     }),
   ];
 
-  // Fire-and-forget initial state load
   void refreshFullState('Ready');
 
   return () => disposers.forEach((dispose) => dispose());

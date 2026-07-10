@@ -86,6 +86,7 @@
   bottom: 0;
   width: 6px;
   cursor: col-resize;
+  touch-action: none;
 }
 
 .sidebar-resize-handle::after {
@@ -96,9 +97,27 @@
   bottom: 8px;
   width: 1px;
   background: transparent;
+  transition:
+    background-color 0.14s ease,
+    transform 0.14s ease;
 }
 
-.sidebar-resize-handle:hover::after,
-.sidebar.resizing .sidebar-resize-handle::after {
+.sidebar-resize-handle:hover::after {
   background: color-mix(in srgb, var(--accent) 55%, var(--line));
+  transform: scaleX(1.5);
+}
+
+.sidebar.resizing .sidebar-resize-handle::after {
+  background: var(--accent);
+  transform: scaleX(2);
+}
+
+.sidebar.resizing .sidebar-resize-handle {
+  cursor: col-resize;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    color-mix(in srgb, var(--accent) 10%, transparent) 50%,
+    transparent 100%
+  );
 }

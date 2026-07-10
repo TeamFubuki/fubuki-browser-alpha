@@ -83,7 +83,7 @@ bool TabManager::CloseTab(const std::string &tabId) {
       {EventType::TabClosed, "tabs.closed", closed, "", tabId, ""});
 
   if (tabs_.empty()) {
-    CreateTab("fubuki://newtab/", true);
+    activeTabId_.clear();
     return true;
   }
 

@@ -117,6 +117,10 @@ impl TabService {
         self.tabs.iter().find(|t| t.is_active).cloned()
     }
 
+    pub fn has_tabs_in_window(&self, window_id: &str) -> bool {
+        self.tabs.iter().any(|tab| tab.window_id == window_id)
+    }
+
     pub fn pin_tab(&mut self, tab_id: &str, pinned: bool) -> bool {
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return false;

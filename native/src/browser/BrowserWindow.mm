@@ -428,7 +428,12 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
     if (startupBehavior == "homePage") {
       startUrl = homeUrl;
     }
-    CreateTab(startUrl, true);
+    // FrostEngine owns tab identity and lifecycle. It will enqueue the host
+    // page.create command, which is executed by the controller poller.
+    auto params = CefDictionaryValue::Create();
+    params->SetString("url", startUrl);
+    params->SetBool("active", true);
+    bridge_->Invoke("tabs.create", params);
   }
   [window_ makeKeyAndOrderFront:nil];
 }

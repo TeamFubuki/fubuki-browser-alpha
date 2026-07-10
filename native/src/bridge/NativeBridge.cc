@@ -37,24 +37,19 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const std::string url =
-        params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
-    const bool active = !params->HasKey("active") || params->GetBool("active");
-    return HostBackedFrostInvoke("tabs.create", params, [this, url, active] {
-      return window_.CreateTab(url, active);
-    });
+    return FrostInvoke("tabs.create", params);
   };
 
   methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    // Activation has no HostCommand equivalent: update the visible CEF page
+    // and the engine state together, without creating a second tab.
     return HostBackedFrostInvoke("tabs.activate", params, [this, params] {
       return window_.ActivateTab(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.close", params, [this, params] {
-      return window_.CloseTab(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.close", params);
   };
 
   methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -66,30 +61,25 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.duplicate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.duplicate", params, [this, params] {
-      return window_.DuplicateTab(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.duplicate", params);
   };
 
   methods_["tabs.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.reopenClosed", params,
-                                 [this] { return window_.ReopenClosedTab(); });
+    return FrostInvoke("tabs.reopenClosed", params);
   };
 
   methods_["tabs.closeOther"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.closeOther", params, [this, params] {
-      return window_.CloseOtherTabs(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.closeOther", params);
   };
 
   methods_["tabs.closeToRight"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.closeToRight", params, [this, params] {
-      return window_.CloseTabsToRight(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.closeToRight", params);
   };
 
   methods_["tabs.move"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    // Reordering is presentation state in the host today; Frost records the
+    // same operation, while the host event keeps the sidebar in sync.
     return HostBackedFrostInvoke("tabs.move", params, [this, params] {
       return window_.MoveTab(params->GetString("tabId"),
                              params->GetInt("toIndex"));
@@ -98,48 +88,32 @@ void NativeBridge::RegisterMethods() {
 
   methods_["tabs.moveToNewWindow"] = [this](
                                          CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.moveToNewWindow", params,
-                                 [this, params] {
-                                   return window_.MoveTabToNewWindow(
-                                       params->GetString("tabId"));
-                                 });
+    return FrostInvoke("tabs.moveToNewWindow", params);
   };
 
   methods_["tabs.navigate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.navigate", params, [this, params] {
-      return window_.Navigate(params->GetString("tabId"),
-                              params->GetString("input"));
-    });
+    return FrostInvoke("tabs.navigate", params);
   };
 
   methods_["tabs.reload"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.reload", params, [this, params] {
-      return window_.Reload(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.reload", params);
   };
 
   methods_["tabs.stop"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.stop", params, [this, params] {
-      return window_.Stop(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.stop", params);
   };
 
   methods_["tabs.goBack"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goBack", params, [this, params] {
-      return window_.GoBack(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.goBack", params);
   };
 
   methods_["tabs.goForward"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goForward", params, [this, params] {
-      return window_.GoForward(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.goForward", params);
   };
 
   methods_["tabs.home"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.home", params,
-                                 [this] { return window_.GoHome(); });
+    return FrostInvoke("tabs.home", params);
   };
 
   methods_["windows.create"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -327,6 +301,15 @@ void NativeBridge::RegisterMethods() {
     CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
     if (params->HasKey("args") && params->GetType("args") == VTYPE_DICTIONARY) {
       args = params->GetDictionary("args");
+    }
+    // Tab commands must follow the same Engine -> HostCommand path as the
+    // direct tabs.* API. Running the native command first creates divergent
+    // tab ids and causes the sidebar to race the actual page views.
+    if (id == "tabs.create") {
+      return FrostInvoke("tabs.create", args);
+    }
+    if (id == "tabs.reopenClosed") {
+      return FrostInvoke("tabs.reopenClosed", args);
     }
     auto result = window_.Commands().Execute(id, args);
     (void)FrostInvoke("commands.execute", params);
