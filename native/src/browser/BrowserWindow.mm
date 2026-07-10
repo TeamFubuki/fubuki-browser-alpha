@@ -847,14 +847,12 @@ bool BrowserWindow::AddActiveBookmark() {
   const bool ok = Store().AddBookmark(tab->title, tab->url, tab->faviconUrl);
   Store().AddLog("info", "Bookmark added: " + tab->url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
 bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
   const bool ok = Store().AddBookmark(title, url, faviconUrl);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
@@ -862,7 +860,6 @@ bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& ur
 bool BrowserWindow::RemoveBookmark(const std::string& url) {
   const bool ok = Store().RemoveBookmark(url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
@@ -870,7 +867,6 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
 bool BrowserWindow::RemoveHistory(const std::string& url) {
   const bool ok = Store().RemoveHistory(url);
   eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://history");
   return ok;
 }
@@ -879,7 +875,6 @@ bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& pa
   const bool ok = Store().RemoveDownload(url, path);
   PageCache::Instance().Invalidate("fubuki://downloads");
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path.empty() ? url : path});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
@@ -940,7 +935,15 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     if (target != "logs" && target != "all") {
       Store().AddLog("info", "Browsing data cleared: " + target);
     }
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+    if (target == "bookmarks") {
+      eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", "clear"});
+    }
+    if (target == "history" || target == "all") {
+      eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear"});
+    }
+    if (target == "downloads" || target == "all") {
+      eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", "clear"});
+    }
   }
   return ok;
 }
@@ -950,7 +953,6 @@ bool BrowserWindow::ClearHistoryRange(const std::string& range) {
   if (ok) {
     eventBus_.Publish(
         {EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
@@ -991,15 +993,22 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   if (!privateWindow_) {
     app_.PersistSession();
   }
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
 
 bool BrowserWindow::ResetSetting(const std::string& key) {
   Store().ResetSetting(key);
+  if (key == "sidebarWidth") {
+    liveSidebarWidth_ = 0.0;
+  }
+  if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
+    UpdateContentFrame();
+  }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  if (!privateWindow_) {
+    app_.PersistSession();
+  }
   PageCache::Instance().Invalidate("fubuki://settings");
   return true;
 }
@@ -1009,7 +1018,6 @@ bool BrowserWindow::SetPermission(const std::string& origin, const std::string& 
   if (ok) {
     eventBus_.Publish(
         {EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
@@ -1403,8 +1411,6 @@ void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::
   Store().AddDownload(url, path, "started");
   Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
-  bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
@@ -1424,8 +1430,6 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
                                    { "state", JsonStringValue(state) },
                                    { "percent", JsonIntValue(percent) }}));
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
-  bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
 }
 
 void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions) {
