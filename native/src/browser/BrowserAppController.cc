@@ -37,7 +37,9 @@ void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
   // Bootstrap through FrostEngine, not by manufacturing native state. The
   // resulting window/page commands are consumed by the shared dispatcher.
-  if (!InvokeEngine("windows.create") || !InvokeEngine("tabs.create")) {
+  // windows.create now automatically creates a startup tab, so we only
+  // need a single InvokeEngine call.
+  if (!InvokeEngine("windows.create")) {
     store_.AddLog("error", "FrostEngine failed to create the initial browser state");
     return;
   }
@@ -53,6 +55,7 @@ namespace {
 // use-after-free if the controller is destroyed between ticks.
 void PollHostCommands(BrowserAppController *app) {
   if (app && app == GetBrowserAppController()) {
+    app->DispatchEngineEvents();
     app->DispatchHostCommands();
     CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, app), 16);
   }
@@ -74,6 +77,36 @@ std::string HostCommandResultJson(const std::string &commandId, bool ok,
 }
 
 }  // namespace
+
+void BrowserAppController::DispatchEngineEvents() {
+  std::string eventJson;
+  while (engine_.PollEventJson(eventJson)) {
+    CefRefPtr<CefValue> value =
+        CefParseJSON(eventJson, JSON_PARSER_ALLOW_TRAILING_COMMAS);
+    if (!value || value->GetType() != VTYPE_DICTIONARY) {
+      continue;
+    }
+    auto envelope = value->GetDictionary();
+    if (!envelope->HasKey("event") ||
+        envelope->GetType("event") != VTYPE_STRING ||
+        !envelope->HasKey("payload") ||
+        envelope->GetType("payload") != VTYPE_DICTIONARY) {
+      continue;
+    }
+    const std::string eventName = envelope->GetString("event").ToString();
+    // Settings are global, so broadcast them to every UI bridge. Other
+    // lifecycle events are already emitted by the host-side event bus.
+    if (eventName != "setting.changed") {
+      continue;
+    }
+    auto payload = envelope->GetDictionary("payload");
+    for (const auto &context : windows_) {
+      if (context && context->window && context->window->Bridge()) {
+        context->window->Bridge()->EmitToUi(eventName, payload->Copy(false));
+      }
+    }
+  }
+}
 
 void BrowserAppController::StartHostCommandPoller() {
   CefPostDelayedTask(TID_UI, base::BindOnce(&PollHostCommands, this), 16);

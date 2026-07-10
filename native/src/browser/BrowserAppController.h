@@ -40,6 +40,10 @@ public:
   // commands are handled here; page/overlay commands are delegated to the
   // owning BrowserWindow.
   void DispatchHostCommands();
+  // Forwards engine-owned state events (for example setting.changed) to the
+  // UI bridge. Host commands are handled separately because they require CEF
+  // side effects.
+  void DispatchEngineEvents();
   // Starts the self-rescheduling host command poller on the CEF UI thread.
   void StartHostCommandPoller();
   void NotifyWindowFocused(BrowserWindow *window);

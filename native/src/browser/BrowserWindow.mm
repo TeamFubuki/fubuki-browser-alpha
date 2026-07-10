@@ -419,22 +419,11 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
       }
     }
   }
-  if (!restored) {
-    const std::string startupBehavior = Store().GetSetting("startupBehavior");
-    const std::string homeUrl = Store().GetSetting("homeUrl").empty()
-                                    ? Store().GetSetting("homepage")
-                                    : Store().GetSetting("homeUrl");
-    std::string startUrl = Store().GetSetting("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
-    if (startupBehavior == "homePage") {
-      startUrl = homeUrl;
-    }
-    // FrostEngine owns tab identity and lifecycle. It will enqueue the host
-    // page.create command, which is executed by the controller poller.
-    auto params = CefDictionaryValue::Create();
-    params->SetString("url", startUrl);
-    params->SetBool("active", true);
-    bridge_->Invoke("tabs.create", params);
-  }
+  // Tab creation is fully owned by FrostEngine via the page.create host
+  // command queue. BrowserAppController::Start() already enqueues the
+  // initial tabs.create request, and subsequent windows get tabs through
+  // the engine's WindowsCreate handler. We must NOT call
+  // bridge_->Invoke("tabs.create") here to avoid duplicate tabs.
   [window_ makeKeyAndOrderFront:nil];
 }
 
