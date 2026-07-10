@@ -6,6 +6,7 @@ impl SettingsService {
     /// Valid setting keys that can be stored and retrieved.
     pub const VALID_KEYS: &[&str] = &[
         "homepage",
+        "startupBehavior",
         "searchEngine",
         "customSearchUrl",
         "theme",
@@ -16,12 +17,15 @@ impl SettingsService {
         "homeUrl",
         "language",
         "defaultZoomLevel",
+        "downloadDirectory",
+        "askBeforeDownload",
     ];
 
     /// Returns the default value for a given setting key.
     pub fn default_value(key: &str) -> &'static str {
         match key {
             "homepage" | "homeUrl" => "https://example.com",
+            "startupBehavior" => "newTab",
             "searchEngine" => "google",
             "customSearchUrl" => "https://www.google.com/search?q={query}",
             "theme" => "light",
@@ -31,6 +35,8 @@ impl SettingsService {
             "newTabPage" => "blank",
             "language" => "system",
             "defaultZoomLevel" => "0",
+            "downloadDirectory" => "",
+            "askBeforeDownload" => "off",
             _ => "",
         }
     }

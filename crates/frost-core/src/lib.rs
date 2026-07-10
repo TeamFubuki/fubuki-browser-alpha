@@ -246,7 +246,7 @@ where
                     url.unwrap_or_else(|| "fubuki://newtab/".into()),
                     active,
                 );
-                self.windows.attach_tab(&window_id, &tab.id, true);
+                self.windows.attach_tab(&window_id, &tab.id, active);
                 if let Err(e) = self.adapter.create_page(&tab.id, &window_id, &tab.url) {
                     self.windows.detach_tab(&tab.id);
                     self.tabs.remove_tab(&tab.id);
@@ -320,7 +320,7 @@ where
                 let Some(tab) = self.tabs.duplicate_tab(&tab_id) else {
                     return Ok(Response::Bool(false));
                 };
-                self.windows.attach_tab(&tab.window_id, &tab.id, true);
+                self.windows.attach_tab(&tab.window_id, &tab.id, false);
                 if let Err(e) = self.adapter.create_page(&tab.id, &tab.window_id, &tab.url) {
                     self.windows.detach_tab(&tab.id);
                     self.tabs.remove_tab(&tab.id);
@@ -350,6 +350,9 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsCloseOther { tab_id } => {
+                if !self.tabs.contains(&tab_id) {
+                    return Ok(Response::Bool(false));
+                }
                 let closed = self.tabs.close_other_tabs(&tab_id);
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
@@ -365,6 +368,9 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsCloseToRight { tab_id } => {
+                if !self.tabs.contains(&tab_id) {
+                    return Ok(Response::Bool(false));
+                }
                 let closed = self.tabs.close_tabs_to_right(&tab_id);
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
@@ -487,6 +493,14 @@ where
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
+                // Automatically create a startup tab for the new window.
+                let startup_url = self.startup_url();
+                let tab = self.tabs.create_tab(window_id.clone(), startup_url, true);
+                self.windows.attach_tab(&window_id, &tab.id, true);
+                self.adapter
+                    .create_page(&tab.id, &window_id, &tab.url)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
             Request::WindowsCreatePrivate => {
@@ -498,6 +512,14 @@ where
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
+                // Automatically create a startup tab for the new private window.
+                let startup_url = self.startup_url();
+                let tab = self.tabs.create_tab(window_id.clone(), startup_url, true);
+                self.windows.attach_tab(&window_id, &tab.id, true);
+                self.adapter
+                    .create_page(&tab.id, &window_id, &tab.url)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
             }
             Request::WindowsClose { window_id } => {
@@ -672,52 +694,69 @@ where
             Request::CommandsList => Ok(Response::CommandsList(default_commands())),
             Request::CommandsExecute { id, args } => {
                 let argument = |name: &str| args.as_ref().and_then(|value| value.get(name));
-                let delegated = match id.as_str() {
-                    "tabs.create" => Some(Request::TabsCreate {
-                        url: argument("url")
-                            .and_then(|value| value.as_str())
-                            .map(str::to_owned),
-                        active: argument("active")
-                            .and_then(|value| value.as_bool())
-                            .unwrap_or(true),
-                    }),
-                    "tabs.close" => {
-                        argument("tabId")
-                            .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsClose {
-                                tab_id: tab_id.to_owned(),
-                            })
-                    }
-                    "tabs.reopenClosed" => Some(Request::TabsReopenClosed),
-                    "tabs.duplicate" => {
-                        argument("tabId")
-                            .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsDuplicate {
-                                tab_id: tab_id.to_owned(),
-                            })
-                    }
-                    "tabs.moveToNewWindow" => argument("tabId")
-                        .and_then(|value| value.as_str())
-                        .map(|tab_id| Request::TabsMoveToNewWindow {
-                            tab_id: tab_id.to_owned(),
+                let delegated =
+                    match id.as_str() {
+                        "tabs.create" => Some(Request::TabsCreate {
+                            url: argument("url")
+                                .and_then(|value| value.as_str())
+                                .map(str::to_owned),
+                            active: argument("active")
+                                .and_then(|value| value.as_bool())
+                                .unwrap_or(true),
                         }),
-                    "tabs.reload" => {
-                        argument("tabId")
+                        "tabs.close" => {
+                            argument("tabId")
+                                .and_then(|value| value.as_str())
+                                .map(|tab_id| Request::TabsClose {
+                                    tab_id: tab_id.to_owned(),
+                                })
+                        }
+                        "tabs.pin" | "tabs.unpin" => argument("tabId")
                             .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsReload {
+                            .map(|tab_id| Request::TabsPin {
                                 tab_id: tab_id.to_owned(),
-                            })
-                    }
-                    "windows.create" => Some(Request::WindowsCreate),
-                    "windows.createPrivate" => Some(Request::WindowsCreatePrivate),
-                    "windows.close" => Some(Request::WindowsClose {
-                        window_id: argument("windowId")
+                                pinned: id == "tabs.pin",
+                            }),
+                        "tabs.closeOther" => argument("tabId")
                             .and_then(|value| value.as_str())
-                            .map(str::to_owned),
-                    }),
-                    "windows.reopenClosed" => Some(Request::WindowsReopenClosed),
-                    _ => None,
-                };
+                            .map(|tab_id| Request::TabsCloseOther {
+                                tab_id: tab_id.to_owned(),
+                            }),
+                        "tabs.closeToRight" => argument("tabId")
+                            .and_then(|value| value.as_str())
+                            .map(|tab_id| Request::TabsCloseToRight {
+                                tab_id: tab_id.to_owned(),
+                            }),
+                        "tabs.reopenClosed" => Some(Request::TabsReopenClosed),
+                        "tabs.duplicate" => {
+                            argument("tabId")
+                                .and_then(|value| value.as_str())
+                                .map(|tab_id| Request::TabsDuplicate {
+                                    tab_id: tab_id.to_owned(),
+                                })
+                        }
+                        "tabs.moveToNewWindow" => argument("tabId")
+                            .and_then(|value| value.as_str())
+                            .map(|tab_id| Request::TabsMoveToNewWindow {
+                                tab_id: tab_id.to_owned(),
+                            }),
+                        "tabs.reload" => {
+                            argument("tabId")
+                                .and_then(|value| value.as_str())
+                                .map(|tab_id| Request::TabsReload {
+                                    tab_id: tab_id.to_owned(),
+                                })
+                        }
+                        "windows.create" => Some(Request::WindowsCreate),
+                        "windows.createPrivate" => Some(Request::WindowsCreatePrivate),
+                        "windows.close" => Some(Request::WindowsClose {
+                            window_id: argument("windowId")
+                                .and_then(|value| value.as_str())
+                                .map(str::to_owned),
+                        }),
+                        "windows.reopenClosed" => Some(Request::WindowsReopenClosed),
+                        _ => None,
+                    };
                 match delegated {
                     Some(request) => self.process_inner(request),
                     None => Ok(Response::Json(serde_json::json!({
@@ -1007,6 +1046,8 @@ where
 
     fn build_settings_snapshot(&self) -> serde_json::Value {
         let keys = [
+            "homepage",
+            "startupBehavior",
             "searchEngine",
             "customSearchUrl",
             "theme",
@@ -1017,6 +1058,8 @@ where
             "homeUrl",
             "language",
             "defaultZoomLevel",
+            "downloadDirectory",
+            "askBeforeDownload",
         ];
         let mut map = serde_json::Map::new();
         for key in keys {
@@ -1025,6 +1068,29 @@ where
             }
         }
         serde_json::Value::Object(map)
+    }
+
+    /// Returns the startup URL for a new tab based on the newTabPage and homeUrl settings.
+    fn startup_url(&self) -> String {
+        let new_tab_page = SettingsService::get(&self.repository, "newTabPage")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "blank".into());
+        let home_url = SettingsService::get(&self.repository, "homeUrl")
+            .ok()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                SettingsService::get(&self.repository, "homepage")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_else(|| "fubuki://newtab/".into());
+        if new_tab_page == "home" {
+            home_url
+        } else {
+            "fubuki://newtab/".into()
+        }
     }
 
     fn emit(&mut self, event: Event) {
@@ -1545,6 +1611,7 @@ mod tests {
     // ── Multi-window tests ────────────────────────────────────────────────
 
     /// Helper: create a window and return (window_id, [tab_ids]).
+    /// WindowsCreate owns a startup tab, so keep it and add the remaining tabs.
     fn create_window_with_tabs(core: &mut BrowserCore, count: usize) -> (String, Vec<String>) {
         let resp = core.process(ProtocolRequest::new(Request::WindowsCreate));
         assert_eq!(resp.response, Response::Bool(true));
@@ -1553,8 +1620,13 @@ mod tests {
             panic!("expected snapshot");
         };
         let window_id = state.windows.last().unwrap().id.clone();
-        let mut tab_ids = Vec::new();
-        for i in 0..count {
+        let mut tab_ids = state
+            .tabs
+            .iter()
+            .filter(|tab| tab.window_id == window_id)
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>();
+        for i in 1..count {
             let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
                 url: Some(format!("https://example{}.com", i)),
                 active: true,
@@ -1568,6 +1640,7 @@ mod tests {
             assert_eq!(new_tab.window_id, window_id);
             tab_ids.push(new_tab.id.clone());
         }
+        tab_ids.truncate(count);
         (window_id, tab_ids)
     }
 
@@ -1751,5 +1824,46 @@ mod tests {
         // Only one active tab total (all in same window, default window has no tabs).
         let active_count = s.tabs.iter().filter(|t| t.is_active).count();
         assert_eq!(active_count, 1, "only one tab should be active");
+    }
+
+    #[test]
+    fn settings_page_keys_are_supported_by_the_engine() {
+        let mut core = BrowserCore::new();
+        for (key, value) in [
+            ("startupBehavior", "restore"),
+            ("downloadDirectory", "/tmp/downloads"),
+            ("askBeforeDownload", "on"),
+        ] {
+            let response = core.process(ProtocolRequest::new(Request::SettingsSet {
+                key: key.into(),
+                value: value.into(),
+            }));
+            assert_eq!(response.response, Response::Bool(true), "{key}");
+        }
+        let Response::AppSnapshot(snapshot) = core
+            .process(ProtocolRequest::new(Request::AppSnapshot))
+            .response
+        else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snapshot.settings["startupBehavior"], "restore");
+        assert_eq!(snapshot.settings["downloadDirectory"], "/tmp/downloads");
+        assert_eq!(snapshot.settings["askBeforeDownload"], "on");
+    }
+
+    #[test]
+    fn close_other_and_close_right_reject_unknown_tabs() {
+        let mut core = BrowserCore::new();
+        for request in [
+            Request::TabsCloseOther {
+                tab_id: "missing".into(),
+            },
+            Request::TabsCloseToRight {
+                tab_id: "missing".into(),
+            },
+        ] {
+            let response = core.process(ProtocolRequest::new(request));
+            assert_eq!(response.response, Response::Bool(false));
+        }
     }
 }
