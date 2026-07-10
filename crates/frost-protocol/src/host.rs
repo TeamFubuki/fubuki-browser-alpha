@@ -20,6 +20,12 @@ pub enum HostCommand {
     },
     #[serde(rename = "page.close", rename_all = "camelCase")]
     PageClose { tab_id: String },
+    #[serde(rename = "page.activate", rename_all = "camelCase")]
+    PageActivate { tab_id: String },
+    #[serde(rename = "page.pin", rename_all = "camelCase")]
+    PagePin { tab_id: String, pinned: bool },
+    #[serde(rename = "page.move", rename_all = "camelCase")]
+    PageMove { tab_id: String, to_index: usize },
     #[serde(rename = "page.navigate", rename_all = "camelCase")]
     PageNavigate { tab_id: String, url: String },
     #[serde(rename = "page.reload", rename_all = "camelCase")]
@@ -44,6 +50,7 @@ pub enum HostCommand {
     BrowsingDataClear { target: String },
     #[serde(rename = "ui.overlay.set", rename_all = "camelCase")]
     UiOverlaySet {
+        window_id: String,
         active: bool,
         width: Option<f64>,
         height: Option<f64>,

@@ -70,6 +70,41 @@ impl EngineAdapter for HostCommandAdapter {
         })
     }
 
+    fn activate_page(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageActivate {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn pin_page(&mut self, tab_id: &str, pinned: bool) -> EngineResult<()> {
+        self.send(HostCommand::PagePin {
+            tab_id: tab_id.to_owned(),
+            pinned,
+        })
+    }
+
+    fn move_page(&mut self, tab_id: &str, to_index: usize) -> EngineResult<()> {
+        self.send(HostCommand::PageMove {
+            tab_id: tab_id.to_owned(),
+            to_index,
+        })
+    }
+
+    fn set_overlay(
+        &mut self,
+        window_id: &str,
+        active: bool,
+        width: Option<f64>,
+        height: Option<f64>,
+    ) -> EngineResult<()> {
+        self.send(HostCommand::UiOverlaySet {
+            window_id: window_id.to_owned(),
+            active,
+            width,
+            height,
+        })
+    }
+
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()> {
         self.send(HostCommand::PageNavigate {
             tab_id: tab_id.to_owned(),
@@ -224,6 +259,9 @@ where
                 let activated = self.tabs.activate_tab(&tab_id);
                 if activated {
                     self.windows.set_active_tab(&tab_id);
+                    self.adapter
+                        .activate_page(&tab_id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabActivated(TabActivated { tab_id }));
                 }
                 Ok(Response::Bool(activated))
@@ -267,6 +305,9 @@ where
             Request::TabsPin { tab_id, pinned } => {
                 let ok = self.tabs.pin_tab(&tab_id, pinned);
                 if ok {
+                    self.adapter
+                        .pin_page(&tab_id, pinned)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_pinned: Some(pinned),
@@ -341,6 +382,9 @@ where
             Request::TabsMove { tab_id, to_index } => {
                 let ok = self.tabs.move_tab(&tab_id, to_index);
                 if ok {
+                    self.adapter
+                        .move_page(&tab_id, to_index)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         ..Default::default()
@@ -352,16 +396,29 @@ where
                 if !self.tabs.contains(&tab_id) {
                     return Ok(Response::Bool(false));
                 }
-                let previous_window = self.tabs.get_tab(&tab_id).map(|tab| tab.window_id.clone());
+                let moving_tab = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .ok_or_else(|| CoreError::Message("Tab not found".into()))?;
+                let previous_window = moving_tab.window_id.clone();
+                let url = moving_tab.url.clone();
                 let window_id = self.windows.create_window(false);
                 self.tabs.move_tab_to_window(&tab_id, &window_id);
                 self.windows.move_tab_to_window(&tab_id, &window_id);
                 if let Err(e) = self.adapter.create_window(&window_id, false) {
-                    self.tabs
-                        .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
-                    self.windows
-                        .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
+                    self.tabs.move_tab_to_window(&tab_id, &previous_window);
+                    self.windows.move_tab_to_window(&tab_id, &previous_window);
                     self.windows.close_window(&window_id);
+                    return Err(CoreError::Message(e.to_string()));
+                }
+                // Transfer the CEF page only after the Engine has assigned the
+                // destination window. The app dispatcher will run close then
+                // create from its single FIFO queue, avoiding a native-first
+                // duplicate tab or recursive Engine request.
+                if let Err(e) = self.adapter.close_page(&tab_id) {
+                    return Err(CoreError::Message(e.to_string()));
+                }
+                if let Err(e) = self.adapter.create_page(&tab_id, &window_id, &url) {
                     return Err(CoreError::Message(e.to_string()));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
@@ -492,6 +549,14 @@ where
                 windows.push(closed.window.clone());
                 self.windows
                     .replace_all(windows, Some(closed.window.id.clone()));
+                self.adapter
+                    .create_window(&closed.window.id, closed.window.is_private)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                for tab in &closed.tabs {
+                    self.adapter
+                        .create_page(&tab.id, &tab.window_id, &tab.url)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                }
                 // Emit events for restored tabs.
                 for tab in &closed.tabs {
                     self.emit(Event::TabCreated(tab.clone()));
@@ -605,10 +670,62 @@ where
                 Ok(Response::Bool(true))
             }
             Request::CommandsList => Ok(Response::CommandsList(default_commands())),
-            Request::CommandsExecute { id, args: _ } => Ok(Response::Json(serde_json::json!({
-                "handled": false,
-                "id": id
-            }))),
+            Request::CommandsExecute { id, args } => {
+                let argument = |name: &str| args.as_ref().and_then(|value| value.get(name));
+                let delegated = match id.as_str() {
+                    "tabs.create" => Some(Request::TabsCreate {
+                        url: argument("url")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_owned),
+                        active: argument("active")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(true),
+                    }),
+                    "tabs.close" => {
+                        argument("tabId")
+                            .and_then(|value| value.as_str())
+                            .map(|tab_id| Request::TabsClose {
+                                tab_id: tab_id.to_owned(),
+                            })
+                    }
+                    "tabs.reopenClosed" => Some(Request::TabsReopenClosed),
+                    "tabs.duplicate" => {
+                        argument("tabId")
+                            .and_then(|value| value.as_str())
+                            .map(|tab_id| Request::TabsDuplicate {
+                                tab_id: tab_id.to_owned(),
+                            })
+                    }
+                    "tabs.moveToNewWindow" => argument("tabId")
+                        .and_then(|value| value.as_str())
+                        .map(|tab_id| Request::TabsMoveToNewWindow {
+                            tab_id: tab_id.to_owned(),
+                        }),
+                    "tabs.reload" => {
+                        argument("tabId")
+                            .and_then(|value| value.as_str())
+                            .map(|tab_id| Request::TabsReload {
+                                tab_id: tab_id.to_owned(),
+                            })
+                    }
+                    "windows.create" => Some(Request::WindowsCreate),
+                    "windows.createPrivate" => Some(Request::WindowsCreatePrivate),
+                    "windows.close" => Some(Request::WindowsClose {
+                        window_id: argument("windowId")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_owned),
+                    }),
+                    "windows.reopenClosed" => Some(Request::WindowsReopenClosed),
+                    _ => None,
+                };
+                match delegated {
+                    Some(request) => self.process_inner(request),
+                    None => Ok(Response::Json(serde_json::json!({
+                        "handled": false,
+                        "id": id
+                    }))),
+                }
+            }
             Request::UiSetSidebarWidth { width } => {
                 SettingsService::set(
                     &self.repository,
@@ -619,10 +736,19 @@ where
                 Ok(Response::Bool(true))
             }
             Request::UiSetOverlayActive {
-                active: _,
-                width: _,
-                height: _,
-            } => Ok(Response::Bool(true)),
+                active,
+                width,
+                height,
+            } => {
+                let window_id = self
+                    .windows
+                    .active_window_id()
+                    .ok_or_else(|| CoreError::Message("No active window".into()))?;
+                self.adapter
+                    .set_overlay(window_id, active, width, height)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                Ok(Response::Bool(true))
+            }
             Request::HostSyncSnapshot { state } => {
                 let mut errors: Vec<String> = Vec::new();
 
@@ -1286,6 +1412,43 @@ mod tests {
             command.command,
             HostCommand::PageCreate { url, .. } if url == "https://example.com"
         ));
+    }
+
+    #[test]
+    fn tab_presentation_changes_are_engine_to_host_commands() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+        }));
+        let tab_id = core.snapshot().tabs[0].id.clone();
+        let _ = host_rx.try_recv().unwrap(); // page.create
+
+        core.process(ProtocolRequest::new(Request::TabsActivate {
+            tab_id: tab_id.clone(),
+        }));
+        core.process(ProtocolRequest::new(Request::TabsPin {
+            tab_id: tab_id.clone(),
+            pinned: true,
+        }));
+        core.process(ProtocolRequest::new(Request::TabsMove {
+            tab_id: tab_id.clone(),
+            to_index: 0,
+        }));
+
+        assert!(
+            matches!(host_rx.try_recv().unwrap().command, HostCommand::PageActivate { tab_id: id } if id == tab_id)
+        );
+        assert!(
+            matches!(host_rx.try_recv().unwrap().command, HostCommand::PagePin { tab_id: id, pinned: true } if id == tab_id)
+        );
+        assert!(
+            matches!(host_rx.try_recv().unwrap().command, HostCommand::PageMove { tab_id: id, to_index: 0 } if id == tab_id)
+        );
     }
 
     #[test]
