@@ -38,13 +38,13 @@ private:
       std::function<CefRefPtr<CefValue>(CefRefPtr<CefDictionaryValue>)>;
   void RegisterMethods();
 
-  CefRefPtr<CefValue> ErrorValue(const std::string &message) const;
-  CefRefPtr<CefValue> FrostResultValue(const std::string &responseJson) const;
+  static CefRefPtr<CefValue> ErrorValue(const std::string &message);
+  static CefRefPtr<CefValue> FrostResultValue(const std::string &responseJson);
   CefRefPtr<CefValue> FrostInvoke(const std::string &method,
                                   CefRefPtr<CefDictionaryValue> params);
   CefRefPtr<CefDictionaryValue> WindowToFrostDictionary(
       const BrowserWindow &window) const;
-  std::string WriteValue(CefRefPtr<CefValue> value) const;
+  static std::string WriteValue(CefRefPtr<CefValue> value);
 
   BrowserWindow &window_;
   // Owned by BrowserAppController. Every window must use this single engine

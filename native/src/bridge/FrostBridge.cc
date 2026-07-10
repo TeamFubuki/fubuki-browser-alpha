@@ -62,6 +62,12 @@ bool FrostBridge::PushHostCommandResultJson(const std::string &resultJson) {
          frost_engine_push_host_command_result_json(handle_, resultJson.c_str());
 }
 
+bool FrostBridge::SetHostCommandNotifier(void (*callback)(void *),
+                                         void *context) {
+  return handle_ &&
+         frost_engine_set_host_command_notify(handle_, callback, context);
+}
+
 bool FrostBridge::GrantExternal(const std::string &origin,
                                 const std::string &capabilitiesJson) {
   return handle_ && frost_engine_grant_external(handle_, origin.c_str(),

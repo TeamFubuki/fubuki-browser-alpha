@@ -33,7 +33,7 @@ export default function Omnibox() {
     }
   });
 
-  const submit = () => {
+  const submit = (openInNewTab = false) => {
     if (composing) return;
     const raw = draft().trim();
     if (!raw) return;
@@ -43,11 +43,12 @@ export default function Omnibox() {
       input.kind === 'search' ? buildSearchUrl(input.value) : input.value;
 
     const tabId = browserState.activeTabId;
-    if (tabId) {
-      void tabs.navigate(tabId, url);
-    } else {
+    if (openInNewTab || !tabId) {
       void tabs.create(url);
+    } else {
+      void tabs.navigate(tabId, url);
     }
+    inputRef?.blur();
   };
 
   let inputRef: HTMLInputElement | undefined;
@@ -94,9 +95,18 @@ export default function Omnibox() {
           setDraft(event.currentTarget.value);
         }}
         onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            const tab = browserState.tabs.find(
+              (item) => item.id === browserState.activeTabId,
+            );
+            setDraft(tab?.url ?? '');
+            event.currentTarget.select();
+            event.preventDefault();
+            return;
+          }
           if (event.key === 'Enter' && !composing) {
             event.preventDefault();
-            submit();
+            submit(event.altKey);
           }
         }}
       />

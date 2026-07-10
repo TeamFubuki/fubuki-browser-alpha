@@ -12,6 +12,7 @@ import Omnibox from './Omnibox';
 export default function TopBar() {
   const [findOpen, setFindOpen] = createSignal(false);
   const [findText, setFindText] = createSignal('');
+  let findInput: HTMLInputElement | undefined;
 
   const currentTab = createMemo(() => activeTab());
   const isBookmarked = createMemo(() => isTabBookmarked(currentTab()?.url));
@@ -20,7 +21,13 @@ export default function TopBar() {
   const canGoForward = createMemo(() => currentTab()?.canGoForward ?? false);
 
   onMount(() => {
-    const showFind = () => setFindOpen(true);
+    const showFind = () => {
+      setFindOpen(true);
+      queueMicrotask(() => {
+        findInput?.focus();
+        findInput?.select();
+      });
+    };
     window.addEventListener('fubuki:show-find', showFind);
     onCleanup(() => window.removeEventListener('fubuki:show-find', showFind));
   });
@@ -28,6 +35,11 @@ export default function TopBar() {
   const submitFind = (forward = true) => {
     const query = findText().trim();
     if (query) void page.find(query, forward);
+  };
+
+  const closeFind = () => {
+    setFindOpen(false);
+    void page.stopFinding();
   };
 
   const lang = () => browserState.settings.language;
@@ -102,10 +114,24 @@ export default function TopBar() {
           }}
         >
           <input
+            ref={(element) => {
+              findInput = element;
+            }}
             value={findText()}
             placeholder={t('common.find', lang())}
             aria-label={t('common.find', lang())}
-            onInput={(event) => setFindText(event.currentTarget.value)}
+            onInput={(event) => {
+              const value = event.currentTarget.value;
+              setFindText(value);
+              if (value.trim()) void page.find(value, true);
+              else void page.stopFinding();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                closeFind();
+              }
+            }}
             autofocus
           />
           <button
@@ -125,10 +151,7 @@ export default function TopBar() {
           <button
             type="button"
             title={t('action.closeFind', lang())}
-            onClick={() => {
-              setFindOpen(false);
-              void page.stopFinding();
-            }}
+            onClick={closeFind}
           >
             ×
           </button>

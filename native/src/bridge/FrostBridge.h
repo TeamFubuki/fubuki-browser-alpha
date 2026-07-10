@@ -27,6 +27,7 @@ public:
   bool PollHostCommandJson(std::string &commandJson);
   bool PushHostEventJson(const std::string &eventJson);
   bool PushHostCommandResultJson(const std::string &resultJson);
+  bool SetHostCommandNotifier(void (*callback)(void *), void *context);
 
   // External / MCP automation boundary. Grants capabilities to a caller
   // origin and routes external commands through the engine policy layer.
