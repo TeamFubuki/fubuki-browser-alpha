@@ -77,22 +77,22 @@ describe('sidebar resize behavior', () => {
     it('cancels animation frames on cleanup', () => {
       // Simulate starting an animation
       const frameId = mockRequestAnimationFrame();
-      
+
       // Simulate cleanup
       if (frameId) {
         mockCancelAnimationFrame(frameId);
       }
-      
+
       expect(mockCancelAnimationFrame).toHaveBeenCalledWith(frameId);
     });
 
     it('handles multiple animation frames', () => {
       const frame1 = mockRequestAnimationFrame();
       const frame2 = mockRequestAnimationFrame();
-      
+
       mockCancelAnimationFrame(frame1);
       mockCancelAnimationFrame(frame2);
-      
+
       expect(mockCancelAnimationFrame).toHaveBeenCalledTimes(2);
       expect(mockCancelAnimationFrame).toHaveBeenLastCalledWith(frame2);
     });
@@ -104,13 +104,13 @@ describe('sidebar resize behavior', () => {
         hasPointerCapture: vi.fn().mockReturnValue(true),
         releasePointerCapture: vi.fn(),
       } as unknown as HTMLElement;
-      
+
       const pointerId = 1;
-      
+
       if (mockElement.hasPointerCapture(pointerId)) {
         mockElement.releasePointerCapture(pointerId);
       }
-      
+
       expect(mockElement.releasePointerCapture).toHaveBeenCalledWith(pointerId);
     });
 
@@ -119,13 +119,13 @@ describe('sidebar resize behavior', () => {
         hasPointerCapture: vi.fn().mockReturnValue(false),
         releasePointerCapture: vi.fn(),
       } as unknown as HTMLElement;
-      
+
       const pointerId = 1;
-      
+
       if (mockElement.hasPointerCapture(pointerId)) {
         mockElement.releasePointerCapture(pointerId);
       }
-      
+
       expect(mockElement.releasePointerCapture).not.toHaveBeenCalled();
     });
   });
@@ -137,7 +137,7 @@ describe('sidebar resize behavior', () => {
       const currentX = 250;
       const delta = currentX - startX; // 150
       const expectedWidth = startWidth + delta; // 350
-      
+
       // Should be clamped to MAX
       expect(clampSidebarWidth(expectedWidth)).toBe(MAX_SIDEBAR_WIDTH);
     });
@@ -148,7 +148,7 @@ describe('sidebar resize behavior', () => {
       const currentX = 100;
       const delta = currentX - startX; // -100
       const expectedWidth = startWidth + delta; // 100
-      
+
       // Should be clamped to MIN
       expect(clampSidebarWidth(expectedWidth)).toBe(MIN_SIDEBAR_WIDTH);
     });
@@ -159,7 +159,7 @@ describe('sidebar resize behavior', () => {
       const currentX = 150;
       const delta = currentX - startX; // 0
       const expectedWidth = startWidth + delta; // 200
-      
+
       expect(clampSidebarWidth(expectedWidth)).toBe(200);
     });
 
@@ -169,7 +169,7 @@ describe('sidebar resize behavior', () => {
       const currentX = 150;
       const delta = currentX - startX; // 50
       const expectedWidth = startWidth + delta; // 250
-      
+
       expect(clampSidebarWidth(expectedWidth)).toBe(250);
     });
 
@@ -179,7 +179,7 @@ describe('sidebar resize behavior', () => {
       const currentX = 50;
       const delta = currentX - startX; // -50
       const expectedWidth = startWidth + delta; // 200
-      
+
       expect(clampSidebarWidth(expectedWidth)).toBe(200);
     });
   });

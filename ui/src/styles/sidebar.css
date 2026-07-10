@@ -97,7 +97,9 @@
   bottom: 8px;
   width: 1px;
   background: transparent;
-  transition: background-color 0.14s ease, transform 0.14s ease;
+  transition:
+    background-color 0.14s ease,
+    transform 0.14s ease;
 }
 
 .sidebar-resize-handle:hover::after {
