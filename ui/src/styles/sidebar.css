@@ -78,27 +78,76 @@
   width: var(--button-size);
 }
 
+/* ── Resize handle ─────────────────────────────────────────────────── */
+
 .sidebar-resize-handle {
   -webkit-app-region: no-drag;
   position: absolute;
   top: 0;
-  right: -3px;
+  right: -6px;
   bottom: 0;
-  width: 6px;
+  width: 12px;
   cursor: col-resize;
+  touch-action: none;
+  z-index: 10;
 }
 
+/* Vertical line along the border */
+.sidebar-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 5px;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.sidebar-resize-handle:hover::before {
+  opacity: 1;
+}
+
+/* Grip indicator in the centre */
 .sidebar-resize-handle::after {
   content: '';
   position: absolute;
-  top: 8px;
-  right: 2px;
-  bottom: 8px;
-  width: 1px;
+  top: 50%;
+  right: 3px;
+  width: 3px;
+  height: 24px;
+  transform: translateY(-50%);
+  border-radius: 2px;
   background: transparent;
+  transition:
+    background-color 0.14s ease,
+    opacity 0.14s ease;
+  opacity: 0;
 }
 
-.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:hover::after {
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.sidebar-resize-handle:active::after,
 .sidebar.resizing .sidebar-resize-handle::after {
-  background: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent);
+  opacity: 1;
+}
+
+.sidebar.resizing .sidebar-resize-handle::before {
+  opacity: 1;
+  background: var(--accent);
+}
+
+.sidebar.resizing .sidebar-resize-handle {
+  cursor: col-resize;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    color-mix(in srgb, var(--accent) 8%, transparent) 50%,
+    color-mix(in srgb, var(--accent) 4%, transparent) 100%
+  );
 }

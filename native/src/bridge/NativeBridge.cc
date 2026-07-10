@@ -290,9 +290,8 @@ void NativeBridge::RegisterMethods() {
 
   methods_["ui.setSidebarWidth"] = [this](
                                        CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("ui.setSidebarWidth", params, [this, params] {
-      return window_.SetLiveSidebarWidth(params->GetDouble("width"));
-    });
+    return BoolValue(
+        window_.SetLiveSidebarWidth(params->GetDouble("width")));
   };
 
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {

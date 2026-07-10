@@ -11,15 +11,18 @@
   background: var(--bg);
   pointer-events: none;
   contain: layout style;
-  transition: grid-template-columns 0.16s ease;
 }
 
 .browser-shell.quiet-mode {
   grid-template-rows: 0 minmax(0, 1fr);
 }
 
-:root[data-sidebar-resizing='true'] .browser-shell {
-  transition: none;
+/* Disable all transitions during live resize for instant feedback. */
+:root[data-sidebar-resizing='true'] .browser-shell,
+:root[data-sidebar-resizing='true'] .sidebar,
+:root[data-sidebar-resizing='true'] .top-bar,
+:root[data-sidebar-resizing='true'] .webview-area {
+  transition: none !important;
 }
 
 :root[data-sidebar='hide'] .browser-shell {

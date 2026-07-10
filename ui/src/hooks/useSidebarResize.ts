@@ -2,10 +2,10 @@ import { createSignal, onCleanup } from 'solid-js';
 import { fubuki } from '../bridge/fubuki';
 import { browserState, refreshState } from '../stores/browserStore';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
+import { createSidebarWidthSync } from '../sidebarWidthSync';
 
-function applyLiveSidebarWidth(width: number) {
+function applyCssSidebarWidth(width: number) {
   document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
-  void fubuki.invoke('ui.setSidebarWidth', { width });
 }
 
 function currentSidebarWidth() {
@@ -30,22 +30,20 @@ export function useSidebarResize() {
   let startX = 0;
   let startWidth = DEFAULT_SIDEBAR_WIDTH;
   let pendingWidth = DEFAULT_SIDEBAR_WIDTH;
-  let animationFrame = 0;
 
-  const saveWidth = (width: number) =>
-    fubuki
-      .invoke('settings.set', { key: 'sidebarWidth', value: String(width) })
-      .then(() => refreshState('settings.saved'));
+  const nativeWidth = createSidebarWidthSync({
+    send: (width) => fubuki.invoke('ui.setSidebarWidth', { width }),
+    onApplied: (width) => applyCssSidebarWidth(width),
+  });
 
-  const flushLiveWidth = () => {
-    animationFrame = 0;
-    applyLiveSidebarWidth(pendingWidth);
-  };
-
-  const scheduleLiveWidth = () => {
-    if (!animationFrame) {
-      animationFrame = requestAnimationFrame(flushLiveWidth);
-    }
+  const saveWidth = async (width: number) => {
+    // Ensure the native side has applied the final width before persisting.
+    await nativeWidth.flush(width);
+    await fubuki.invoke('settings.set', {
+      key: 'sidebarWidth',
+      value: String(width),
+    });
+    await refreshState('settings.saved');
   };
 
   const removeListeners = () => {
@@ -61,6 +59,7 @@ export function useSidebarResize() {
     if (!active) return;
 
     active = false;
+
     const width = clampSidebarWidth(
       typeof clientX === 'number'
         ? startWidth + clientX - startX
@@ -68,27 +67,28 @@ export function useSidebarResize() {
     );
     pendingWidth = width;
 
-    if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
-      animationFrame = 0;
-    }
-
     removeListeners();
     delete document.documentElement.dataset.sidebarResizing;
     setResizing(false);
-    applyLiveSidebarWidth(width);
 
     if (handle?.hasPointerCapture(activePointerId)) {
       handle.releasePointerCapture(activePointerId);
     }
     activePointerId = -1;
-    void saveWidth(width);
+
+    // Save final width — flush ensures CSS + native are in sync first.
+    void saveWidth(width).catch((error) =>
+      console.error('[Fubuki] Failed to save sidebar width:', error),
+    );
   };
 
   const onPointerMove = (event: PointerEvent) => {
     if (!active || event.pointerId !== activePointerId) return;
+
     pendingWidth = clampSidebarWidth(startWidth + event.clientX - startX);
-    scheduleLiveWidth();
+    // Coalesced: only the latest width reaches the native bridge; CSS is
+    // applied in the onApplied callback after the native update completes.
+    nativeWidth.update(pendingWidth);
   };
 
   const onPointerUp = (event: PointerEvent) => {
@@ -128,17 +128,23 @@ export function useSidebarResize() {
     handle.addEventListener('lostpointercapture', onLostPointerCapture);
   };
 
-  const resetWidth = () => {
+  const resetWidth = async () => {
     const width = clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-    applyLiveSidebarWidth(width);
-    void saveWidth(width);
+    try {
+      await saveWidth(width);
+    } catch (error) {
+      console.error('[Fubuki] Failed to reset sidebar width:', error);
+    }
   };
 
   onCleanup(() => {
-    if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
-    }
     removeListeners();
+    if (active && handle?.hasPointerCapture(activePointerId)) {
+      handle.releasePointerCapture(activePointerId);
+    }
+    active = false;
+    activePointerId = -1;
+    nativeWidth.dispose();
     delete document.documentElement.dataset.sidebarResizing;
   });
 
