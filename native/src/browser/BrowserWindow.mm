@@ -368,7 +368,7 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
     : app_(app),
       eventBus_(app.Events()),
       tabManager_(tabManager),
-      bridge_(std::make_unique<NativeBridge>(*this)),
+      bridge_(std::make_unique<NativeBridge>(*this, app.Engine())),
       windowId_(std::move(windowId)),
       privateWindow_(privateWindow) {
   gActiveBrowserWindow = this;
@@ -1228,6 +1228,22 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
       error = validSuccessor ? "failed to close page or activate successor"
                              : "invalid successor tab";
     }
+  } else if (command == "page.activate") {
+    ok = ActivateTab(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.pin") {
+    ok = PinTab(JsonString(payload, "tabId"), JsonBool(payload, "pinned"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.move") {
+    ok = MoveTab(JsonString(payload, "tabId"),
+                 payload->HasKey("toIndex") ? payload->GetInt("toIndex") : 0);
+    if (!ok) {
+      error = "unknown tab";
+    }
   } else if (command == "page.navigate") {
     ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
     if (!ok) {
@@ -1282,26 +1298,13 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
       error = "failed to set permission";
     }
   } else {
-    // file.open / file.reveal / browsingData.clear are not yet routed to host
-    // I/O in this build; acknowledge to avoid stale commands.
-    ok = true;
+    error = "unsupported host command: " + command;
   }
 
-  return bridge_->PushHostCommandResultJson(
+  return app_.Engine().PushHostCommandResultJson(
       HostCommandResultJson(commandId, ok, error));
 }
 
-void BrowserWindow::PollAndExecuteHostCommands() {
-  if (!bridge_) {
-    return;
-  }
-  std::string commandJson;
-  while (bridge_->PollHostCommandJson(commandJson)) {
-    if (!commandJson.empty()) {
-      ExecuteHostCommand(commandJson);
-    }
-  }
-}
 
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
   std::string directory = Store().GetSetting("downloadDirectory");

@@ -35,23 +35,14 @@ BrowserAppController::~BrowserAppController() = default;
 
 void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
-  const std::string startupBehavior = store_.GetSetting("startupBehavior");
-  bool restored = false;
-  if (startupBehavior == "restore") {
-    restoring_ = true;
-    auto windows = RestoredWindows();
-    for (size_t i = 0; i < windows->GetSize(); ++i) {
-      if (auto windowState = windows->GetDictionary(i)) {
-        NewWindow(false, windowState);
-        restored = true;
-      }
-    }
-    restoring_ = false;
-  }
-  if (!restored) {
-    NewWindow(false, nullptr);
+  // Bootstrap through FrostEngine, not by manufacturing native state. The
+  // resulting window/page commands are consumed by the shared dispatcher.
+  if (!InvokeEngine("windows.create") || !InvokeEngine("tabs.create")) {
+    store_.AddLog("error", "FrostEngine failed to create the initial browser state");
+    return;
   }
   StartHostCommandPoller();
+  DispatchHostCommands();
 }
 
 namespace {
@@ -89,17 +80,10 @@ void BrowserAppController::StartHostCommandPoller() {
 }
 
 void BrowserAppController::DispatchHostCommands() {
-  for (const auto &context : windows_) {
-    BrowserWindow *window = context->window.get();
-    if (!window) {
-      continue;
-    }
-    NativeBridge *bridge = window->Bridge();
-    if (!bridge) {
-      continue;
-    }
-    std::string commandJson;
-    while (bridge->PollHostCommandJson(commandJson)) {
+  std::string commandJson;
+  // There is one FrostBridge and one queue. Poll it exactly once here, then
+  // route each command to the window identified by its payload.
+  while (engine_.PollHostCommandJson(commandJson)) {
       if (commandJson.empty()) {
         continue;
       }
@@ -114,47 +98,57 @@ void BrowserAppController::DispatchHostCommands() {
                                       : "";
       const std::string commandId =
           envelope->HasKey("id") ? envelope->GetString("id").ToString() : "";
+      CefRefPtr<CefDictionaryValue> payload =
+          envelope->HasKey("payload") &&
+                  envelope->GetType("payload") == VTYPE_DICTIONARY
+              ? envelope->GetDictionary("payload")
+              : CefDictionaryValue::Create();
 
       if (command == "window.create") {
-        CefRefPtr<CefDictionaryValue> payload =
-            envelope->HasKey("payload")
-                ? envelope->GetDictionary("payload")
-                : CefDictionaryValue::Create();
         const bool isPrivate =
             payload->HasKey("isPrivate") && payload->GetBool("isPrivate");
-        const bool ok = NewWindow(isPrivate, nullptr) != nullptr;
-        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
-                                                                ok ? "" : "failed to create window"));
+        const std::string windowId = payload->HasKey("windowId")
+                                         ? payload->GetString("windowId").ToString()
+                                         : "";
+        const bool ok = !windowId.empty() && !FindWindow(windowId) &&
+                        NewWindow(isPrivate, nullptr, windowId) != nullptr;
+        engine_.PushHostCommandResultJson(HostCommandResultJson(
+            commandId, ok, ok ? "" : "failed to create requested window"));
       } else if (command == "window.close") {
-        CefRefPtr<CefDictionaryValue> payload =
-            envelope->HasKey("payload")
-                ? envelope->GetDictionary("payload")
-                : CefDictionaryValue::Create();
         const std::string targetWindowId =
             payload->HasKey("windowId") ? payload->GetString("windowId").ToString() : "";
-        const bool ok = (targetWindowId == window->WindowId())
-                            ? window->CloseWindow()
-                            : true;
-        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
-                                                                ok ? "" : "failed to close window"));
+        BrowserWindow *target = FindWindow(targetWindowId);
+        const bool ok = target && target->CloseWindow();
+        engine_.PushHostCommandResultJson(HostCommandResultJson(
+            commandId, ok, ok ? "" : "target window does not exist or could not close"));
       } else {
-        // Page/overlay/permission commands are owned by the window itself.
-        // Forward the already-polled command instead of re-draining the queue,
-        // so the specific command we just read is not discarded.
-        window->ExecuteHostCommand(commandJson);
+        const std::string windowId = payload->HasKey("windowId")
+                                         ? payload->GetString("windowId").ToString()
+                                         : "";
+        const std::string tabId = payload->HasKey("tabId")
+                                      ? payload->GetString("tabId").ToString()
+                                      : "";
+        BrowserWindow *target = !windowId.empty() ? FindWindow(windowId)
+                                                    : FindWindowForTab(tabId);
+        if (!target) {
+          engine_.PushHostCommandResultJson(HostCommandResultJson(
+              commandId, false, "target window or tab does not exist"));
+        } else {
+          target->ExecuteHostCommand(commandJson);
+        }
       }
-    }
   }
 }
 
 BrowserWindow *
 BrowserAppController::NewWindow(bool privateWindow,
-                                CefRefPtr<CefDictionaryValue> restoreState) {
+                                CefRefPtr<CefDictionaryValue> restoreState,
+                                const std::string &engineWindowId) {
   CEF_REQUIRE_UI_THREAD();
   auto context = std::make_unique<WindowContext>();
-  const std::string windowId = NextWindowId();
-  context->tabManager = std::make_unique<TabManager>(eventBus_, windowId);
+  context->tabManager = std::make_unique<TabManager>(eventBus_);
   BrowserWindow *raw = nullptr;
+  const std::string windowId = engineWindowId.empty() ? NextWindowId() : engineWindowId;
   context->window = std::make_unique<BrowserWindow>(*this, *context->tabManager,
                                                     windowId, privateWindow);
   raw = context->window.get();
@@ -179,15 +173,8 @@ bool BrowserAppController::NewPrivateWindow() {
 
 bool BrowserAppController::RequestNewWindow(
     bool privateWindow, CefRefPtr<CefDictionaryValue> restoreState) {
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](BrowserAppController *app, bool privateWindow,
-                             CefRefPtr<CefDictionaryValue> restoreState) {
-                            if (app) {
-                              app->NewWindow(privateWindow, restoreState);
-                            }
-                          },
-                          this, privateWindow, restoreState));
-  return true;
+  (void)restoreState;
+  return InvokeEngine(privateWindow ? "windows.createPrivate" : "windows.create");
 }
 
 bool BrowserAppController::RequestNewPrivateWindow() {
@@ -195,20 +182,14 @@ bool BrowserAppController::RequestNewPrivateWindow() {
 }
 
 bool BrowserAppController::CloseActiveWindow() {
-  if (!activeWindow_) {
-    return false;
-  }
-  return activeWindow_->CloseWindow();
+  if (!activeWindow_) return false;
+  auto params = CefDictionaryValue::Create();
+  params->SetString("windowId", activeWindow_->WindowId());
+  return InvokeEngine("windows.close", params);
 }
 
 bool BrowserAppController::ReopenClosedWindow() {
-  if (closedWindows_.empty()) {
-    return false;
-  }
-  auto state = closedWindows_.back();
-  closedWindows_.pop_back();
-  NewWindow(false, state);
-  return true;
+  return InvokeEngine("windows.reopenClosed");
 }
 
 void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
@@ -278,6 +259,42 @@ std::vector<BrowserWindow *> BrowserAppController::Windows() const {
     }
   }
   return result;
+}
+
+BrowserWindow *BrowserAppController::FindWindow(const std::string &windowId) const {
+  for (const auto &context : windows_) {
+    if (context->window && context->window->WindowId() == windowId) {
+      return context->window.get();
+    }
+  }
+  return nullptr;
+}
+
+BrowserWindow *BrowserAppController::FindWindowForTab(const std::string &tabId) const {
+  if (tabId.empty()) {
+    return nullptr;
+  }
+  for (const auto &context : windows_) {
+    if (context->window && context->window->Tabs().GetTab(tabId)) {
+      return context->window.get();
+    }
+  }
+  return nullptr;
+}
+
+bool BrowserAppController::InvokeEngine(const std::string &method,
+                                        CefRefPtr<CefDictionaryValue> params) {
+  auto request = CefDictionaryValue::Create();
+  request->SetInt("version", 0);
+  request->SetString("method", method);
+  request->SetDictionary("params", params ? params : CefDictionaryValue::Create());
+  auto value = CefValue::Create();
+  value->SetDictionary(request);
+  const std::string response = engine_.ProcessJson(
+      CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString());
+  auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
+  return parsed && parsed->GetType() == VTYPE_DICTIONARY &&
+         (!parsed->GetDictionary()->HasKey("ok") || parsed->GetDictionary()->GetBool("ok"));
 }
 
 std::string BrowserAppController::NextWindowId() {
