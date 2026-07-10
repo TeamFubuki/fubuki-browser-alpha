@@ -484,7 +484,7 @@ where
                 Ok(Response::Bool(true))
             }
             Request::SettingsReset { key } => {
-                let value = default_setting(&key);
+                let value = SettingsService::default_value(&key);
                 SettingsService::set(&self.repository, &key, value)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::SettingChanged(SettingChanged {
@@ -902,22 +902,6 @@ fn now_epoch() -> i64 {
         .unwrap_or(0)
 }
 
-fn default_setting(key: &str) -> &'static str {
-    match key {
-        "homepage" | "homeUrl" => "https://example.com",
-        "searchEngine" => "google",
-        "customSearchUrl" => "https://www.google.com/search?q={query}",
-        "theme" => "light",
-        "appearance" => "system",
-        "sidebarVisible" => "show",
-        "sidebarWidth" => "196",
-        "newTabPage" => "blank",
-        "language" => "system",
-        "defaultZoomLevel" => "0",
-        _ => "",
-    }
-}
-
 fn default_commands() -> Vec<BrowserCommand> {
     [
         ("tabs.create", "New Tab", "Tabs", "Cmd+T"),
@@ -1065,32 +1049,29 @@ impl HistoryRepository for InMemoryStore {
     }
 
     fn clear_history_range(&self, range: &str) -> frost_store::StoreResult<bool> {
-        match range {
+        let cutoff = match range {
             "all" => {
                 self.history.borrow_mut().clear();
-                Ok(true)
+                return Ok(true);
             }
-            "lastHour" => {
-                let cutoff = now_epoch() - 3600;
-                let mut history = self.history.borrow_mut();
-                let before = history.len();
-                history.retain(|r| r.created_at.parse::<i64>().map_or(true, |ts| ts < cutoff));
-                Ok(history.len() != before)
-            }
+            "lastHour" => now_epoch() - 3600,
             "today" => {
                 let now = now_epoch();
-                let start_of_today = now - (now % 86400);
-                let mut history = self.history.borrow_mut();
-                let before = history.len();
-                history.retain(|r| {
-                    r.created_at
-                        .parse::<i64>()
-                        .map_or(true, |ts| ts < start_of_today)
-                });
-                Ok(history.len() != before)
+                now - (now % 86400)
             }
-            _ => Ok(false),
-        }
+            _ => return Ok(false),
+        };
+        let mut history = self.history.borrow_mut();
+        let before = history.len();
+        // Remove items with timestamps >= cutoff.
+        // Items with invalid (non-numeric) timestamps are also removed.
+        history.retain(|r| {
+            r.created_at
+                .parse::<i64>()
+                .map(|ts| ts < cutoff)
+                .unwrap_or(false)
+        });
+        Ok(history.len() != before)
     }
 }
 

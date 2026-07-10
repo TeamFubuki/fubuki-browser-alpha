@@ -74,10 +74,18 @@ impl TabService {
             return false;
         };
 
-        for tab in &mut self.tabs {
-            if tab.window_id == window_id {
-                tab.is_active = tab.id == tab_id;
-            }
+        // First, deactivate the currently active tab in this window
+        if let Some(current_active) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.is_active && t.window_id == window_id)
+        {
+            current_active.is_active = false;
+        }
+
+        // Then activate the target tab
+        if let Some(target) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            target.is_active = true;
         }
         true
     }
@@ -155,38 +163,24 @@ impl TabService {
         else {
             return Vec::new();
         };
-        // Find the index of the target tab within its window.
-        let window_start = self
-            .tabs
-            .iter()
-            .position(|t| t.window_id == window_id)
-            .unwrap();
-        let local_index = self
-            .tabs
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.window_id == window_id)
-            .position(|(_i, t)| t.id == tab_id)
-            .unwrap();
+        // Collect closed tabs using a filter-based approach to avoid
+        // complex index arithmetic and potential panics.
+        let mut found_target = false;
         let mut closed = Vec::new();
-        self.tabs = self
-            .tabs
-            .drain(..)
-            .enumerate()
-            .filter_map(|(i, tab)| {
-                if tab.window_id != window_id {
-                    return Some(tab);
-                }
-                let local_i = i - window_start;
-                let keep = local_i <= local_index || tab.is_pinned;
-                if keep {
-                    Some(tab)
-                } else {
-                    closed.push(tab);
-                    None
-                }
-            })
-            .collect();
+        self.tabs.retain(|tab| {
+            if tab.window_id != window_id {
+                return true;
+            }
+            if tab.id == tab_id {
+                found_target = true;
+                return true;
+            }
+            if !found_target || tab.is_pinned {
+                return true;
+            }
+            closed.push(tab.clone());
+            false
+        });
         closed
     }
 
@@ -203,8 +197,10 @@ impl TabService {
             .filter(|(_, t)| t.window_id == window_id)
             .map(|(i, _)| i)
             .collect();
-        let local_pos = window_indices.iter().position(|&i| i == index).unwrap();
-        let local_to = to_index.min(window_indices.len() - 1);
+        let Some(local_pos) = window_indices.iter().position(|&i| i == index) else {
+            return false;
+        };
+        let local_to = to_index.min(window_indices.len().saturating_sub(1));
         if local_pos == local_to {
             return true; // no-op
         }
@@ -234,8 +230,10 @@ impl TabService {
                 t.is_active = false;
             }
         }
-        let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
-        tab.is_active = true;
+        // The tab must exist since we just modified it above.
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.is_active = true;
+        }
         true
     }
 
