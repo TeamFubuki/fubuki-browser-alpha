@@ -64,7 +64,9 @@ class BrowserWindow {
   bool FocusOmnibox();
   CefRefPtr<CefValue> ExecuteCommand(const std::string& commandId,
                                      CefRefPtr<CefDictionaryValue> args);
-  bool HandleShortcut(bool commandDown, bool altDown, int keyCode, char character);
+  bool HandleShortcut(bool commandDown, bool controlDown, bool shiftDown,
+                      bool altDown, int keyCode, char character);
+  bool ActivateRelativeTab(bool forward);
   bool OpenDevTools();
   bool AddActiveBookmark();
   bool SaveBookmark(const std::string& title, const std::string& url,
@@ -77,6 +79,8 @@ class BrowserWindow {
   bool ClearBrowsingData(const std::string& target);
   bool ClearHistoryRange(const std::string& range);
   bool SetSetting(const std::string& key, const std::string& value);
+  // Applies an Engine-owned setting to native views without persisting it.
+  bool ApplySetting(const std::string& key, const std::string& value);
   bool ResetSetting(const std::string& key);
   bool SetPermission(const std::string& origin, const std::string& permission,
                      const std::string& value);

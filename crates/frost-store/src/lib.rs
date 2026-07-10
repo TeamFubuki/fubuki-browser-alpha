@@ -11,6 +11,8 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("invalid setting key: {0}")]
     InvalidKey(String),
+    #[error("invalid value for setting {key}: {value}")]
+    InvalidValue { key: String, value: String },
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;

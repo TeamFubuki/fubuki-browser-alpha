@@ -16,6 +16,10 @@ char *frost_engine_poll_host_command_json(void *handle);
 bool frost_engine_push_host_event_json(void *handle, const char *event_json);
 bool frost_engine_push_host_command_result_json(void *handle,
                                                 const char *result_json);
+typedef void (*frost_host_command_notify_fn)(void *context);
+bool frost_engine_set_host_command_notify(void *handle,
+                                          frost_host_command_notify_fn callback,
+                                          void *context);
 void frost_engine_string_free(char *value);
 
 // External / MCP automation boundary ---------------------------------------

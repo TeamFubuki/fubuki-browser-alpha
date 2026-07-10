@@ -56,6 +56,7 @@ fn should_drop_empty_params(value: &Value) -> bool {
         && matches!(
             method.as_str(),
             "app.snapshot"
+                | "app.startup"
                 | "tabs.list"
                 | "windows.list"
                 | "windows.create"
@@ -77,6 +78,8 @@ fn default_version() -> u16 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum Request {
+    #[serde(rename = "app.startup")]
+    AppStartup,
     #[serde(rename = "app.snapshot")]
     AppSnapshot,
     #[serde(rename = "tabs.list")]

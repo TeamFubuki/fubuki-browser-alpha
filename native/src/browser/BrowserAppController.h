@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,6 +37,12 @@ public:
   bool RequestNewPrivateWindow();
   bool CloseActiveWindow();
   bool ReopenClosedWindow();
+  bool RequestEngineCommand(
+      const std::string &method,
+      CefRefPtr<CefDictionaryValue> params = nullptr);
+  bool RequestSettingChange(const std::string &tabId, const std::string &key,
+                            const std::string &value, bool reset,
+                            const std::string &returnUrl);
   // Polls FrostEngine HostCommands and executes them. Window lifecycle
   // commands are handled here; page/overlay commands are delegated to the
   // owning BrowserWindow.
@@ -44,8 +51,9 @@ public:
   // UI bridge. Host commands are handled separately because they require CEF
   // side effects.
   void DispatchEngineEvents();
-  // Starts the self-rescheduling host command poller on the CEF UI thread.
-  void StartHostCommandPoller();
+  // Called from FrostEngine's worker notification. Coalesces notifications and
+  // schedules bounded draining on the CEF UI thread.
+  void NotifyHostCommandReady();
   void NotifyWindowFocused(BrowserWindow *window);
   void NotifyWindowClosed(BrowserWindow *window);
   void PersistSession();
@@ -87,6 +95,7 @@ private:
   BrowserWindow *activeWindow_ = nullptr;
   int nextWindowId_ = 1;
   bool restoring_ = false;
+  std::atomic_bool hostDispatchScheduled_{false};
 };
 
 BrowserAppController *GetBrowserAppController();

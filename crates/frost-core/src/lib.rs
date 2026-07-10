@@ -8,7 +8,8 @@ mod window_service;
 
 pub use external_router::{ExternalPolicy, ExternalResponse};
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
 use frost_engine_api::{EngineAdapter, EngineError, EngineResult, NoopEngineAdapter};
@@ -40,18 +41,60 @@ pub type CoreResult<T> = Result<T, CoreError>;
 
 pub struct HostCommandAdapter {
     tx: Sender<HostCommandEnvelope>,
+    result_rx: Option<Receiver<HostCommandResultEnvelope>>,
+    notify: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl HostCommandAdapter {
     pub fn new(tx: Sender<HostCommandEnvelope>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            result_rx: None,
+            notify: None,
+        }
+    }
+
+    pub fn with_results(
+        tx: Sender<HostCommandEnvelope>,
+        result_rx: Receiver<HostCommandResultEnvelope>,
+        notify: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        Self {
+            tx,
+            result_rx: Some(result_rx),
+            notify: Some(notify),
+        }
     }
 
     fn send(&self, command: HostCommand) -> EngineResult<()> {
         let id = format!("host-command-{}", uuid::Uuid::new_v4());
         self.tx
-            .send(HostCommandEnvelope::new(id, command))
-            .map_err(|e| EngineError::Message(e.to_string()))
+            .send(HostCommandEnvelope::new(id.clone(), command))
+            .map_err(|e| EngineError::Message(e.to_string()))?;
+        if let Some(notify) = &self.notify {
+            notify();
+        }
+        let Some(result_rx) = &self.result_rx else {
+            return Ok(());
+        };
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|e| EngineError::Message(format!("host command {id} timed out: {e}")))?;
+        if result.command_id != id {
+            return Err(EngineError::Message(format!(
+                "unexpected host command result {} while waiting for {id}",
+                result.command_id
+            )));
+        }
+        if result.ok {
+            Ok(())
+        } else {
+            Err(EngineError::Message(
+                result
+                    .error
+                    .unwrap_or_else(|| format!("host command {id} failed")),
+            ))
+        }
     }
 }
 
@@ -148,6 +191,13 @@ impl EngineAdapter for HostCommandAdapter {
             window_id: window_id.to_owned(),
         })
     }
+
+    fn apply_setting(&mut self, key: &str, value: &str) -> EngineResult<()> {
+        self.send(HostCommand::SettingsApply {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        })
+    }
 }
 
 pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
@@ -159,6 +209,7 @@ pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     closed_windows: Vec<ClosedWindow>,
     events: Vec<EventEnvelope>,
     event_tx: Option<Sender<EventEnvelope>>,
+    session_dirty_since: Option<Instant>,
 }
 
 impl BrowserCore<NoopEngineAdapter, InMemoryStore> {
@@ -199,6 +250,7 @@ where
             closed_windows: Vec::new(),
             events: Vec::new(),
             event_tx: None,
+            session_dirty_since: None,
         }
     }
 
@@ -232,7 +284,33 @@ where
     }
 
     fn process_inner(&mut self, request: Request) -> CoreResult<Response> {
-        match request {
+        let session_mutation = matches!(
+            &request,
+            Request::TabsCreate { .. }
+                | Request::TabsActivate { .. }
+                | Request::TabsClose { .. }
+                | Request::TabsPin { .. }
+                | Request::TabsDuplicate { .. }
+                | Request::TabsReopenClosed
+                | Request::TabsCloseOther { .. }
+                | Request::TabsCloseToRight { .. }
+                | Request::TabsMove { .. }
+                | Request::TabsMoveToNewWindow { .. }
+                | Request::TabsNavigate { .. }
+                | Request::WindowsCreate
+                | Request::WindowsCreatePrivate
+                | Request::WindowsClose { .. }
+                | Request::WindowsReopenClosed
+        );
+        let force_session_flush = matches!(&request, Request::WindowsClose { .. });
+        let rollback_tabs = self.tabs.list();
+        let rollback_windows = self.windows.list();
+        let rollback_active_window = self.windows.active_window_id().map(ToOwned::to_owned);
+        let rollback_closed_tabs = self.closed_tabs.clone();
+        let rollback_closed_windows = self.closed_windows.clone();
+        let rollback_event_count = self.events.len();
+        let result = match request {
+            Request::AppStartup => self.startup(),
             Request::AppSnapshot => Ok(Response::AppSnapshot(self.snapshot())),
             Request::TabsList => Ok(Response::TabsList(self.tabs.list())),
             Request::TabsCreate { url, active } => {
@@ -590,6 +668,11 @@ where
                 .map(Response::Setting)
                 .map_err(|e| CoreError::Message(e.to_string())),
             Request::SettingsSet { key, value } => {
+                SettingsService::validate(&key, &value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.adapter
+                    .apply_setting(&key, &value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
                 SettingsService::set(&self.repository, &key, &value)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::SettingChanged(SettingChanged { key, value }));
@@ -597,6 +680,11 @@ where
             }
             Request::SettingsReset { key } => {
                 let value = SettingsService::default_value(&key);
+                SettingsService::validate(&key, value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.adapter
+                    .apply_setting(&key, value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
                 SettingsService::set(&self.repository, &key, value)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::SettingChanged(SettingChanged {
@@ -694,69 +782,51 @@ where
             Request::CommandsList => Ok(Response::CommandsList(default_commands())),
             Request::CommandsExecute { id, args } => {
                 let argument = |name: &str| args.as_ref().and_then(|value| value.get(name));
-                let delegated =
-                    match id.as_str() {
-                        "tabs.create" => Some(Request::TabsCreate {
-                            url: argument("url")
-                                .and_then(|value| value.as_str())
-                                .map(str::to_owned),
-                            active: argument("active")
-                                .and_then(|value| value.as_bool())
-                                .unwrap_or(true),
-                        }),
-                        "tabs.close" => {
-                            argument("tabId")
-                                .and_then(|value| value.as_str())
-                                .map(|tab_id| Request::TabsClose {
-                                    tab_id: tab_id.to_owned(),
-                                })
-                        }
-                        "tabs.pin" | "tabs.unpin" => argument("tabId")
+                let active_tab_id = self.tabs.active_tab().map(|tab| tab.id);
+                let tab_argument = || {
+                    argument("tabId")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_owned)
+                        .or_else(|| active_tab_id.clone())
+                };
+                let delegated = match id.as_str() {
+                    "tabs.create" => Some(Request::TabsCreate {
+                        url: argument("url")
                             .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsPin {
-                                tab_id: tab_id.to_owned(),
-                                pinned: id == "tabs.pin",
-                            }),
-                        "tabs.closeOther" => argument("tabId")
+                            .map(str::to_owned),
+                        active: argument("active")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(true),
+                    }),
+                    "tabs.close" => tab_argument().map(|tab_id| Request::TabsClose { tab_id }),
+                    "tabs.pin" | "tabs.unpin" => tab_argument().map(|tab_id| Request::TabsPin {
+                        tab_id,
+                        pinned: id == "tabs.pin",
+                    }),
+                    "tabs.closeOther" => {
+                        tab_argument().map(|tab_id| Request::TabsCloseOther { tab_id })
+                    }
+                    "tabs.closeToRight" => {
+                        tab_argument().map(|tab_id| Request::TabsCloseToRight { tab_id })
+                    }
+                    "tabs.reopenClosed" => Some(Request::TabsReopenClosed),
+                    "tabs.duplicate" => {
+                        tab_argument().map(|tab_id| Request::TabsDuplicate { tab_id })
+                    }
+                    "tabs.moveToNewWindow" => {
+                        tab_argument().map(|tab_id| Request::TabsMoveToNewWindow { tab_id })
+                    }
+                    "tabs.reload" => tab_argument().map(|tab_id| Request::TabsReload { tab_id }),
+                    "windows.create" => Some(Request::WindowsCreate),
+                    "windows.createPrivate" => Some(Request::WindowsCreatePrivate),
+                    "windows.close" => Some(Request::WindowsClose {
+                        window_id: argument("windowId")
                             .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsCloseOther {
-                                tab_id: tab_id.to_owned(),
-                            }),
-                        "tabs.closeToRight" => argument("tabId")
-                            .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsCloseToRight {
-                                tab_id: tab_id.to_owned(),
-                            }),
-                        "tabs.reopenClosed" => Some(Request::TabsReopenClosed),
-                        "tabs.duplicate" => {
-                            argument("tabId")
-                                .and_then(|value| value.as_str())
-                                .map(|tab_id| Request::TabsDuplicate {
-                                    tab_id: tab_id.to_owned(),
-                                })
-                        }
-                        "tabs.moveToNewWindow" => argument("tabId")
-                            .and_then(|value| value.as_str())
-                            .map(|tab_id| Request::TabsMoveToNewWindow {
-                                tab_id: tab_id.to_owned(),
-                            }),
-                        "tabs.reload" => {
-                            argument("tabId")
-                                .and_then(|value| value.as_str())
-                                .map(|tab_id| Request::TabsReload {
-                                    tab_id: tab_id.to_owned(),
-                                })
-                        }
-                        "windows.create" => Some(Request::WindowsCreate),
-                        "windows.createPrivate" => Some(Request::WindowsCreatePrivate),
-                        "windows.close" => Some(Request::WindowsClose {
-                            window_id: argument("windowId")
-                                .and_then(|value| value.as_str())
-                                .map(str::to_owned),
-                        }),
-                        "windows.reopenClosed" => Some(Request::WindowsReopenClosed),
-                        _ => None,
-                    };
+                            .map(str::to_owned),
+                    }),
+                    "windows.reopenClosed" => Some(Request::WindowsReopenClosed),
+                    _ => None,
+                };
                 match delegated {
                     Some(request) => self.process_inner(request),
                     None => Ok(Response::Json(serde_json::json!({
@@ -853,11 +923,36 @@ where
                     })))
                 }
             }
+        };
+        if result.is_err() {
+            self.tabs.replace_all(rollback_tabs);
+            self.windows
+                .replace_all(rollback_windows, rollback_active_window);
+            self.closed_tabs = rollback_closed_tabs;
+            self.closed_windows = rollback_closed_windows;
+            self.events.truncate(rollback_event_count);
+        } else if session_mutation {
+            self.mark_session_dirty();
+            if force_session_flush {
+                self.flush_session(true)?;
+            }
         }
+        result
     }
 
     pub fn process_host_event(&mut self, envelope: HostEventEnvelope) -> CoreResult<()> {
-        match envelope.event {
+        let changes_session = matches!(
+            &envelope.event,
+            HostEvent::PageCreated { .. }
+                | HostEvent::PageClosed { .. }
+                | HostEvent::PageTitleChanged { .. }
+                | HostEvent::PageUrlChanged { .. }
+                | HostEvent::PageFaviconChanged { .. }
+                | HostEvent::WindowFocused { .. }
+                | HostEvent::WindowClosed { .. }
+        );
+        let force = matches!(&envelope.event, HostEvent::WindowClosed { .. });
+        let result = match envelope.event {
             HostEvent::PageCreated {
                 tab_id,
                 window_id,
@@ -998,7 +1093,14 @@ where
                 }
                 Ok(())
             }
+        };
+        if result.is_ok() && changes_session {
+            self.mark_session_dirty();
+            if force {
+                self.flush_session(true)?;
+            }
         }
+        result
     }
 
     pub fn process_host_command_result(
@@ -1042,6 +1144,103 @@ where
             permissions: self.repository.list_permissions().unwrap_or_default(),
             settings,
         }
+    }
+
+    fn startup(&mut self) -> CoreResult<Response> {
+        let behavior = SettingsService::get(&self.repository, "startupBehavior")
+            .map_err(|e| CoreError::Message(e.to_string()))?
+            .unwrap_or_else(|| "newTab".into());
+
+        if behavior == "restore"
+            && let Some(json) = self
+                .repository
+                .get_session()
+                .map_err(|e| CoreError::Message(e.to_string()))?
+            && let Ok(session) = serde_json::from_str::<SessionState>(&json)
+            && !session.windows.is_empty()
+        {
+            self.windows
+                .replace_all(session.windows.clone(), session.active_window_id);
+            self.tabs.replace_all(session.tabs.clone());
+            for window in session.windows {
+                self.adapter
+                    .create_window(&window.id, window.is_private)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+            }
+            for tab in session.tabs {
+                self.adapter
+                    .create_page(&tab.id, &tab.window_id, &tab.url)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
+            }
+            return Ok(Response::Bool(true));
+        }
+
+        let window_id = self
+            .windows
+            .active_window_id()
+            .ok_or_else(|| CoreError::Message("No startup window".into()))?
+            .to_owned();
+        self.adapter
+            .create_window(&window_id, false)
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        let url = if behavior == "homePage" {
+            SettingsService::get(&self.repository, "homeUrl")
+                .map_err(|e| CoreError::Message(e.to_string()))?
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "https://example.com".into())
+        } else {
+            self.startup_url()
+        };
+        let tab = self.tabs.create_tab(window_id.clone(), url, true);
+        self.windows.attach_tab(&window_id, &tab.id, true);
+        self.adapter
+            .create_page(&tab.id, &window_id, &tab.url)
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        self.emit(Event::TabCreated(tab));
+        self.mark_session_dirty();
+        Ok(Response::Bool(true))
+    }
+
+    fn mark_session_dirty(&mut self) {
+        self.session_dirty_since = Some(Instant::now());
+    }
+
+    pub fn flush_session(&mut self, force: bool) -> CoreResult<bool> {
+        let Some(dirty_since) = self.session_dirty_since else {
+            return Ok(false);
+        };
+        if !force && dirty_since.elapsed() < Duration::from_millis(500) {
+            return Ok(false);
+        }
+        let private_windows: std::collections::HashSet<String> = self
+            .windows
+            .list()
+            .into_iter()
+            .filter(|window| window.is_private)
+            .map(|window| window.id)
+            .collect();
+        let session = SessionState {
+            active_window_id: self.windows.active_window_id().map(ToOwned::to_owned),
+            windows: self
+                .windows
+                .list()
+                .into_iter()
+                .filter(|window| !window.is_private)
+                .collect(),
+            tabs: self
+                .tabs
+                .list()
+                .into_iter()
+                .filter(|tab| !private_windows.contains(&tab.window_id))
+                .collect(),
+        };
+        let json =
+            serde_json::to_string(&session).map_err(|e| CoreError::Message(e.to_string()))?;
+        self.repository
+            .set_session(&json)
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        self.session_dirty_since = None;
+        Ok(true)
     }
 
     fn build_settings_snapshot(&self) -> serde_json::Value {
@@ -1176,6 +1375,15 @@ enum HostTabAction {
     GoForward,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionState {
+    active_window_id: Option<String>,
+    windows: Vec<frost_protocol::WindowState>,
+    tabs: Vec<frost_protocol::TabState>,
+}
+
+#[derive(Clone)]
 struct ClosedWindow {
     window: frost_protocol::WindowState,
     tabs: Vec<frost_protocol::TabState>,
@@ -1188,6 +1396,7 @@ pub struct InMemoryStore {
     history: std::cell::RefCell<Vec<frost_protocol::HistoryRecord>>,
     downloads: std::cell::RefCell<Vec<frost_protocol::DownloadRecord>>,
     permissions: std::cell::RefCell<Vec<frost_protocol::PermissionRecord>>,
+    session: std::cell::RefCell<Option<String>>,
 }
 
 impl SettingsRepository for InMemoryStore {
@@ -1378,10 +1587,11 @@ impl frost_store::LogRepository for InMemoryStore {
 
 impl frost_store::SessionRepository for InMemoryStore {
     fn get_session(&self) -> frost_store::StoreResult<Option<String>> {
-        Ok(None)
+        Ok(self.session.borrow().clone())
     }
 
-    fn set_session(&self, _json: &str) -> frost_store::StoreResult<()> {
+    fn set_session(&self, json: &str) -> frost_store::StoreResult<()> {
+        *self.session.borrow_mut() = Some(json.to_owned());
         Ok(())
     }
 }
@@ -1403,6 +1613,28 @@ mod tests {
     use frost_protocol::{HostCommand, HostEvent, HostEventEnvelope, Request, Response};
 
     use super::*;
+
+    fn result_adapter(
+        ok: bool,
+        observed: Arc<std::sync::Mutex<Vec<HostCommand>>>,
+    ) -> HostCommandAdapter {
+        let (command_tx, command_rx) = crossbeam_channel::unbounded::<HostCommandEnvelope>();
+        let (result_tx, result_rx) = crossbeam_channel::unbounded::<HostCommandResultEnvelope>();
+        let notify = Arc::new(move || {
+            if let Ok(envelope) = command_rx.try_recv() {
+                observed.lock().unwrap().push(envelope.command);
+                result_tx
+                    .send(HostCommandResultEnvelope {
+                        version: frost_protocol::PROTOCOL_VERSION,
+                        command_id: envelope.id,
+                        ok,
+                        error: (!ok).then(|| "injected native failure".into()),
+                    })
+                    .unwrap();
+            }
+        });
+        HostCommandAdapter::with_results(command_tx, result_rx, notify)
+    }
 
     #[test]
     fn creates_and_activates_tabs() {
@@ -1864,6 +2096,227 @@ mod tests {
         ] {
             let response = core.process(ProtocolRequest::new(request));
             assert_eq!(response.response, Response::Bool(false));
+        }
+    }
+
+    #[test]
+    fn command_close_other_uses_the_active_tab_when_no_id_is_given() {
+        let mut core = BrowserCore::new();
+        for index in 0..3 {
+            assert!(
+                core.process(ProtocolRequest::new(Request::TabsCreate {
+                    url: Some(format!("https://command-{index}.example/")),
+                    active: true,
+                }))
+                .ok
+            );
+        }
+        let active = core.tabs.active_tab().unwrap().id;
+        let response = core.process(ProtocolRequest::new(Request::CommandsExecute {
+            id: "tabs.closeOther".into(),
+            args: None,
+        }));
+        assert_eq!(response.response, Response::Bool(true));
+        assert_eq!(core.tabs.list().len(), 1);
+        assert_eq!(core.tabs.list()[0].id, active);
+    }
+
+    #[test]
+    fn moving_a_tab_forward_by_one_does_not_skip_the_target_slot() {
+        let mut core = BrowserCore::new();
+        for index in 0..3 {
+            assert!(
+                core.process(ProtocolRequest::new(Request::TabsCreate {
+                    url: Some(format!("https://move-{index}.example/")),
+                    active: true,
+                }))
+                .ok
+            );
+        }
+        let before = core.tabs.list();
+        assert!(
+            core.process(ProtocolRequest::new(Request::TabsMove {
+                tab_id: before[0].id.clone(),
+                to_index: 1,
+            }))
+            .ok
+        );
+        let after = core.tabs.list();
+        assert_eq!(after[0].id, before[1].id);
+        assert_eq!(after[1].id, before[0].id);
+        assert_eq!(after[2].id, before[2].id);
+    }
+
+    #[test]
+    fn native_failure_does_not_leave_ghost_tab_or_event() {
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut core = BrowserCore::with_adapter_and_settings(
+            result_adapter(false, observed),
+            InMemoryStore::default(),
+        );
+        let before = core.snapshot();
+        let response = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://failure.example".into()),
+            active: true,
+        }));
+        assert!(!response.ok);
+        assert_eq!(core.snapshot().tabs, before.tabs);
+        assert_eq!(core.snapshot().windows, before.windows);
+        assert!(core.recent_events().is_empty());
+    }
+
+    #[test]
+    fn setting_is_applied_to_native_before_it_is_saved_and_announced() {
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut core = BrowserCore::with_adapter_and_settings(
+            result_adapter(true, observed.clone()),
+            InMemoryStore::default(),
+        );
+        let response = core.process(ProtocolRequest::new(Request::SettingsSet {
+            key: "sidebarWidth".into(),
+            value: "240".into(),
+        }));
+        assert!(response.ok);
+        assert!(matches!(
+            observed.lock().unwrap().as_slice(),
+            [HostCommand::SettingsApply { key, value }]
+                if key == "sidebarWidth" && value == "240"
+        ));
+        assert_eq!(
+            SettingsService::get(&core.repository, "sidebarWidth").unwrap(),
+            Some("240".into())
+        );
+        assert!(matches!(
+            core.recent_events().last().map(|event| &event.event),
+            Some(Event::SettingChanged(change)) if change.value == "240"
+        ));
+    }
+
+    #[test]
+    fn failed_setting_apply_is_not_saved_or_announced() {
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut core = BrowserCore::with_adapter_and_settings(
+            result_adapter(false, observed),
+            InMemoryStore::default(),
+        );
+        let response = core.process(ProtocolRequest::new(Request::SettingsSet {
+            key: "sidebarVisible".into(),
+            value: "hide".into(),
+        }));
+        assert!(!response.ok);
+        assert_eq!(
+            SettingsService::get(&core.repository, "sidebarVisible").unwrap(),
+            None
+        );
+        assert!(core.recent_events().is_empty());
+    }
+
+    #[test]
+    fn startup_behavior_selects_new_tab_home_page_and_restore() {
+        for (behavior, expected_url) in [
+            ("newTab", "fubuki://newtab/"),
+            ("homePage", "https://home.example/"),
+        ] {
+            let store = InMemoryStore::default();
+            SettingsService::set(&store, "startupBehavior", behavior).unwrap();
+            SettingsService::set(&store, "homeUrl", "https://home.example/").unwrap();
+            let mut core = BrowserCore::with_adapter_and_settings(NoopEngineAdapter, store);
+            assert!(core.process(ProtocolRequest::new(Request::AppStartup)).ok);
+            assert_eq!(core.snapshot().tabs[0].url, expected_url);
+        }
+
+        let store = InMemoryStore::default();
+        SettingsService::set(&store, "startupBehavior", "restore").unwrap();
+        let session = SessionState {
+            active_window_id: Some("restored-window".into()),
+            windows: vec![frost_protocol::WindowState {
+                id: "restored-window".into(),
+                active_tab_id: Some("restored-tab".into()),
+                is_private: false,
+                tab_ids: vec!["restored-tab".into()],
+            }],
+            tabs: vec![frost_protocol::TabState {
+                id: "restored-tab".into(),
+                window_id: "restored-window".into(),
+                title: "Restored".into(),
+                url: "https://restored.example/".into(),
+                favicon_url: String::new(),
+                error_text: String::new(),
+                zoom_level: 0.0,
+                is_loading: false,
+                can_go_back: false,
+                can_go_forward: false,
+                is_active: true,
+                is_pinned: false,
+            }],
+        };
+        store
+            .set_session(&serde_json::to_string(&session).unwrap())
+            .unwrap();
+        let mut core = BrowserCore::with_adapter_and_settings(NoopEngineAdapter, store);
+        assert!(core.process(ProtocolRequest::new(Request::AppStartup)).ok);
+        assert_eq!(core.snapshot().tabs[0].id, "restored-tab");
+        assert_eq!(core.snapshot().tabs[0].url, "https://restored.example/");
+    }
+
+    #[test]
+    fn repeated_tab_and_setting_operations_keep_state_consistent() {
+        let mut core = BrowserCore::new();
+        for index in 0..100 {
+            assert!(
+                core.process(ProtocolRequest::new(Request::TabsCreate {
+                    url: Some(format!("https://stress-{index}.example/")),
+                    active: true,
+                }))
+                .ok
+            );
+            let tab_id = core
+                .snapshot()
+                .active_window_id
+                .as_deref()
+                .and_then(|window_id| {
+                    core.snapshot()
+                        .windows
+                        .into_iter()
+                        .find(|window| window.id == window_id)
+                })
+                .and_then(|window| window.active_tab_id)
+                .expect("active tab");
+            assert!(
+                core.process(ProtocolRequest::new(Request::TabsActivate {
+                    tab_id: tab_id.clone(),
+                }))
+                .ok
+            );
+            assert!(
+                core.process(ProtocolRequest::new(Request::SettingsSet {
+                    key: "sidebarWidth".into(),
+                    value: (196 + index % 50).to_string(),
+                }))
+                .ok
+            );
+            assert!(
+                core.process(ProtocolRequest::new(Request::TabsClose { tab_id }))
+                    .ok
+            );
+
+            let state = core.snapshot();
+            for window in &state.windows {
+                for tab_id in &window.tab_ids {
+                    assert!(
+                        state
+                            .tabs
+                            .iter()
+                            .any(|tab| { tab.id == *tab_id && tab.window_id == window.id })
+                    );
+                }
+                assert!(
+                    window
+                        .active_tab_id
+                        .as_ref()
+                        .is_none_or(|active| { window.tab_ids.contains(active) })
+                );
+            }
         }
     }
 }
