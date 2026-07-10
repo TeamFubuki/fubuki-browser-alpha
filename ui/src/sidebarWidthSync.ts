@@ -1,7 +1,21 @@
 export type SidebarWidthSender = (width: number) => Promise<unknown>;
+export type SidebarWidthCallback = (width: number) => void;
+
+export interface SidebarWidthSyncOptions {
+  send: SidebarWidthSender;
+  onApplied?: SidebarWidthCallback;
+}
 
 /** Coalesces fast pointer updates so the CEF bridge only receives the latest queued width. */
-export function createSidebarWidthSync(send: SidebarWidthSender) {
+export function createSidebarWidthSync(
+  optionsOrSend: SidebarWidthSender | SidebarWidthSyncOptions,
+) {
+  const options =
+    typeof optionsOrSend === 'function'
+      ? { send: optionsOrSend }
+      : optionsOrSend;
+  const { send, onApplied } = options;
+
   let queuedWidth: number | undefined;
   let running: Promise<void> | undefined;
   let disposed = false;
@@ -15,6 +29,7 @@ export function createSidebarWidthSync(send: SidebarWidthSender) {
         queuedWidth = undefined;
         try {
           await send(width);
+          onApplied?.(width);
         } catch (error) {
           console.error('[Fubuki] Failed to resize native sidebar:', error);
         }
