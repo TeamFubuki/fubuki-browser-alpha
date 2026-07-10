@@ -34,6 +34,7 @@ export default function Sidebar() {
         title={t('sidebar.resize', lang())}
         onPointerDown={startResize}
         onDblClick={resetWidth}
+        tabIndex={0}
       />
     </aside>
   );

@@ -11,14 +11,19 @@
   background: var(--bg);
   pointer-events: none;
   contain: layout style;
+  will-change: grid-template-columns;
 }
 
 .browser-shell.quiet-mode {
   grid-template-rows: 0 minmax(0, 1fr);
 }
 
-:root[data-sidebar-resizing='true'] .browser-shell {
-  transition: none;
+:root[data-sidebar-resizing='true'] .browser-shell,
+:root[data-sidebar-resizing='true'] .sidebar,
+:root[data-sidebar-resizing='true'] .top-bar,
+:root[data-sidebar-resizing='true'] .webview-area {
+  transition: none !important;
+  will-change: width;
 }
 
 :root[data-sidebar='hide'] .browser-shell {
@@ -37,8 +42,7 @@
   border-top: 1px solid var(--line);
   pointer-events: none;
   contain: layout style paint;
+  will-change: width;
 }
 
-:root[data-sidebar-resizing='true'] .webview-area {
-  transition: none;
-}
+
