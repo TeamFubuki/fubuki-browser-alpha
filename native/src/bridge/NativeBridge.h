@@ -1,8 +1,11 @@
 #pragma once
 
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "bridge/FrostBridge.h"
 #include "browser/Tab.h"
@@ -18,6 +21,7 @@ class BrowserWindow;
 class NativeBridge : public CefMessageRouterBrowserSide::Handler {
 public:
   NativeBridge(BrowserWindow &window, FrostBridge &frostBridge);
+  ~NativeBridge() override;
 
   bool OnQuery(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                int64_t query_id, const CefString &request, bool persistent,
@@ -34,6 +38,12 @@ public:
   bool PushHostEventJson(const std::string &eventJson);
 
 private:
+  struct PendingQueryState {
+    std::mutex mutex;
+    std::unordered_set<int64_t> queryIds;
+    bool accepting = true;
+  };
+
   using MethodHandler =
       std::function<CefRefPtr<CefValue>(CefRefPtr<CefDictionaryValue>)>;
   void RegisterMethods();
@@ -51,6 +61,7 @@ private:
   // connection so command/result queues and logical state are global.
   FrostBridge &frostBridge_;
   std::unordered_map<std::string, MethodHandler> methods_;
+  std::shared_ptr<PendingQueryState> pendingQueries_;
 };
 
 }  // namespace fubuki
