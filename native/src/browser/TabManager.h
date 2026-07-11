@@ -18,6 +18,8 @@ public:
   // external authority (e.g. FrostEngine HostCommand page.create) so that
   // host-side and engine-side tab ids stay in sync.
   Tab &CreateTab(const std::string &url, bool active, const std::string &tabId);
+  // Removes a tab without selecting a successor. FrostEngine owns successor
+  // selection and includes it in the page.close host command.
   bool CloseTab(const std::string &tabId);
   bool ActivateTab(const std::string &tabId);
   bool ActivateNext();

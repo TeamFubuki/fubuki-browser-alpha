@@ -40,9 +40,6 @@ Tab &TabManager::CreateTab(const std::string &url, bool active) {
 
 Tab &TabManager::CreateTab(const std::string &url, bool active,
                            const std::string &tabId) {
-  if (tabs_.empty()) {
-    active = true;
-  }
   if (active) {
     for (auto &tab : tabs_) {
       tab.isActive = false;
@@ -76,22 +73,13 @@ bool TabManager::CloseTab(const std::string &tabId) {
     return false;
   }
 
-  const bool wasActive = it->isActive;
-  const size_t closedIndex =
-      static_cast<size_t>(std::distance(tabs_.begin(), it));
   Tab closed = *it;
   tabs_.erase(it);
   eventBus_.Publish(
       {EventType::TabClosed, "tabs.closed", closed, windowId_, tabId, ""});
 
-  if (tabs_.empty()) {
+  if (closed.isActive) {
     activeTabId_.clear();
-    return true;
-  }
-
-  if (wasActive) {
-    const size_t index = std::min(closedIndex, tabs_.size() - 1);
-    ActivateTab(tabs_[index].id);
   }
   return true;
 }
