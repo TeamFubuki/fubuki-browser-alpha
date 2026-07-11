@@ -17,7 +17,8 @@ namespace {
 BrowserAppController *gController = nullptr;
 
 void OnHostCommandReady(void *context) {
-  auto *app = static_cast<BrowserAppController *>(context);
+  auto *callbackContext = static_cast<HostCommandCallbackContext *>(context);
+  auto *app = callbackContext ? callbackContext->app.load() : nullptr;
   if (app) {
     app->NotifyHostCommandReady();
   }
@@ -29,13 +30,19 @@ BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
     : profilePath_(std::move(profilePath)),
       engine_(profilePath_.string() + "/frost-engine.sqlite3"),
       store_(profilePath_, engine_.RawHandle()) {
-  engine_.SetHostCommandNotifier(&OnHostCommandReady, this);
+  hostCommandCallbackContext_.app.store(this);
+  engine_.SetHostCommandNotifier(&OnHostCommandReady,
+                                 &hostCommandCallbackContext_);
   store_.AddLog("info", "BrowserAppController initialized");
 }
 
 BrowserAppController::~BrowserAppController() {
   // Async callbacks may reference the controller and its store. Stop and join
   // the engine request worker while all dependent members are still alive.
+  if (GetBrowserAppController() == this) {
+    SetBrowserAppController(nullptr);
+  }
+  hostCommandCallbackContext_.app.store(nullptr);
   engine_.SetHostCommandNotifier(nullptr, nullptr);
   engine_.ShutdownAsync();
 }
