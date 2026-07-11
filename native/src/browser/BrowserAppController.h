@@ -1,7 +1,7 @@
 #pragma once
 
-#include <filesystem>
 #include <atomic>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +15,14 @@
 namespace fubuki {
 
 class BrowserWindow;
+class BrowserAppController;
+
+// The FrostEngine notifier may already be in flight when it is unregistered.
+// Keep this indirection alive until after the engine is destroyed so a late
+// notification never dereferences a destructing BrowserAppController.
+struct HostCommandCallbackContext {
+  std::atomic<BrowserAppController *> app{nullptr};
+};
 
 class BrowserAppController {
 public:
@@ -87,6 +95,9 @@ private:
   CefRefPtr<CefListValue> RestoredWindows() const;
 
   std::filesystem::path profilePath_;
+  // Declared before engine_ so it is destroyed after the engine and therefore
+  // outlives every possible notifier callback.
+  HostCommandCallbackContext hostCommandCallbackContext_;
   FrostBridge engine_;
   FrostStore store_;
   EventBus eventBus_;
