@@ -1,152 +1,148 @@
 # Fubuki Browser Alpha
 
-Fubuki Browser Alpha is a macOS-first browser shell built on C++20, CEF, and a SolidJS browser UI. The MVP keeps the native core, tab state, command registry, event bus, and UI bridge separated so future browser features can be added without wiring UI controls directly to CEF internals.
+[![CI](https://img.shields.io/github/actions/workflow/status/TeamFubuki/fubuki-browser-alpha/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/TeamFubuki/fubuki-browser-alpha/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/TeamFubuki/fubuki-browser-alpha?style=flat-square&label=License)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS-111111?style=flat-square)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square)
+![Rust](https://img.shields.io/badge/Rust-stable-b7410e?style=flat-square)
+![SolidJS](https://img.shields.io/badge/UI-SolidJS-2c4f7c?style=flat-square)
+![CEF](https://img.shields.io/badge/CEF-external-555555?style=flat-square)
+![Node.js](https://img.shields.io/badge/Node.js-22%2B-3c873a?style=flat-square)
 
-## Requirements
+**Native browser core for macOS. Built with C++20, CEF, Rust, and SolidJS.**
 
-- macOS 12 or newer
-- Apple Silicon CEF binary distribution matching your machine
-- CMake 3.21+
-- Xcode command line tools
-- Rust 1.96.1+ (for FrostEngine)
-- Node.js 20+
-- pnpm 11+
+Fubuki Browser Alpha は、Chromium Embedded Framework を直接扱う macOS 向けブラウザ基盤です。Electron / Tauri / WKWebView には依存せず、CEF を描画・Web 実行基盤として使い、タブ、ウィンドウ、設定、セッションなどのブラウザ状態は Rust 製の FrostEngine に集約します。
 
-Electron, Tauri, WKWebView, and WebView2 are not used.
+`Alpha` はプロダクト名・コードネームであり、リリース段階としての「アルファ版」を意味しません。現在の実装は MVP スコープで開発中のため、プロダクション用途のブラウザとしてはまだ扱いません。
 
-## CEF Setup
+## What is this? / これは何か
 
-The easiest path is:
+Fubuki は、単なる CEF ラッパーではなく、UI、エンジン、ネイティブホストを分離したブラウザ基盤です。
 
-```bash
-make cef
+- **Native-first** — macOS ネイティブホストが NSWindow と CEF Browser を管理します。
+- **Engine-owned state** — タブ、ウィンドウ、設定、セッションは FrostEngine が所有します。
+- **Protocol boundary** — UI と Host は Frost Protocol / HostCommand / HostEvent を通して接続します。
+- **No heavy wrapper** — Electron、Tauri、WKWebView、WebView2 は使用しません。
+
+```text
+UI renders. Engine decides. Host executes.
 ```
 
-This downloads the latest stable standard CEF macOS build from the CEF Automated Builds CDN into `third_party/cef/`. The script automatically selects `macosarm64` on Apple Silicon and `macosx64` on Intel.
+## Purpose / 作成目的
 
-You can also manually download a macOS CEF binary distribution from the official CEF builds site and either:
+Fubuki Browser Alpha の目的は、既存ブラウザの見た目だけを再現することではありません。ブラウザを「UI 付きアプリ」ではなく、明確な状態管理・コマンド境界・ホスト実行層を持つ制御可能な基盤として設計することです。
 
-- unpack it into `third_party/cef/`, or
-- pass `-DCEF_ROOT=/path/to/cef_binary` when configuring CMake.
+具体的には、次のような目的で作成されています。
 
-The repository intentionally does not vendor CEF binaries.
+- macOS 上で CEF を直接扱う、軽量で理解しやすいネイティブブラウザ基盤を作る。
+- タブ、ウィンドウ、セッション、設定などの論理状態を Rust 側に集約し、UI や C++ ホストに状態が散らばらない構造にする。
+- UI、Engine、Host の境界を Protocol と HostCommand / HostEvent で固定し、後から機能追加しても責務が崩れにくい構成にする。
+- 将来的な外部操作、自動化、デバッグ、検証用途に向けて、ブラウザ内部を安全に制御できる command boundary を用意する。
+- Electron や汎用 WebView ラッパーではなく、ブラウザそのものの構造を小さく実装して検証できる土台にする。
 
-## Build UI
+Fubuki は、現時点では Chrome や Safari を置き換える日常利用ブラウザではありません。目的は、プロダクションブラウザの完成度よりも、ブラウザアーキテクチャ、状態管理、ネイティブホスト連携、自動操作境界を正しく分離した実験・開発基盤を作ることです。
 
-```bash
-cd ui
-pnpm install
-cd ..
-make ui
+## Differentiation / 何と差別化されているか
+
+Fubuki は、以下のような既存カテゴリと意図的に違う位置付けにあります。
+
+| Compared with | Difference |
+|---|---|
+| Chrome / Safari / Firefox / Arc | 完成済みの一般利用ブラウザを置き換えることより、ブラウザ内部の状態管理・ホスト連携・自動操作境界を検証しやすい構造を重視します。 |
+| Electron / Tauri apps | Web アプリをデスクトップアプリ化するためのシェルではありません。CEF を直接扱い、ブラウザとしてのタブ、ウィンドウ、ナビゲーション、永続化を自前の Engine と Host で管理します。 |
+| WKWebView wrappers | Apple の WebView に乗るのではなく、CEF / Chromium 系の実行基盤を使います。macOS ネイティブアプリでありつつ、Chromium ベースのブラウザ制御を前提にしています。 |
+| CEF sample apps | CEF を表示するだけではなく、Rust 製 FrostEngine、SQLite Store、Frost Protocol、FFI、HostCommand / HostEvent によって、状態と副作用の境界を明確に分けます。 |
+| Playwright / Selenium style automation | 既存ブラウザを外側から操作するだけではなく、ブラウザ内部に command boundary を設け、能力チェックや監査イベントを通した制御を前提にします。 |
+| Minimal browser demos | 最小表示デモではなく、セッション、履歴、ブックマーク、ダウンロード、設定、内部ページ、テスト、CI まで含めた拡張可能な基盤を目指します。 |
+
+要するに、Fubuki は「完成済みブラウザの代替」ではなく、**ブラウザを自分たちで制御・拡張・検証するための macOS-first なブラウザコア**です。
+
+## Architecture / アーキテクチャ
+
+```text
+Fubuki Browser UI (SolidJS)
+    ↓ Frost Protocol / JSON-RPC over CEF message router
+FrostEngine Core (Rust)
+    ↓ HostCommand / HostEvent / JSON boundary
+CEF / macOS Host (C++20)
 ```
 
-The native app serves the generated `ui/dist` files at `fubuki://app/`.
+| Layer | Path | Role |
+|---|---|---|
+| UI | `ui/` | SolidJS 製のブラウザ UI。`fubuki://app/` 上で動作します。 |
+| Protocol | `crates/frost-protocol/` | UI、Engine、Host 間の Request / Response / Event 型定義。 |
+| Engine | `crates/frost-core/` | タブ、ウィンドウ、設定、セッションなどの論理状態を管理します。 |
+| Store | `crates/frost-store/` | SQLite による履歴、ブックマーク、ダウンロード、設定、セッション永続化。 |
+| FFI | `crates/frost-ffi/` | C++ ホストから Rust エンジンを呼び出すための FFI 境界。 |
+| Host | `native/macos-cef-host/`, `native/src/` | NSWindow、CEF Browser、`fubuki://` scheme、HostCommand 実行を担当します。 |
 
-## Build Native App
+詳しい設計は [docs/architecture.md](docs/architecture.md) を参照してください。
+
+## Requirements / 必要環境
+
+- macOS 12 以降
+- Xcode Command Line Tools
+- CMake 3.21 以降
+- Rust stable toolchain with `clippy` and `rustfmt`
+- Node.js 22 以降
+- pnpm 11.x
+- LLVM via Homebrew, cppcheck, python3, curl, tar
+
+Apple Silicon を主なターゲットにしています。Intel Mac でも CEF の `macosx64` ビルドを使う構成はありますが、互換性は利用する CEF ビルドに依存します。
+
+## Quick Start / クイックスタート
 
 ```bash
-make native
-```
-
-## One-command Build and Run
-
-```bash
+git clone https://github.com/TeamFubuki/fubuki-browser-alpha.git
+cd fubuki-browser-alpha
 make bootstrap
 make build
 make run
 ```
 
-Useful targets:
+`make bootstrap` は CEF の取得、UI 依存関係のインストール、ネイティブビルド設定をまとめて実行します。CEF バイナリはリポジトリには含めません。
+
+手動で CEF を指定する場合は、CMake 設定時に `CEF_ROOT` を渡してください。
 
 ```bash
-make help
-make cef
-make ui
-make rust          # Build FrostEngine (Rust)
-make configure
-make native
-make build          # Build everything (UI + Rust + native)
-make run
-make clean
-make test           # Run all tests (Rust + UI + native)
-make lint-rust      # Run Clippy linter
-make format-rust    # Run rustfmt formatter
+CEF_ROOT=/path/to/cef_binary make configure
 ```
 
-Advanced manual native build:
+## Common Commands / よく使うコマンド
 
 ```bash
-cd native
-cmake -S . -B build -DCEF_ROOT=/path/to/cef_binary -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-open "build/Fubuki Browser Alpha.app"
+make cef          # CEF を取得または更新
+make build        # UI / Rust / native をまとめてビルド
+make run          # アプリをビルドして起動
+make test         # Rust / UI / native のテストを実行
+make lint-all     # UI / Rust / C++ のリントを実行
+make format-all   # UI / Rust / C++ のフォーマットを実行
+make audit        # cargo-audit を実行
+make audit-deny   # cargo-deny を実行
 ```
 
-If your generator uses configuration subdirectories, the app may be at `build/Release/Fubuki Browser Alpha.app`.
+## Current Scope / 現在の実装範囲
 
-## Manual Popup Verification
+現在の実装には、macOS CEF ホスト、SolidJS UI、Frost Protocol、Rust 側のブラウザ状態管理、SQLite 永続化、通常 / プライベートウィンドウ、内部ページ、外部コマンド境界、ローカルテストと CI ワークフローが含まれます。
 
-- A normal `<a target="_blank" href="https://example.com">` link opens `https://example.com` in a new Fubuki tab.
-- `window.open("https://example.com")` from a user gesture opens `https://example.com` in a new Fubuki tab.
-- `const popup = window.open("about:blank"); popup.location = "https://example.com";` from a user gesture opens a pending blank Fubuki tab and then navigates that tab.
-- GitHub and Google OAuth-style login popups that initially create `about:blank` continue into the provider login flow instead of being blocked.
+まだ含まれていないものとして、コード署名、ノータリゼーション、アップデート配信、完成度の高いインポート / エクスポート、Chrome 拡張機能互換、ブラウザ同期などがあります。詳しくは [docs/known-limitations.md](docs/known-limitations.md) を参照してください。
 
-## Implemented Essentials
+## Documentation / ドキュメント
 
-- Native macOS CEF app windows with independent tab managers per window
-- Separate CEF browser for `fubuki://app/` UI and separate CEF browsers for web tab contents
-- New window, private window, close window, and move tab to a new window
-- Startup behavior setting: new tab, restore previous session, or home page
-- Session restore for normal windows, tabs, active tabs, pinned state, window frame, and sidebar state
-- Private windows use an off-the-record CEF request context and skip normal history, downloads history, logs, and session writes
-- Tab create, activate, close, pin/unpin, duplicate, reopen closed, close other tabs, close tabs to the right, drag reorder, tab search, and last-tab replacement
-- Back, forward, reload, stop, home, and omnibox navigation
-- URL normalization for full URLs, host names such as `github.com`, and search queries
-- Page title, favicon, loading, error, zoom, and basic security state updates
-- Page find, zoom in/out/reset, print, view source, and DevTools actions
-- Persistent CEF profile for cookies, LocalStorage, and IndexedDB
-- Download handling with progress records, open, reveal in Finder, remove, and clear list actions
-- SQLite-backed local history, bookmarks, downloads, settings, permissions, and debug logs
-- Built-in history, bookmarks, downloads, settings, new tab, and debug internal pages
-- History search, grouping by date, individual deletion, and clear last hour/today/all time
-- Settings sections for General, Appearance, Tabs, Windows, Search, Privacy, Downloads, Shortcuts, Developer, and Experimental
-- Error page for failed navigations
-- Versioned JSON bridge exposed only to `fubuki://app/`
-- Command registry for browser actions plus `commands.list` for UI/future plugin API discovery
-- Event bus for window, tab, navigation, bookmark, history, download, setting, and permission changes
-- `fubuki://debug/` with bridge version, profile path, windows/tabs, commands, recent events, and logs
+- [Architecture](docs/architecture.md)
+- [FrostEngine Plan](docs/frost-engine-plan.md)
+- [Bridge API](docs/bridge-api.md)
+- [Commands](docs/commands.md)
+- [Events](docs/events.md)
+- [Internal Pages](docs/internal-pages.md)
+- [Known Limitations](docs/known-limitations.md)
 
-## Keyboard Shortcuts
+## Contributing / 貢献
 
-- `Cmd+L`: focus the URL/search bar
-- `Cmd+N`: new window
-- `Cmd+Shift+N`: new private window
-- `Cmd+T`: new tab
-- `Cmd+W`: close tab
-- `Cmd+Shift+W`: close window
-- `Cmd+Shift+T`: reopen closed tab
-- `Cmd+R`: reload
-- `Cmd+F`: find in page
-- `Cmd+[` / `Cmd+]`: back / forward
-- `Cmd+D`: bookmark active tab
-- `Cmd+,`: settings
-- `Cmd+Plus` / `Cmd+Minus` / `Cmd+0`: zoom in / zoom out / reset zoom
+Contributions are welcome, but architecture boundaries matter.
 
-## Profile Data
+プルリクエストを作成する前に [CONTRIBUTING.md](CONTRIBUTING.md) を読んでください。新機能、バグ修正、ドキュメント改善、設計上の指摘はいずれも歓迎します。ただし、UI、Engine、Host の責務分離を崩す変更は慎重に扱います。
 
-Runtime profile data is stored under:
+## License / ライセンス
 
-```text
-~/Library/Application Support/Fubuki Browser Alpha/
-```
-
-This includes the CEF profile for cookies, LocalStorage, IndexedDB, cache data, plus `fubuki.sqlite3` for history, bookmarks, downloads, settings, permissions, session snapshots, and debug logs.
-
-## Known Limitations
-
-- CEF binaries, codesigning, notarization, and update packaging are not included.
-- Browser layout uses native child views and a compact web UI toolbar/sidebar.
-- Password manager and sync are not implemented.
-- Chrome extension compatibility is not implemented.
-- Cache/site-data clearing depends on CEF request-context support and is intentionally conservative.
-- Bookmark folders and browser-compatible import/export are not complete yet.
+[MIT License](LICENSE) — Copyright (c) 2026 TeamFubuki
