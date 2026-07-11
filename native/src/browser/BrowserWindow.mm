@@ -1168,7 +1168,9 @@ std::string HostEventJson(const std::string& event,
 
 std::string JsonString(const CefRefPtr<CefDictionaryValue>& dict,
                        const std::string& key, const std::string& fallback = "") {
-  return dict->HasKey(key) ? dict->GetString(key).ToString() : fallback;
+  return dict->HasKey(key) && dict->GetType(key) == VTYPE_STRING
+             ? dict->GetString(key).ToString()
+             : fallback;
 }
 
 bool JsonBool(const CefRefPtr<CefDictionaryValue>& dict, const std::string& key) {
@@ -1199,8 +1201,9 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   if (command == "page.create") {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
+    const bool active = JsonBool(payload, "active");
     ok = !tabId.empty() &&
-         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, active);
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
                                       {{ "tabId", JsonStringValue(tabId) },
@@ -1210,9 +1213,20 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
       error = "failed to create page";
     }
   } else if (command == "page.close") {
-    ok = CloseTab(JsonString(payload, "tabId"));
+    const std::string tabId = JsonString(payload, "tabId");
+    const std::string successorTabId = JsonString(payload, "successorTabId");
+    const bool validSuccessor = successorTabId.empty() ||
+                                (successorTabId != tabId &&
+                                 tabManager_.GetTab(successorTabId));
+    if (validSuccessor) {
+      ok = CloseTab(tabId);
+      if (ok && !successorTabId.empty()) {
+        ok = ActivateTab(successorTabId);
+      }
+    }
     if (!ok) {
-      error = "unknown tab";
+      error = validSuccessor ? "failed to close page or activate successor"
+                             : "invalid successor tab";
     }
   } else if (command == "page.navigate") {
     ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
