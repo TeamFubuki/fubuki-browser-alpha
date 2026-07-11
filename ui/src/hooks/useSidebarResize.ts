@@ -1,7 +1,11 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { fubuki } from '../bridge/fubuki';
 import { browserState, refreshState } from '../stores/browserStore';
-import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
+import {
+  clampSidebarWidth,
+  DEFAULT_SIDEBAR_WIDTH,
+  sidebarWidthForKey,
+} from '../sidebarSizing';
 import { createSidebarWidthSync } from '../sidebarWidthSync';
 
 function applyCssSidebarWidth(width: number) {
@@ -24,6 +28,7 @@ function currentSidebarWidth() {
 
 export function useSidebarResize() {
   const [resizing, setResizing] = createSignal(false);
+  const [width, setWidth] = createSignal(currentSidebarWidth());
   let handle: HTMLElement | undefined;
   let activePointerId = -1;
   let active = false;
@@ -33,7 +38,10 @@ export function useSidebarResize() {
 
   const nativeWidth = createSidebarWidthSync({
     send: (width) => fubuki.invoke('ui.setSidebarWidth', { width }),
-    onApplied: (width) => applyCssSidebarWidth(width),
+    onApplied: (appliedWidth) => {
+      applyCssSidebarWidth(appliedWidth);
+      setWidth(appliedWidth);
+    },
   });
 
   const saveWidth = async (width: number) => {
@@ -135,6 +143,16 @@ export function useSidebarResize() {
     );
   };
 
+  const resizeWithKeyboard = (event: KeyboardEvent) => {
+    const nextWidth = sidebarWidthForKey(event.key, width());
+    if (nextWidth === undefined) return;
+
+    event.preventDefault();
+    void saveWidth(nextWidth).catch((error) =>
+      console.error('[Fubuki] Failed to resize sidebar with keyboard:', error),
+    );
+  };
+
   onCleanup(() => {
     removeListeners();
     if (active && handle?.hasPointerCapture(activePointerId)) {
@@ -146,5 +164,5 @@ export function useSidebarResize() {
     delete document.documentElement.dataset.sidebarResizing;
   });
 
-  return { resizing, startResize, resetWidth };
+  return { resizing, width, startResize, resetWidth, resizeWithKeyboard };
 }
