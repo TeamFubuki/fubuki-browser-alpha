@@ -66,6 +66,19 @@ std::string HostCommandResultJson(const std::string &commandId, bool ok,
   return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
 }
 
+std::string WindowHostEventJson(const std::string &eventName,
+                                const std::string &windowId) {
+  auto payload = CefDictionaryValue::Create();
+  payload->SetString("windowId", windowId);
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("event", eventName);
+  root->SetDictionary("payload", payload);
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
+}
+
 }  // namespace
 
 void BrowserAppController::DispatchEngineEvents() {
@@ -305,6 +318,10 @@ bool BrowserAppController::RequestSettingChange(
 void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
   activeWindow_ = window;
   if (window) {
+    if (!engine_.PushHostEventJson(
+            WindowHostEventJson("window.focused", window->WindowId()))) {
+      store_.AddLog("error", "Failed to notify FrostEngine of window focus");
+    }
     eventBus_.Publish({EventType::WindowFocused,
                        "window.focused",
                        {},
@@ -320,6 +337,10 @@ void BrowserAppController::NotifyWindowClosed(BrowserWindow *window) {
     return;
   }
   const std::string windowId = window->WindowId();
+  if (!engine_.PushHostEventJson(
+          WindowHostEventJson("window.closed", windowId))) {
+    store_.AddLog("error", "Failed to notify FrostEngine of window close");
+  }
   if (!window->IsPrivate()) {
     closedWindows_.push_back(window->SessionSnapshot());
     if (closedWindows_.size() > 10) {
