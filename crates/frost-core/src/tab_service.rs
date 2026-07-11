@@ -90,20 +90,43 @@ impl TabService {
         true
     }
 
-    pub fn close_tab(&mut self, tab_id: &str) -> bool {
-        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
-            return false;
-        };
+    pub fn close_tab(&mut self, tab_id: &str) -> Option<Option<String>> {
+        let index = self.tabs.iter().position(|t| t.id == tab_id)?;
         let was_active = self.tabs[index].is_active;
         let window_id = self.tabs[index].window_id.clone();
         self.tabs.remove(index);
 
-        if was_active && let Some(next) = self.tabs.iter_mut().find(|t| t.window_id == window_id) {
-            next.is_active = true;
-        }
-        true
+        let successor = if was_active {
+            // Prefer the tab that shifted into the closed tab's position (the
+            // right neighbour), falling back to the previous tab at the end.
+            let window_indices: Vec<usize> = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, tab)| (tab.window_id == window_id).then_some(index))
+                .collect();
+            let successor_index = window_indices
+                .iter()
+                .copied()
+                .find(|candidate| *candidate >= index)
+                .or_else(|| window_indices.last().copied());
+            successor_index.map(|successor_index| {
+                self.tabs[successor_index].is_active = true;
+                self.tabs[successor_index].id.clone()
+            })
+        } else {
+            None
+        };
+        Some(successor)
     }
 
+    #[cfg(test)]
+    fn tab_ids(&self) -> Vec<String> {
+        self.tabs.iter().map(|tab| tab.id.clone()).collect()
+    }
+}
+
+impl TabService {
     pub fn remove_tab(&mut self, tab_id: &str) -> Option<TabState> {
         let index = self.tabs.iter().position(|t| t.id == tab_id)?;
         Some(self.tabs.remove(index))
@@ -312,5 +335,40 @@ impl TabService {
         tab.error_text = error_text.to_owned();
         tab.is_loading = false;
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn three_tabs() -> (TabService, Vec<String>) {
+        let mut tabs = TabService::new("window-1".into());
+        tabs.create_tab("window-1".into(), "a".into(), true);
+        tabs.create_tab("window-1".into(), "b".into(), true);
+        tabs.create_tab("window-1".into(), "c".into(), true);
+        let ids = tabs.tab_ids();
+        (tabs, ids)
+    }
+
+    #[test]
+    fn close_active_middle_prefers_right_neighbour() {
+        let (mut tabs, ids) = three_tabs();
+        tabs.activate_tab(&ids[1]);
+        assert_eq!(tabs.close_tab(&ids[1]), Some(Some(ids[2].clone())));
+    }
+
+    #[test]
+    fn close_active_end_falls_back_to_left_neighbour() {
+        let (mut tabs, ids) = three_tabs();
+        tabs.activate_tab(&ids[2]);
+        assert_eq!(tabs.close_tab(&ids[2]), Some(Some(ids[1].clone())));
+    }
+
+    #[test]
+    fn close_active_first_prefers_right_neighbour() {
+        let (mut tabs, ids) = three_tabs();
+        tabs.activate_tab(&ids[0]);
+        assert_eq!(tabs.close_tab(&ids[0]), Some(Some(ids[1].clone())));
     }
 }
