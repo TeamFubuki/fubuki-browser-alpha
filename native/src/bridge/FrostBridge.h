@@ -1,7 +1,12 @@
 #pragma once
 
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
 namespace fubuki {
 
@@ -23,6 +28,13 @@ public:
   void *RawHandle() const { return handle_; }
 
   std::string ProcessJson(const std::string &requestJson);
+  // Enqueues a request on a single bounded worker instead of creating a
+  // detached thread per bridge call. The callback runs on the worker thread.
+  bool ProcessJsonAsync(std::string requestJson,
+                        std::function<void(std::string)> callback);
+  // Stops accepting asynchronous work and joins the worker. Safe to call
+  // repeatedly; controllers use this before dependent members are destroyed.
+  void ShutdownAsync();
   bool PollEventJson(std::string &eventJson);
   bool PollHostCommandJson(std::string &commandJson);
   bool PushHostEventJson(const std::string &eventJson);
@@ -36,7 +48,21 @@ public:
   std::string ProcessExternalJson(const std::string &commandJson);
 
 private:
+  struct AsyncRequest {
+    std::string json;
+    std::function<void(std::string)> callback;
+  };
+
+  void StartWorker();
+  void StopWorker();
+
   void *handle_ = nullptr;
+  std::mutex queueMutex_;
+  std::condition_variable queueCondition_;
+  std::deque<AsyncRequest> queue_;
+  std::thread worker_;
+  bool stopping_ = false;
+  static constexpr size_t kMaxPendingRequests = 256;
 };
 
 }  // namespace fubuki

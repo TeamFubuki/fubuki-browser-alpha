@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <thread>
 
 #include "browser/BrowserWindow.h"
 #include "include/base/cef_callback.h"
@@ -34,7 +33,12 @@ BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
   store_.AddLog("info", "BrowserAppController initialized");
 }
 
-BrowserAppController::~BrowserAppController() = default;
+BrowserAppController::~BrowserAppController() {
+  // Async callbacks may reference the controller and its store. Stop and join
+  // the engine request worker while all dependent members are still alive.
+  engine_.SetHostCommandNotifier(nullptr, nullptr);
+  engine_.ShutdownAsync();
+}
 
 void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
@@ -42,11 +46,9 @@ void BrowserAppController::Start() {
   // resulting window/page commands are consumed by the shared dispatcher.
   // windows.create now automatically creates a startup tab, so we only
   // need a single InvokeEngine call.
-  std::thread([this]() {
-    if (!InvokeEngine("app.startup")) {
-      store_.AddLog("error", "FrostEngine failed to create the initial browser state");
-    }
-  }).detach();
+  if (!InvokeEngine("app.startup")) {
+    store_.AddLog("error", "FrostEngine failed to queue the initial browser state");
+  }
 }
 
 namespace {
@@ -289,8 +291,8 @@ bool BrowserAppController::RequestSettingChange(
   const std::string requestJson =
       CefWriteJSON(requestValue, JSON_WRITER_DEFAULT).ToString();
 
-  std::thread([this, requestJson, tabId, returnUrl, key]() {
-    const std::string response = engine_.ProcessJson(requestJson);
+  return engine_.ProcessJsonAsync(
+      requestJson, [this, tabId, returnUrl, key](std::string response) {
     auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
     const bool ok = parsed && parsed->GetType() == VTYPE_DICTIONARY &&
                     (!parsed->GetDictionary()->HasKey("ok") ||
@@ -311,8 +313,7 @@ bool BrowserAppController::RequestSettingChange(
           }
         },
         this, tabId, returnUrl, key, ok));
-  }).detach();
-  return true;
+  });
 }
 
 void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
@@ -412,16 +413,14 @@ bool BrowserAppController::InvokeEngine(const std::string &method,
   const std::string requestJson =
       CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
   if (CefCurrentlyOn(TID_UI)) {
-    std::thread([this, requestJson]() {
-      const std::string response = engine_.ProcessJson(requestJson);
+    return engine_.ProcessJsonAsync(requestJson, [this](std::string response) {
       auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
       if (!parsed || parsed->GetType() != VTYPE_DICTIONARY ||
           (parsed->GetDictionary()->HasKey("ok") &&
            !parsed->GetDictionary()->GetBool("ok"))) {
         store_.AddLog("error", "FrostEngine request failed");
       }
-    }).detach();
-    return true;
+    });
   }
   const std::string response = engine_.ProcessJson(requestJson);
   auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
