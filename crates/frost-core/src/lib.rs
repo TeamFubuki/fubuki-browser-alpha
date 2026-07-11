@@ -618,12 +618,14 @@ where
                 // Now remove the window.
                 let closed = self.windows.close_window(&target);
                 if closed {
-                    self.closed_windows.push(ClosedWindow {
-                        window: window_state,
-                        tabs: window_tabs.clone(),
-                    });
-                    if self.closed_windows.len() > 10 {
-                        self.closed_windows.remove(0);
+                    if !window_state.is_private {
+                        self.closed_windows.push(ClosedWindow {
+                            window: window_state,
+                            tabs: window_tabs.clone(),
+                        });
+                        if self.closed_windows.len() > 10 {
+                            self.closed_windows.remove(0);
+                        }
                     }
                     // Remove tabs belonging to this window from TabService.
                     for tab in &window_tabs {
@@ -1077,17 +1079,26 @@ where
                 Ok(())
             }
             HostEvent::WindowClosed { window_id } => {
+                let window_state = self.windows.get_window(&window_id);
+                let window_tabs: Vec<frost_protocol::TabState> = self
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .filter(|tab| tab.window_id == window_id)
+                    .collect();
                 if self.windows.close_window(&window_id) {
-                    let tab_ids: Vec<String> = self
-                        .tabs
-                        .list()
-                        .into_iter()
-                        .filter(|tab| tab.window_id == window_id)
-                        .map(|tab| tab.id)
-                        .collect();
-                    for tab_id in tab_ids {
-                        self.tabs.remove_tab(&tab_id);
-                        self.emit(Event::TabClosed(TabClosed { tab_id }));
+                    if let Some(window) = window_state.filter(|window| !window.is_private) {
+                        self.closed_windows.push(ClosedWindow {
+                            window,
+                            tabs: window_tabs.clone(),
+                        });
+                        if self.closed_windows.len() > 10 {
+                            self.closed_windows.remove(0);
+                        }
+                    }
+                    for tab in window_tabs {
+                        self.tabs.remove_tab(&tab.id);
+                        self.emit(Event::TabClosed(TabClosed { tab_id: tab.id }));
                     }
                     self.emit(Event::WindowClosed { window_id });
                 }
@@ -2034,6 +2045,63 @@ mod tests {
         let reopened_tabs: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
         assert_eq!(reopened_tabs.len(), 2);
         assert!(s.windows.iter().any(|w| w.id == w2_id));
+    }
+
+    #[test]
+    fn native_window_focus_and_close_events_update_engine_state() {
+        let mut core = BrowserCore::new();
+        let first_window = core.snapshot().windows[0].id.clone();
+        let (second_window, _) = create_window_with_tabs(&mut core, 1);
+        assert_eq!(
+            core.snapshot().active_window_id.as_deref(),
+            Some(second_window.as_str())
+        );
+
+        core.process_host_event(HostEventEnvelope::new(HostEvent::WindowFocused {
+            window_id: first_window.clone(),
+        }))
+        .unwrap();
+        assert_eq!(
+            core.snapshot().active_window_id.as_deref(),
+            Some(first_window.as_str())
+        );
+
+        core.process_host_event(HostEventEnvelope::new(HostEvent::WindowClosed {
+            window_id: second_window.clone(),
+        }))
+        .unwrap();
+        let mut snapshot = core.snapshot();
+        assert!(!snapshot.windows.iter().any(|w| w.id == second_window));
+        assert!(!snapshot.tabs.iter().any(|t| t.window_id == second_window));
+
+        assert!(
+            core.process(ProtocolRequest::new(Request::WindowsReopenClosed))
+                .ok
+        );
+        snapshot = core.snapshot();
+        assert!(snapshot.windows.iter().any(|w| w.id == second_window));
+        assert!(snapshot.tabs.iter().any(|t| t.window_id == second_window));
+    }
+
+    #[test]
+    fn private_windows_are_not_kept_in_the_reopen_history() {
+        let mut core = BrowserCore::new();
+        assert!(
+            core.process(ProtocolRequest::new(Request::WindowsCreatePrivate))
+                .ok
+        );
+        let private_window = core.snapshot().active_window_id.unwrap();
+        assert!(
+            core.process(ProtocolRequest::new(Request::WindowsClose {
+                window_id: Some(private_window),
+            }))
+            .ok
+        );
+        assert_eq!(
+            core.process(ProtocolRequest::new(Request::WindowsReopenClosed))
+                .response,
+            Response::Bool(false)
+        );
     }
 
     #[test]
