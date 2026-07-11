@@ -499,10 +499,10 @@ where
                 // destination window. The app dispatcher will run close then
                 // create from its single FIFO queue, avoiding a native-first
                 // duplicate tab or recursive Engine request.
-                if let Err(e) = self.adapter.close_page(&tab_id) {
+                if let Err(e) = self.adapter.close_page(&tab_id, None) {
                     return Err(CoreError::Message(e.to_string()));
                 }
-                if let Err(e) = self.adapter.create_page(&tab_id, &window_id, &url) {
+                if let Err(e) = self.adapter.create_page(&tab_id, &window_id, &url, true) {
                     return Err(CoreError::Message(e.to_string()));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
@@ -576,7 +576,7 @@ where
                 let tab = self.tabs.create_tab(window_id.clone(), startup_url, true);
                 self.windows.attach_tab(&window_id, &tab.id, true);
                 self.adapter
-                    .create_page(&tab.id, &window_id, &tab.url)
+                    .create_page(&tab.id, &window_id, &tab.url, tab.is_active)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
@@ -595,7 +595,7 @@ where
                 let tab = self.tabs.create_tab(window_id.clone(), startup_url, true);
                 self.windows.attach_tab(&window_id, &tab.id, true);
                 self.adapter
-                    .create_page(&tab.id, &window_id, &tab.url)
+                    .create_page(&tab.id, &window_id, &tab.url, tab.is_active)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::TabCreated(tab));
                 Ok(Response::Bool(true))
@@ -656,7 +656,7 @@ where
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 for tab in &closed.tabs {
                     self.adapter
-                        .create_page(&tab.id, &tab.window_id, &tab.url)
+                        .create_page(&tab.id, &tab.window_id, &tab.url, tab.is_active)
                         .map_err(|e| CoreError::Message(e.to_string()))?;
                 }
                 // Emit events for restored tabs.
@@ -1180,7 +1180,7 @@ where
             }
             for tab in session.tabs {
                 self.adapter
-                    .create_page(&tab.id, &tab.window_id, &tab.url)
+                    .create_page(&tab.id, &tab.window_id, &tab.url, tab.is_active)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
             }
             return Ok(Response::Bool(true));
@@ -1205,7 +1205,7 @@ where
         let tab = self.tabs.create_tab(window_id.clone(), url, true);
         self.windows.attach_tab(&window_id, &tab.id, true);
         self.adapter
-            .create_page(&tab.id, &window_id, &tab.url)
+            .create_page(&tab.id, &window_id, &tab.url, tab.is_active)
             .map_err(|e| CoreError::Message(e.to_string()))?;
         self.emit(Event::TabCreated(tab));
         self.mark_session_dirty();
