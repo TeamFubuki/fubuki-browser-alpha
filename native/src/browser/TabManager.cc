@@ -1,10 +1,12 @@
 #include "browser/TabManager.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace fubuki {
 
-TabManager::TabManager(EventBus &eventBus) : eventBus_(eventBus) {}
+TabManager::TabManager(EventBus &eventBus, std::string windowId)
+    : eventBus_(eventBus), windowId_(std::move(windowId)) {}
 
 Tab &TabManager::CreateTab(const std::string &url, bool active) {
   if (tabs_.empty()) {
@@ -27,11 +29,11 @@ Tab &TabManager::CreateTab(const std::string &url, bool active) {
     activeTabId_ = tabs_.back().id;
   }
 
-  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), "",
+  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), windowId_,
                      tabs_.back().id, ""});
   if (active) {
     eventBus_.Publish({EventType::TabActivated, "tabs.activated", tabs_.back(),
-                       "", tabs_.back().id, ""});
+                       windowId_, tabs_.back().id, ""});
   }
   return tabs_.back();
 }
@@ -58,11 +60,11 @@ Tab &TabManager::CreateTab(const std::string &url, bool active,
     activeTabId_ = tabs_.back().id;
   }
 
-  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), "",
+  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), windowId_,
                      tabs_.back().id, ""});
   if (active) {
     eventBus_.Publish({EventType::TabActivated, "tabs.activated", tabs_.back(),
-                       "", tabs_.back().id, ""});
+                       windowId_, tabs_.back().id, ""});
   }
   return tabs_.back();
 }
@@ -80,7 +82,7 @@ bool TabManager::CloseTab(const std::string &tabId) {
   Tab closed = *it;
   tabs_.erase(it);
   eventBus_.Publish(
-      {EventType::TabClosed, "tabs.closed", closed, "", tabId, ""});
+      {EventType::TabClosed, "tabs.closed", closed, windowId_, tabId, ""});
 
   if (tabs_.empty()) {
     activeTabId_.clear();
@@ -105,7 +107,7 @@ bool TabManager::ActivateTab(const std::string &tabId) {
   }
   activeTabId_ = tabId;
   eventBus_.Publish(
-      {EventType::TabActivated, "tabs.activated", *target, "", tabId, ""});
+      {EventType::TabActivated, "tabs.activated", *target, windowId_, tabId, ""});
   return true;
 }
 
@@ -149,7 +151,7 @@ bool TabManager::MoveTab(const std::string &tabId, size_t toIndex) {
   tabs_.erase(it);
   tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(toIndex), moved);
   eventBus_.Publish(
-      {EventType::TabUpdated, "tabs.updated", moved, "", tabId, "reordered"});
+      {EventType::TabUpdated, "tabs.updated", moved, windowId_, tabId, "reordered"});
   return true;
 }
 
@@ -159,7 +161,7 @@ bool TabManager::SetPinned(const std::string &tabId, bool pinned) {
     return false;
   }
   tab->isPinned = pinned;
-  eventBus_.Publish({EventType::TabUpdated, "tabs.updated", *tab, "", tabId,
+  eventBus_.Publish({EventType::TabUpdated, "tabs.updated", *tab, windowId_, tabId,
                      pinned ? "pinned" : "unpinned"});
   return true;
 }
@@ -199,7 +201,7 @@ void TabManager::UpdateTab(const std::string &tabId, const Tab &patch) {
   tab->isPinned = patch.isPinned;
   tab->isPendingPopup = patch.isPendingPopup;
   eventBus_.Publish(
-      {EventType::TabUpdated, "tabs.updated", *tab, "", tabId, ""});
+      {EventType::TabUpdated, "tabs.updated", *tab, windowId_, tabId, ""});
 }
 
 void TabManager::SetBrowser(const std::string &tabId,

@@ -1827,6 +1827,15 @@ void BrowserWindow::RegisterCommands() {
 
 void BrowserWindow::WireEvents() {
   auto emit = [this](const Event& event) {
+    const bool tabEvent =
+        event.type == EventType::TabCreated ||
+        event.type == EventType::TabUpdated ||
+        event.type == EventType::TabClosed ||
+        event.type == EventType::TabActivated;
+    if (tabEvent && event.windowId != windowId_) {
+      return;
+    }
+
     auto payload = CefDictionaryValue::Create();
     payload->SetString("windowId", event.windowId);
     payload->SetString("tabId", event.tabId);
@@ -1845,7 +1854,9 @@ void BrowserWindow::WireEvents() {
     auto value = CefValue::Create();
     value->SetDictionary(bridge_->TabToDictionary(event.tab));
     payload->SetValue("tab", value);
-    bridge_->EmitToUi(event.name, payload);
+    if (!tabEvent) {
+      bridge_->EmitToUi(event.name, payload);
+    }
 
     if (event.type == EventType::TabCreated) {
       bridge_->EmitToUi("tab.created", bridge_->TabToDictionary(event.tab));

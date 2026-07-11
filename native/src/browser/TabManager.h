@@ -11,7 +11,7 @@ namespace fubuki {
 
 class TabManager {
 public:
-  explicit TabManager(EventBus &eventBus);
+  TabManager(EventBus &eventBus, std::string windowId);
 
   Tab &CreateTab(const std::string &url, bool active);
   // Creates a tab with an explicit id. Used when the id is owned by an
@@ -36,6 +36,7 @@ private:
   void EnsureActiveTab();
 
   EventBus &eventBus_;
+  std::string windowId_;
   int nextId_ = 1;
   std::vector<Tab> tabs_;
   std::string activeTabId_;

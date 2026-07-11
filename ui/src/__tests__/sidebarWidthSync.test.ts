@@ -4,6 +4,7 @@ import {
   clampSidebarWidth,
   MIN_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
+  sidebarWidthForKey,
 } from '../sidebarSizing';
 
 describe('createSidebarWidthSync', () => {
@@ -178,9 +179,43 @@ describe('createSidebarWidthSync', () => {
     // 200 succeeded, so onApplied called for 200
     expect(applied).toEqual([200]);
   });
+
+  it('does not call onApplied after disposal', async () => {
+    let release: (() => void) | undefined;
+    const applied: number[] = [];
+    const sync = createSidebarWidthSync({
+      send: () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      onApplied: (width) => applied.push(width),
+    });
+
+    sync.update(180);
+    sync.dispose();
+    release?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(applied).toEqual([]);
+  });
 });
 
 describe('sidebar width constraints', () => {
+  it('maps separator keyboard controls to clamped widths', () => {
+    expect(sidebarWidthForKey('ArrowLeft', 200)).toBe(192);
+    expect(sidebarWidthForKey('ArrowRight', 200)).toBe(208);
+    expect(sidebarWidthForKey('ArrowLeft', MIN_SIDEBAR_WIDTH)).toBe(
+      MIN_SIDEBAR_WIDTH,
+    );
+    expect(sidebarWidthForKey('ArrowRight', MAX_SIDEBAR_WIDTH)).toBe(
+      MAX_SIDEBAR_WIDTH,
+    );
+    expect(sidebarWidthForKey('Home', 200)).toBe(MIN_SIDEBAR_WIDTH);
+    expect(sidebarWidthForKey('End', 200)).toBe(MAX_SIDEBAR_WIDTH);
+    expect(sidebarWidthForKey('Enter', 200)).toBeUndefined();
+  });
+
   it('MIN <= DEFAULT <= MAX', () => {
     expect(MIN_SIDEBAR_WIDTH).toBeLessThanOrEqual(MAX_SIDEBAR_WIDTH);
   });
