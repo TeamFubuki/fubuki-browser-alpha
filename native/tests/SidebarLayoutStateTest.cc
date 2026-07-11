@@ -19,6 +19,13 @@ TEST(SidebarLayoutStateTest, RejectsInvalidVisibilityWithoutChangingState) {
   EXPECT_FALSE(state.Visible(true));
 }
 
+TEST(SidebarLayoutStateTest, RejectsPartialAndNonFiniteWidths) {
+  EXPECT_FALSE(SidebarLayoutState::CanApplyWidth("240px"));
+  EXPECT_FALSE(SidebarLayoutState::CanApplyWidth("nan"));
+  EXPECT_FALSE(SidebarLayoutState::CanApplyWidth("inf"));
+  EXPECT_TRUE(SidebarLayoutState::CanApplyWidth("240.5"));
+}
+
 TEST(SidebarLayoutStateTest, LiveWidthSurvivesVisibilityChanges) {
   SidebarLayoutState state;
   ASSERT_TRUE(state.ApplyWidth("240", 168.0, 280.0));

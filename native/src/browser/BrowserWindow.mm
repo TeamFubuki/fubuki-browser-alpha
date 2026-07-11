@@ -1068,17 +1068,25 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   return true;
 }
 
-bool BrowserWindow::ApplySetting(const std::string& key,
-                                 const std::string& value) {
+bool BrowserWindow::CanApplySetting(const std::string& key,
+                                    const std::string& value) const {
   if (key == "sidebarVisible") {
-    if (!sidebarLayoutState_.ApplyVisibility(value)) {
-      return false;
-    }
+    return SidebarLayoutState::CanApplyVisibility(value);
+  }
+  if (key == "sidebarWidth") {
+    return SidebarLayoutState::CanApplyWidth(value);
+  }
+  return true;
+}
+
+bool BrowserWindow::ApplySetting(const std::string& key, const std::string& value) {
+  if (!CanApplySetting(key, value)) {
+    return false;
+  }
+  if (key == "sidebarVisible") {
+    sidebarLayoutState_.ApplyVisibility(value);
   } else if (key == "sidebarWidth") {
-    if (!sidebarLayoutState_.ApplyWidth(value, kMinSidebarWidth,
-                                        kMaxSidebarWidth)) {
-      return false;
-    }
+    sidebarLayoutState_.ApplyWidth(value, kMinSidebarWidth, kMaxSidebarWidth);
   }
   if (key == "sidebarVisible" || key == "sidebarWidth" ||
       key == "toolbarDensity") {

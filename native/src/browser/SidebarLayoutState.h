@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -8,8 +9,22 @@ namespace fubuki {
 
 class SidebarLayoutState {
  public:
+  static bool CanApplyVisibility(const std::string& value) {
+    return value == "show" || value == "hide";
+  }
+
+  static bool CanApplyWidth(const std::string& value) {
+    try {
+      size_t consumed = 0;
+      const double width = std::stod(value, &consumed);
+      return consumed == value.size() && std::isfinite(width);
+    } catch (...) {
+      return false;
+    }
+  }
+
   bool ApplyVisibility(const std::string& value) {
-    if (value != "show" && value != "hide") {
+    if (!CanApplyVisibility(value)) {
       return false;
     }
     visible_ = value == "show";
@@ -17,6 +32,9 @@ class SidebarLayoutState {
   }
 
   bool ApplyWidth(const std::string& value, double minimum, double maximum) {
+    if (!CanApplyWidth(value)) {
+      return false;
+    }
     try {
       width_ = std::clamp(std::stod(value), minimum, maximum);
       return true;
