@@ -1,0 +1,124 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches:
+      - codex/engine-single-source
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PNPM_VERSION: "11"
+  NODE_VERSION: "22"
+
+jobs:
+  ui-check:
+    name: UI check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm run lint
+      - name: Format check
+        run: pnpm run format:check
+      - name: Typecheck and build
+        run: pnpm run build
+      - name: Tests
+        run: pnpm run test
+
+  rust-check:
+    name: Rust check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+
+  rust-ffi:
+    name: Rust FFI build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build release static library
+        run: cargo build -p frost-ffi --release
+      - name: Verify static archive
+        run: test -f target/release/libfrost_ffi.a
+
+  native-test:
+    name: Native unit test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+      - name: Configure
+        run: cmake -S native/tests -B native/tests/build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build tests
+        run: cmake --build native/tests/build --parallel $(nproc)
+      - name: Run tests
+        run: cd native/tests/build && ctest --output-on-failure
+
+  repository-check:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Merge conflict markers
+        run: |
+          if grep -RIn \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=dist \
+            --exclude-dir=build \
+            --exclude-dir=target \
+            --exclude-dir=third_party \
+            --exclude-dir=.cache \
+            --exclude='pnpm-lock.yaml' \
+            -E '^(<<<<<<<|=======|>>>>>>>)' .; then
+            echo "::error::Merge conflict markers found."
+            exit 1
+          fi
