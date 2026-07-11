@@ -9,8 +9,19 @@ pub enum EngineError {
 pub type EngineResult<T> = Result<T, EngineError>;
 
 pub trait EngineAdapter {
-    fn create_page(&mut self, tab_id: &str, window_id: &str, url: &str) -> EngineResult<()>;
-    fn close_page(&mut self, tab_id: &str) -> EngineResult<()>;
+    fn create_page(
+        &mut self,
+        tab_id: &str,
+        window_id: &str,
+        url: &str,
+        active: bool,
+    ) -> EngineResult<()>;
+    fn close_page(
+        &mut self,
+        tab_id: &str,
+        window_id: Option<&str>,
+        successor_tab_id: Option<&str>,
+    ) -> EngineResult<()>;
     fn activate_page(&mut self, tab_id: &str) -> EngineResult<()>;
     fn pin_page(&mut self, tab_id: &str, pinned: bool) -> EngineResult<()>;
     fn move_page(&mut self, tab_id: &str, to_index: usize) -> EngineResult<()>;
@@ -52,11 +63,11 @@ pub trait WindowHost {
 pub struct NoopEngineAdapter;
 
 impl EngineAdapter for NoopEngineAdapter {
-    fn create_page(&mut self, _: &str, _: &str, _: &str) -> EngineResult<()> {
+    fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
         Ok(())
     }
 
-    fn close_page(&mut self, _: &str) -> EngineResult<()> {
+    fn close_page(&mut self, _: &str, _: Option<&str>, _: Option<&str>) -> EngineResult<()> {
         Ok(())
     }
 

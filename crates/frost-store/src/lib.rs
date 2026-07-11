@@ -20,6 +20,7 @@ pub type StoreResult<T> = Result<T, StoreError>;
 pub trait SettingsRepository {
     fn get_setting(&self, key: &str) -> StoreResult<Option<String>>;
     fn set_setting(&self, key: &str, value: &str) -> StoreResult<()>;
+    fn remove_setting(&self, key: &str) -> StoreResult<()>;
 }
 
 pub trait BookmarkRepository {
@@ -338,6 +339,12 @@ impl SettingsRepository for SqliteStore {
             ",
             params![key, value],
         )?;
+        Ok(())
+    }
+
+    fn remove_setting(&self, key: &str) -> StoreResult<()> {
+        self.conn
+            .execute("DELETE FROM settings WHERE key = ?1", params![key])?;
         Ok(())
     }
 }

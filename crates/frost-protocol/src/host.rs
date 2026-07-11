@@ -17,9 +17,16 @@ pub enum HostCommand {
         tab_id: String,
         window_id: String,
         url: String,
+        active: bool,
     },
     #[serde(rename = "page.close", rename_all = "camelCase")]
-    PageClose { tab_id: String },
+    PageClose {
+        tab_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        successor_tab_id: Option<String>,
+    },
     #[serde(rename = "page.activate", rename_all = "camelCase")]
     PageActivate { tab_id: String },
     #[serde(rename = "page.pin", rename_all = "camelCase")]
@@ -163,5 +170,37 @@ mod tests {
         assert_eq!(json["command"], "page.navigate");
         assert_eq!(json["payload"]["tabId"], "tab-1");
         assert_eq!(json["payload"]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn serializes_page_create_activity() {
+        let envelope = HostCommandEnvelope::new(
+            "cmd-2",
+            HostCommand::PageCreate {
+                tab_id: "tab-2".into(),
+                window_id: "window-1".into(),
+                url: "https://example.com".into(),
+                active: false,
+            },
+        );
+
+        let json = serde_json::to_value(envelope).unwrap();
+        assert_eq!(json["payload"]["active"], false);
+    }
+
+    #[test]
+    fn serializes_page_close_successor() {
+        let envelope = HostCommandEnvelope::new(
+            "cmd-3",
+            HostCommand::PageClose {
+                tab_id: "tab-b".into(),
+                window_id: Some("window-1".into()),
+                successor_tab_id: Some("tab-c".into()),
+            },
+        );
+
+        let json = serde_json::to_value(envelope).unwrap();
+        assert_eq!(json["payload"]["successorTabId"], "tab-c");
+        assert_eq!(json["payload"]["windowId"], "window-1");
     }
 }
