@@ -152,9 +152,9 @@ BrowserAppController::NewWindow(bool privateWindow,
                                 CefRefPtr<CefDictionaryValue> restoreState) {
   CEF_REQUIRE_UI_THREAD();
   auto context = std::make_unique<WindowContext>();
-  context->tabManager = std::make_unique<TabManager>(eventBus_);
-  BrowserWindow *raw = nullptr;
   const std::string windowId = NextWindowId();
+  context->tabManager = std::make_unique<TabManager>(eventBus_, windowId);
+  BrowserWindow *raw = nullptr;
   context->window = std::make_unique<BrowserWindow>(*this, *context->tabManager,
                                                     windowId, privateWindow);
   raw = context->window.get();

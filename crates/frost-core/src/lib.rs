@@ -256,9 +256,15 @@ where
                         );
                         self.windows
                             .attach_tab(&tab.window_id, &replacement.id, true);
-                        self.adapter
-                            .create_page(&replacement.id, &tab.window_id, &replacement.url)
-                            .map_err(|e| CoreError::Message(e.to_string()))?;
+                        if let Err(error) = self.adapter.create_page(
+                            &replacement.id,
+                            &tab.window_id,
+                            &replacement.url,
+                        ) {
+                            self.windows.detach_tab(&replacement.id);
+                            self.tabs.remove_tab(&replacement.id);
+                            return Err(CoreError::Message(error.to_string()));
+                        }
                         self.emit(Event::TabCreated(replacement));
                     }
                 }
@@ -1208,9 +1214,57 @@ impl frost_store::ClearRepository for InMemoryStore {
 
 #[cfg(test)]
 mod tests {
+    use frost_engine_api::{EngineAdapter, EngineResult};
     use frost_protocol::{HostCommand, HostEvent, HostEventEnvelope, Request, Response};
 
     use super::*;
+
+    #[derive(Default)]
+    struct FailSecondCreateAdapter {
+        create_count: usize,
+    }
+
+    impl EngineAdapter for FailSecondCreateAdapter {
+        fn create_page(&mut self, _: &str, _: &str, _: &str) -> EngineResult<()> {
+            self.create_count += 1;
+            if self.create_count == 2 {
+                return Err(EngineError::Message("replacement rejected".into()));
+            }
+            Ok(())
+        }
+
+        fn close_page(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn navigate(&mut self, _: &str, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn reload(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn stop(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn go_back(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn go_forward(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn create_window(&mut self, _: &str, _: bool) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn close_window(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn creates_and_activates_tabs() {
@@ -1250,6 +1304,26 @@ mod tests {
         assert_eq!(state.tabs.len(), 1);
         assert!(state.tabs[0].is_active);
         assert_eq!(state.tabs[0].url, "fubuki://newtab/");
+    }
+
+    #[test]
+    fn failed_last_tab_replacement_does_not_leave_ghost_state() {
+        let mut core = BrowserCore::with_adapter_and_settings(
+            FailSecondCreateAdapter::default(),
+            InMemoryStore::default(),
+        );
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: None,
+            active: true,
+        }));
+        let tab_id = core.snapshot().tabs[0].id.clone();
+
+        let response = core.process(ProtocolRequest::new(Request::TabsClose { tab_id }));
+
+        assert!(!response.ok);
+        let state = core.snapshot();
+        assert!(state.tabs.is_empty());
+        assert!(state.windows[0].tab_ids.is_empty());
     }
 
     #[test]

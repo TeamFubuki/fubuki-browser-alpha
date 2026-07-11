@@ -1,4 +1,6 @@
 export type SidebarWidthSender = (width: number) => Promise<unknown>;
+
+/** Never called after `dispose()` has been invoked. */
 export type SidebarWidthCallback = (width: number) => void;
 
 export interface SidebarWidthSyncOptions {
@@ -29,7 +31,7 @@ export function createSidebarWidthSync(
         queuedWidth = undefined;
         try {
           await send(width);
-          onApplied?.(width);
+          if (!disposed) onApplied?.(width);
         } catch (error) {
           console.error('[Fubuki] Failed to resize native sidebar:', error);
         }
@@ -48,12 +50,17 @@ export function createSidebarWidthSync(
 
   const flush = async (width: number) => {
     update(width);
-    while (running) await running;
+    for (;;) {
+      const pending = running;
+      if (pending) await pending;
+      if (queuedWidth === undefined && running === undefined) break;
+    }
   };
 
   const dispose = () => {
     disposed = true;
     queuedWidth = undefined;
+    running = undefined;
   };
 
   return { update, flush, dispose };
