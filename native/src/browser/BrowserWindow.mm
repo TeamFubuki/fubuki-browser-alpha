@@ -1050,7 +1050,9 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   }
   Store().SetSetting(key, savedValue);
   if (key == "sidebarWidth") {
-    liveSidebarWidth_ = 0.0;
+    sidebarLayoutState_.UsePersistedWidth();
+  } else if (key == "sidebarVisible") {
+    sidebarLayoutState_.UsePersistedVisibility();
   }
   if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
     UpdateContentFrame();
@@ -1068,12 +1070,13 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
 
 bool BrowserWindow::ApplySetting(const std::string& key,
                                  const std::string& value) {
-  if (key == "sidebarWidth") {
-    try {
-      liveSidebarWidth_ = std::clamp(std::stod(value),
-                                     static_cast<double>(kMinSidebarWidth),
-                                     static_cast<double>(kMaxSidebarWidth));
-    } catch (const std::exception&) {
+  if (key == "sidebarVisible") {
+    if (!sidebarLayoutState_.ApplyVisibility(value)) {
+      return false;
+    }
+  } else if (key == "sidebarWidth") {
+    if (!sidebarLayoutState_.ApplyWidth(value, kMinSidebarWidth,
+                                        kMaxSidebarWidth)) {
       return false;
     }
   }
@@ -1091,7 +1094,9 @@ bool BrowserWindow::ApplySetting(const std::string& key,
 bool BrowserWindow::ResetSetting(const std::string& key) {
   Store().ResetSetting(key);
   if (key == "sidebarWidth") {
-    liveSidebarWidth_ = 0.0;
+    sidebarLayoutState_.UsePersistedWidth();
+  } else if (key == "sidebarVisible") {
+    sidebarLayoutState_.UsePersistedVisibility();
   }
   if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
     UpdateContentFrame();
@@ -1114,8 +1119,7 @@ bool BrowserWindow::SetPermission(const std::string& origin, const std::string& 
 }
 
 bool BrowserWindow::SetLiveSidebarWidth(double width) {
-  liveSidebarWidth_ = std::clamp(width, static_cast<double>(kMinSidebarWidth),
-                                 static_cast<double>(kMaxSidebarWidth));
+  sidebarLayoutState_.ApplyWidth(width, kMinSidebarWidth, kMaxSidebarWidth);
   UpdateContentFrame();
   return true;
 }
@@ -2029,25 +2033,20 @@ void BrowserWindow::UpdateContentFrame() {
           ? settingsValue->GetDictionary()
           : CefDictionaryValue::Create();
   const std::string sidebarState = settings->GetString("sidebarVisible");
-  const bool sidebarVisible = sidebarState == "show";
+  const bool sidebarVisible =
+      sidebarLayoutState_.Visible(sidebarState == "show");
   double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;
   if (sidebarVisible) {
-    if (liveSidebarWidth_ > 0.0) {
-      sidebarWidth = liveSidebarWidth_;
-    } else {
-      const std::string widthValue = settings->GetString("sidebarWidth");
-      if (!widthValue.empty()) {
-        try {
-          sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth),
-                                    static_cast<double>(kMaxSidebarWidth));
-        } catch (...) {
-          sidebarWidth = kDefaultSidebarWidth;
-        }
+    const std::string widthValue = settings->GetString("sidebarWidth");
+    if (!widthValue.empty()) {
+      try {
+        sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth),
+                                  static_cast<double>(kMaxSidebarWidth));
+      } catch (...) {
+        sidebarWidth = kDefaultSidebarWidth;
       }
     }
-  }
-  if (!sidebarVisible) {
-    liveSidebarWidth_ = 0.0;
+    sidebarWidth = sidebarLayoutState_.Width(sidebarWidth);
   }
   const CGFloat navHeight = kNavHeight;
   NSRect bounds = [uiHostView_ bounds];
