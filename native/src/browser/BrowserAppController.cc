@@ -1,4 +1,5 @@
 #include "browser/BrowserAppController.h"
+#include "browser/HostCommandRouting.h"
 
 #include <algorithm>
 #include <chrono>
@@ -192,7 +193,14 @@ void BrowserAppController::DispatchHostCommands() {
         bool ok = !key.empty();
         for (const auto &context : windows_) {
           ok = context && context->window &&
-               context->window->ApplySetting(key, settingValue) && ok;
+               context->window->CanApplySetting(key, settingValue) && ok;
+        }
+        // Validation is side-effect free, so an invalid value cannot leave a
+        // subset of windows updated.
+        if (ok) {
+          for (const auto &context : windows_) {
+            ok = context->window->ApplySetting(key, settingValue) && ok;
+          }
         }
         engine_.PushHostCommandResultJson(HostCommandResultJson(
             commandId, ok, ok ? "" : "failed to apply setting"));
@@ -203,8 +211,10 @@ void BrowserAppController::DispatchHostCommands() {
         const std::string tabId = payload->HasKey("tabId")
                                       ? payload->GetString("tabId").ToString()
                                       : "";
-        BrowserWindow *target = !windowId.empty() ? FindWindow(windowId)
-                                                    : FindWindowForTab(tabId);
+        BrowserWindow *tabOwner = FindWindowForTab(tabId);
+        const std::string targetWindowId = ResolveHostCommandWindowId(
+            windowId, tabOwner ? tabOwner->WindowId() : "");
+        BrowserWindow *target = FindWindow(targetWindowId);
         if (!target) {
           engine_.PushHostCommandResultJson(HostCommandResultJson(
               commandId, false, "target window or tab does not exist"));

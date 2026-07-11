@@ -81,6 +81,7 @@ class BrowserWindow {
   bool ClearHistoryRange(const std::string& range);
   bool SetSetting(const std::string& key, const std::string& value);
   // Applies an Engine-owned setting to native views without persisting it.
+  bool CanApplySetting(const std::string& key, const std::string& value) const;
   bool ApplySetting(const std::string& key, const std::string& value);
   bool ResetSetting(const std::string& key);
   bool SetPermission(const std::string& origin, const std::string& permission,
