@@ -7,6 +7,7 @@
 
 #include "bridge/NativeBridge.h"
 #include "browser/FrostStore.h"
+#include "browser/SidebarLayoutState.h"
 #include "browser/TabManager.h"
 #include "commands/CommandRegistry.h"
 #include "events/EventBus.h"
@@ -175,7 +176,9 @@ class BrowserWindow {
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
   std::vector<ClosedTab> closedTabs_;
-  double liveSidebarWidth_ = 0.0;
+  // Engine-applied layout values take effect before repository persistence.
+  // Persisted settings remain the startup/fallback source of truth.
+  SidebarLayoutState sidebarLayoutState_;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
   std::string windowId_;
   NSWindow* window_ = nullptr;
