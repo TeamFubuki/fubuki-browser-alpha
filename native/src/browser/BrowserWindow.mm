@@ -1191,7 +1191,9 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   } else if (key == "openDevTools") {
     ok = OpenDevTools();
   } else if (key == "clearData") {
-    ok = ClearBrowsingData(value);
+    auto params = CefDictionaryValue::Create();
+    params->SetString("target", value);
+    return app_.RequestEngineCommand("data.clear", params);
   } else if (key == "clearHistoryRange") {
     ok = ClearHistoryRange(value);
   } else {

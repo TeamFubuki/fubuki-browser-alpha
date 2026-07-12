@@ -40,6 +40,7 @@ pub trait EngineAdapter {
     fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<()>;
     fn close_window(&mut self, window_id: &str) -> EngineResult<()>;
     fn apply_setting(&mut self, key: &str, value: &str) -> EngineResult<()>;
+    fn clear_browsing_data(&mut self, target: &str) -> EngineResult<()>;
 }
 
 pub trait PageAdapter {
@@ -119,6 +120,10 @@ impl EngineAdapter for NoopEngineAdapter {
     }
 
     fn apply_setting(&mut self, _: &str, _: &str) -> EngineResult<()> {
+        Ok(())
+    }
+
+    fn clear_browsing_data(&mut self, _: &str) -> EngineResult<()> {
         Ok(())
     }
 }

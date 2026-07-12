@@ -64,12 +64,28 @@ void FrostBridge::StartWorker() {
 }
 
 void FrostBridge::StopWorker() {
+  std::deque<AsyncRequest> pending;
   {
     std::lock_guard<std::mutex> lock(queueMutex_);
+    if (stopping_) {
+      return;
+    }
     stopping_ = true;
+    pending = std::move(queue_);
     queue_.clear();
   }
   queueCondition_.notify_all();
+
+  // Complete every queued callback with a shutdown error so callers are not
+  // left hanging.
+  const std::string kShutdownError =
+      "{\"version\":0,\"ok\":false,\"kind\":\"error\",\"result\":\"FrostBridge is shutting down\"}";
+  for (auto &request : pending) {
+    if (request.callback) {
+      request.callback(kShutdownError);
+    }
+  }
+
   if (worker_.joinable()) {
     worker_.join();
   }

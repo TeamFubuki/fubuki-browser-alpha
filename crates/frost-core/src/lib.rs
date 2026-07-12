@@ -238,6 +238,12 @@ impl EngineAdapter for HostCommandAdapter {
             value: value.to_owned(),
         })
     }
+
+    fn clear_browsing_data(&mut self, target: &str) -> EngineResult<()> {
+        self.send(HostCommand::BrowsingDataClear {
+            target: target.to_owned(),
+        })
+    }
 }
 
 pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
@@ -422,15 +428,10 @@ where
                                 self.closed_tabs = closed_tabs_before.clone();
                                 CoreError::Message(e.to_string())
                             })?;
-                        self.emit(Event::TabClosed(TabClosed { tab_id }));
-                        if let Some(successor_tab_id) = successor_tab_id {
-                            self.emit(Event::TabActivated(TabActivated {
-                                tab_id: successor_tab_id.clone(),
-                            }));
-                        }
 
-                        // Keep the browser usable, but do so in the engine rather
-                        // than letting the native tab manager invent a second tab.
+                        // Replacement tab logic: if the closed tab was the last one
+                        // in its window, create a new tab to keep the window alive.
+                        let mut replacement_tab: Option<frost_protocol::TabState> = None;
                         if let Some(tab) = closing_tab
                             && !self.tabs.has_tabs_in_window(&tab.window_id)
                         {
@@ -472,6 +473,17 @@ where
                                     ))),
                                 };
                             }
+                            replacement_tab = Some(replacement);
+                        }
+
+                        // Emit events only after all operations succeed.
+                        self.emit(Event::TabClosed(TabClosed { tab_id }));
+                        if let Some(successor_tab_id) = successor_tab_id {
+                            self.emit(Event::TabActivated(TabActivated {
+                                tab_id: successor_tab_id.clone(),
+                            }));
+                        }
+                        if let Some(replacement) = replacement_tab {
                             self.emit(Event::TabCreated(replacement));
                         }
                     }
@@ -608,6 +620,8 @@ where
                         .ok_or_else(|| CoreError::Message("Tab not found".into()))?;
                     let previous_window = moving_tab.window_id.clone();
                     let url = moving_tab.url.clone();
+
+                    // Create the new window on Engine side.
                     let window_id = self.windows.create_window(false);
                     self.tabs.move_tab_to_window(&tab_id, &window_id);
                     self.windows.move_tab_to_window(&tab_id, &window_id);
@@ -615,17 +629,29 @@ where
                         .windows
                         .get_window(&previous_window)
                         .and_then(|window| window.active_tab_id);
+                    let source_has_tabs = self
+                        .windows
+                        .get_window(&previous_window)
+                        .map(|window| !window.tab_ids.is_empty())
+                        .unwrap_or(false);
+
+                    // Create native new window.
                     self.adapter
                         .create_window(&window_id, false)
                         .map_err(|error| CoreError::Message(error.to_string()))?;
+
+                    // Create page in new window.
                     if let Err(error) = self.adapter.create_page(&tab_id, &window_id, &url, true) {
                         return Err(self.compensate_window(error, &window_id));
                     }
+
+                    // Close page in source window.
                     if let Err(error) = self.adapter.close_page(
                         &tab_id,
                         Some(&previous_window),
                         source_successor.as_deref(),
                     ) {
+                        // Compensate: close page in new window, then close new window.
                         let mut compensation_errors = Vec::new();
                         if let Err(compensation) =
                             self.adapter.close_page(&tab_id, Some(&window_id), None)
@@ -637,6 +663,26 @@ where
                         }
                         return Err(Self::compensation_error(error, compensation_errors));
                     }
+
+                    // If source window has no tabs left, close it.
+                    if !source_has_tabs {
+                        self.windows.close_window(&previous_window);
+                        if let Err(error) = self.adapter.close_window(&previous_window) {
+                            // Source window native close failed, but we already moved the tab.
+                            // Report the error but don't roll back the tab move.
+                            return Err(CoreError::Message(format!(
+                                "source window close failed: {error}"
+                            )));
+                        }
+                        self.emit(Event::WindowClosed {
+                            window_id: previous_window,
+                        });
+                    }
+
+                    // Update active window to the new window.
+                    self.windows.set_active_window(&window_id);
+
+                    // Emit events after all operations succeed.
                     if let Some(window) = self.windows.get_window(&window_id) {
                         self.emit(Event::WindowCreated(window));
                     }
@@ -901,7 +947,9 @@ where
                     permission,
                     value,
                 } => {
-                    let _ = self.repository.set_permission(&origin, &permission, &value);
+                    self.repository
+                        .set_permission(&origin, &permission, &value)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::PermissionChanged { origin, permission });
                     Ok(Response::Bool(true))
                 }
@@ -1576,7 +1624,14 @@ where
         let clear_downloads = all || target == "downloads";
         let clear_permissions = all || target == "permissions";
         let clear_logs = all || target == "logs";
-        if !(clear_bookmarks || clear_history || clear_downloads || clear_permissions || clear_logs)
+        let clear_host_data =
+            all || target == "cookies" || target == "cache" || target == "siteData";
+        if !(clear_bookmarks
+            || clear_history
+            || clear_downloads
+            || clear_permissions
+            || clear_logs
+            || clear_host_data)
         {
             return Err(CoreError::Message(format!(
                 "unknown data clear target: {target}"
@@ -1689,6 +1744,14 @@ where
             ));
         }
 
+        // Send host-side data clear command and wait for completion.
+        if clear_host_data {
+            self.adapter
+                .clear_browsing_data(target)
+                .map_err(|e| CoreError::Message(e.to_string()))?;
+        }
+
+        // Emit events only after all operations succeeded.
         if clear_bookmarks {
             self.emit(Event::BookmarkChanged { url: String::new() });
         }
@@ -2137,6 +2200,10 @@ mod tests {
         }
 
         fn apply_setting(&mut self, _: &str, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn clear_browsing_data(&mut self, _: &str) -> EngineResult<()> {
             Ok(())
         }
     }
