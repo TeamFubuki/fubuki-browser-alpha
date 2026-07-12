@@ -240,6 +240,10 @@ where
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
+                let tabs_before = self.tabs.list();
+                let windows_before = self.windows.list();
+                let active_window_before = self.windows.active_window_id().map(str::to_owned);
+                let closed_tabs_before = self.closed_tabs.clone();
                 let closing_tab = self.tabs.get_tab(&tab_id);
                 if let Some(tab) = closing_tab.clone() {
                     self.closed_tabs.push(tab);
@@ -253,9 +257,16 @@ where
                     if let Some(successor_tab_id) = successor_tab_id {
                         self.windows.set_active_tab(successor_tab_id);
                     }
-                    self.adapter
+                    if let Err(error) = self
+                        .adapter
                         .close_page(&tab_id, successor_tab_id.as_deref())
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    {
+                        self.tabs.replace_all(tabs_before.clone());
+                        self.windows
+                            .replace_all(windows_before.clone(), active_window_before.clone());
+                        self.closed_tabs = closed_tabs_before.clone();
+                        return Err(CoreError::Message(error.to_string()));
+                    }
                     self.emit(Event::TabClosed(TabClosed { tab_id }));
                     if let Some(successor_tab_id) = successor_tab_id {
                         self.emit(Event::TabActivated(TabActivated {
@@ -283,6 +294,16 @@ where
                         ) {
                             self.windows.detach_tab(&replacement.id);
                             self.tabs.remove_tab(&replacement.id);
+                            self.tabs.replace_all(tabs_before.clone());
+                            self.windows
+                                .replace_all(windows_before.clone(), active_window_before.clone());
+                            self.closed_tabs = closed_tabs_before.clone();
+                            let _ = self.adapter.create_page(
+                                &tab.id,
+                                &tab.window_id,
+                                &tab.url,
+                                tab.is_active,
+                            );
                             return Err(CoreError::Message(error.to_string()));
                         }
                         self.emit(Event::TabCreated(replacement));
@@ -630,19 +651,32 @@ where
             Request::DataClear { target } => {
                 let target = target.unwrap_or_else(|| "all".into());
                 if target == "bookmarks" || target == "all" {
-                    let _ = self.repository.clear_bookmarks();
+                    self.repository
+                        .clear_bookmarks()
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::BookmarkChanged { url: String::new() });
                 }
                 if target == "history" || target == "all" {
-                    let _ = HistoryService::clear_range(&self.repository, "all");
+                    HistoryService::clear_range(&self.repository, "all")
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::HistoryChanged { url: None });
                 }
                 if target == "downloads" || target == "all" {
-                    let _ = self.repository.clear_downloads();
+                    self.repository
+                        .clear_downloads()
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::DownloadChanged {
                         url: None,
                         path: None,
                     });
+                }
+                if !matches!(
+                    target.as_str(),
+                    "bookmarks" | "history" | "downloads" | "all"
+                ) {
+                    return Err(CoreError::Message(format!(
+                        "unsupported data target: {target}"
+                    )));
                 }
                 Ok(Response::Bool(true))
             }
@@ -651,7 +685,9 @@ where
                 permission,
                 value,
             } => {
-                let _ = self.repository.set_permission(&origin, &permission, &value);
+                self.repository
+                    .set_permission(&origin, &permission, &value)
+                    .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::PermissionChanged { origin, permission });
                 Ok(Response::Bool(true))
             }
@@ -1350,7 +1386,9 @@ mod tests {
         }));
         let tab_id = core.snapshot().tabs[0].id.clone();
 
-        let response = core.process(ProtocolRequest::new(Request::TabsClose { tab_id }));
+        let response = core.process(ProtocolRequest::new(Request::TabsClose {
+            tab_id: tab_id.clone(),
+        }));
 
         assert!(matches!(response.response, Response::Bool(true)));
         let state = core.snapshot();
@@ -1371,12 +1409,15 @@ mod tests {
         }));
         let tab_id = core.snapshot().tabs[0].id.clone();
 
-        let response = core.process(ProtocolRequest::new(Request::TabsClose { tab_id }));
+        let response = core.process(ProtocolRequest::new(Request::TabsClose {
+            tab_id: tab_id.clone(),
+        }));
 
         assert!(!response.ok);
         let state = core.snapshot();
-        assert!(state.tabs.is_empty());
-        assert!(state.windows[0].tab_ids.is_empty());
+        assert_eq!(state.tabs.len(), 1);
+        assert_eq!(state.tabs[0].id, tab_id);
+        assert_eq!(state.windows[0].tab_ids, vec![tab_id]);
     }
 
     #[test]
