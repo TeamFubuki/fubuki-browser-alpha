@@ -389,4 +389,39 @@ mod tests {
         tabs.activate_tab(&ids[0]);
         assert_eq!(tabs.close_tab(&ids[0]), Some(Some(ids[1].clone())));
     }
+
+    #[test]
+    fn close_non_active_tab_returns_no_successor() {
+        let (mut tabs, ids) = three_tabs();
+        // three_tabs() leaves only the last tab active (ids[2])
+        // close an inactive tab
+        assert_eq!(tabs.close_tab(&ids[0]), Some(None));
+        // Active tab unchanged
+        assert!(tabs.get_tab(&ids[2]).is_some_and(|t| t.is_active));
+    }
+
+    #[test]
+    fn close_last_tab_in_window_returns_no_successor() {
+        let mut tabs = TabService::new("window-1".into());
+        let tab = tabs.create_tab("window-1".into(), "only".into(), true);
+        assert_eq!(tabs.close_tab(&tab.id), Some(None));
+        assert!(tabs.list().is_empty());
+    }
+
+    #[test]
+    fn close_nonexistent_tab_returns_none() {
+        let mut tabs = TabService::new("window-1".into());
+        tabs.create_tab("window-1".into(), "a".into(), true);
+        assert_eq!(tabs.close_tab("tab-nonexistent"), None);
+    }
+
+    #[test]
+    fn close_tab_does_not_select_successor_from_other_window() {
+        let mut tabs = TabService::new("w1".into());
+        let t1 = tabs.create_tab("w1".into(), "a".into(), true);
+        let _t2 = tabs.create_tab("w2".into(), "b".into(), true);
+        // Close the only active tab in w1; successor must NOT come from w2
+        let result = tabs.close_tab(&t1.id);
+        assert_eq!(result, Some(None));
+    }
 }
