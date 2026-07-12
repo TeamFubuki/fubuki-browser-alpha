@@ -7,6 +7,10 @@
 #include <cstdlib>
 #include <filesystem>
 
+#ifdef CEF_USE_SANDBOX
+#include "include/cef_sandbox_mac.h"
+#endif
+
 namespace fubuki {
 
 void InitializeMacApplication();
@@ -26,7 +30,15 @@ int RunFubukiApplication(int argc, char *argv[]) {
   }
 
   CefSettings settings;
+#ifdef CEF_USE_SANDBOX
+  // Sandbox is enabled; do not set no_sandbox.
+  CefScopedSandboxContext sandboxContext;
+  if (!sandboxContext.Initialize(argc, const_cast<const char **>(argv))) {
+    return 1;
+  }
+#else
   settings.no_sandbox = true;
+#endif
   settings.persist_session_cookies = true;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   const char *home = std::getenv("HOME");
