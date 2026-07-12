@@ -3,6 +3,7 @@ name: PR CI
 on:
   pull_request:
     branches:
+      - codex/internal-pages-stability
       - codex/engine-single-source
 
 concurrency:
