@@ -21,8 +21,8 @@ use frost_protocol::{
     Request, Response, SettingChanged, TabActivated, TabClosed, TabPatch,
 };
 use frost_store::{
-    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRepository,
-    PermissionRepository, SessionRepository, SettingsRepository,
+    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRecord,
+    LogRepository, PermissionRepository, SessionRepository, SettingsRepository,
 };
 use thiserror::Error;
 
@@ -668,9 +668,28 @@ where
                     // then remove from engine state only on success.
                     if !source_has_tabs {
                         if let Err(error) = self.adapter.close_window(&previous_window) {
-                            return Err(CoreError::Message(format!(
-                                "source window close failed: {error}"
-                            )));
+                            // Compensate: close new page, close new window, recreate source page.
+                            let mut compensation_errors = Vec::new();
+                            if let Err(compensation) =
+                                self.adapter.close_page(&tab_id, Some(&window_id), None)
+                            {
+                                compensation_errors.push(compensation.to_string());
+                            }
+                            if let Err(compensation) = self.adapter.close_window(&window_id) {
+                                compensation_errors.push(compensation.to_string());
+                            }
+                            if let Err(compensation) = self.adapter.create_page(
+                                &tab_id,
+                                &previous_window,
+                                &url,
+                                moving_tab.is_active,
+                            ) {
+                                compensation_errors.push(compensation.to_string());
+                            }
+                            return Err(Self::compensation_error(
+                                EngineError::Message(error.to_string()),
+                                compensation_errors,
+                            ));
                         }
                         self.windows.close_window(&previous_window);
                     }
@@ -1413,6 +1432,63 @@ where
         }
     }
 
+    fn compensate_db(
+        repository: &S,
+        bookmarks: &Option<Vec<frost_protocol::BookmarkRecord>>,
+        history: &Option<Vec<frost_protocol::HistoryRecord>>,
+        downloads: &Option<Vec<frost_protocol::DownloadRecord>>,
+        permissions: &Option<Vec<frost_protocol::PermissionRecord>>,
+        logs: &Option<Vec<LogRecord>>,
+        compensation: &mut Vec<String>,
+    ) {
+        if let Some(records) = bookmarks.as_deref() {
+            for record in records {
+                if let Err(e) =
+                    repository.save_bookmark(&record.title, &record.url, &record.favicon_url)
+                {
+                    compensation.push(e.to_string());
+                }
+            }
+        }
+        if let Some(records) = history.as_deref() {
+            for record in records {
+                if let Err(e) =
+                    repository.add_history(&record.title, &record.url, &record.favicon_url)
+                {
+                    compensation.push(e.to_string());
+                }
+            }
+        }
+        if let Some(records) = downloads.as_deref() {
+            for record in records {
+                if let Err(e) = repository.upsert_download(
+                    &record.url,
+                    &record.path,
+                    &record.state,
+                    record.percent,
+                ) {
+                    compensation.push(e.to_string());
+                }
+            }
+        }
+        if let Some(records) = permissions.as_deref() {
+            for record in records {
+                if let Err(e) =
+                    repository.set_permission(&record.origin, &record.permission, &record.value)
+                {
+                    compensation.push(e.to_string());
+                }
+            }
+        }
+        if let Some(records) = logs.as_deref() {
+            for record in records.iter().rev() {
+                if let Err(e) = repository.add_log(&record.level, &record.message) {
+                    compensation.push(e.to_string());
+                }
+            }
+        }
+    }
+
     fn host_tab_action(&mut self, tab_id: &str, action: HostTabAction) -> CoreResult<Response> {
         if !self.tabs.contains(tab_id) {
             return Ok(Response::Bool(false));
@@ -1660,7 +1736,7 @@ where
             .transpose()
             .map_err(|e| CoreError::Message(e.to_string()))?;
 
-        let result = (|| -> Result<(), String> {
+        let db_result = (|| -> Result<(), String> {
             if clear_bookmarks {
                 self.repository
                     .clear_bookmarks()
@@ -1686,59 +1762,17 @@ where
             }
             Ok(())
         })();
-        if let Err(error) = result {
+        if let Err(error) = db_result {
             let mut compensation = Vec::new();
-            if let Some(records) = bookmarks.as_deref() {
-                for record in records {
-                    if let Err(e) = self.repository.save_bookmark(
-                        &record.title,
-                        &record.url,
-                        &record.favicon_url,
-                    ) {
-                        compensation.push(e.to_string());
-                    }
-                }
-            }
-            if let Some(records) = history.as_deref() {
-                for record in records {
-                    if let Err(e) =
-                        self.repository
-                            .add_history(&record.title, &record.url, &record.favicon_url)
-                    {
-                        compensation.push(e.to_string());
-                    }
-                }
-            }
-            if let Some(records) = downloads.as_deref() {
-                for record in records {
-                    if let Err(e) = self.repository.upsert_download(
-                        &record.url,
-                        &record.path,
-                        &record.state,
-                        record.percent,
-                    ) {
-                        compensation.push(e.to_string());
-                    }
-                }
-            }
-            if let Some(records) = permissions.as_deref() {
-                for record in records {
-                    if let Err(e) = self.repository.set_permission(
-                        &record.origin,
-                        &record.permission,
-                        &record.value,
-                    ) {
-                        compensation.push(e.to_string());
-                    }
-                }
-            }
-            if let Some(records) = logs.as_deref() {
-                for record in records.iter().rev() {
-                    if let Err(e) = self.repository.add_log(&record.level, &record.message) {
-                        compensation.push(e.to_string());
-                    }
-                }
-            }
+            Self::compensate_db(
+                &self.repository,
+                &bookmarks,
+                &history,
+                &downloads,
+                &permissions,
+                &logs,
+                &mut compensation,
+            );
             return Err(Self::compensation_error(
                 EngineError::Message(error),
                 compensation,
@@ -1746,10 +1780,19 @@ where
         }
 
         // Send host-side data clear command and wait for completion.
-        if clear_host_data {
-            self.adapter
-                .clear_browsing_data(target)
-                .map_err(|e| CoreError::Message(e.to_string()))?;
+        if clear_host_data && let Err(native_error) = self.adapter.clear_browsing_data(target) {
+            // Native deletion failed; restore DB data.
+            let mut compensation = Vec::new();
+            Self::compensate_db(
+                &self.repository,
+                &bookmarks,
+                &history,
+                &downloads,
+                &permissions,
+                &logs,
+                &mut compensation,
+            );
+            return Err(Self::compensation_error(native_error, compensation));
         }
 
         // Emit events only after all operations succeeded.
@@ -3763,6 +3806,238 @@ mod tests {
                 .iter()
                 .all(|e| !matches!(e.event, Event::PermissionChanged { .. })),
             "no PermissionChanged event should be emitted on DB failure"
+        );
+    }
+    #[test]
+    fn data_clear_cef_failure_restores_db_data() {
+        // Mock adapter that fails on clear_browsing_data
+        struct FailingClearAdapter;
+        impl EngineAdapter for FailingClearAdapter {
+            fn clear_browsing_data(&mut self, _: &str) -> EngineResult<()> {
+                Err(EngineError::Message("CEF deletion failed".into()))
+            }
+            fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
+                Ok(())
+            }
+            fn close_page(
+                &mut self,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> EngineResult<()> {
+                Ok(())
+            }
+            fn activate_page(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn pin_page(&mut self, _: &str, _: bool) -> EngineResult<()> {
+                Ok(())
+            }
+            fn move_page(&mut self, _: &str, _: usize) -> EngineResult<()> {
+                Ok(())
+            }
+            fn set_overlay(
+                &mut self,
+                _: &str,
+                _: bool,
+                _: Option<f64>,
+                _: Option<f64>,
+            ) -> EngineResult<()> {
+                Ok(())
+            }
+            fn navigate(&mut self, _: &str, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn reload(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn stop(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn go_back(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn go_forward(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn create_window(&mut self, _: &str, _: bool) -> EngineResult<()> {
+                Ok(())
+            }
+            fn close_window(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn apply_setting(&mut self, _: &str, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+        }
+
+        let store = frost_store::SqliteStore::in_memory().unwrap();
+        store
+            .save_bookmark("bookmark", "https://bookmark.example", "")
+            .unwrap();
+        store
+            .add_history("history", "https://history.example", "")
+            .unwrap();
+        store
+            .upsert_download("https://download.example", "/tmp/file", "done", 100)
+            .unwrap();
+        store
+            .set_permission("https://permission.example", "camera", "allow")
+            .unwrap();
+        store.add_log("info", "log entry").unwrap();
+
+        let mut core = BrowserCore::with_adapter_and_settings(FailingClearAdapter, store);
+
+        let result = core.process(ProtocolRequest::new(Request::DataClear { target: None }));
+
+        assert!(!result.ok, "expected error on CEF failure");
+        assert!(matches!(result.response, Response::Error(_)));
+        // DB data should be restored
+        assert!(
+            !core.repository.list_bookmarks().unwrap().is_empty(),
+            "bookmarks should be restored"
+        );
+        assert!(
+            !core.repository.list_history().unwrap().is_empty(),
+            "history should be restored"
+        );
+        assert!(
+            !core.repository.list_downloads().unwrap().is_empty(),
+            "downloads should be restored"
+        );
+        assert!(
+            !core.repository.list_permissions().unwrap().is_empty(),
+            "permissions should be restored"
+        );
+        assert!(
+            !core.repository.list_logs(10).unwrap().is_empty(),
+            "logs should be restored"
+        );
+        // No events should be emitted on failure
+        assert!(
+            core.recent_events()
+                .iter()
+                .all(|e| !matches!(e.event, Event::BookmarkChanged { .. })),
+            "no BookmarkChanged event on failure"
+        );
+    }
+
+    #[test]
+    fn tabs_move_to_new_window_source_close_failure_compensates() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        #[derive(Default)]
+        struct CloseFailAdapter {
+            fail_close_window: AtomicBool,
+        }
+
+        impl EngineAdapter for CloseFailAdapter {
+            fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
+                Ok(())
+            }
+            fn close_page(
+                &mut self,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> EngineResult<()> {
+                Ok(())
+            }
+            fn activate_page(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn pin_page(&mut self, _: &str, _: bool) -> EngineResult<()> {
+                Ok(())
+            }
+            fn move_page(&mut self, _: &str, _: usize) -> EngineResult<()> {
+                Ok(())
+            }
+            fn set_overlay(
+                &mut self,
+                _: &str,
+                _: bool,
+                _: Option<f64>,
+                _: Option<f64>,
+            ) -> EngineResult<()> {
+                Ok(())
+            }
+            fn navigate(&mut self, _: &str, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn reload(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn stop(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn go_back(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn go_forward(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn create_window(&mut self, _: &str, _: bool) -> EngineResult<()> {
+                Ok(())
+            }
+            fn close_window(&mut self, _window_id: &str) -> EngineResult<()> {
+                if self.fail_close_window.load(Ordering::SeqCst) {
+                    Err(EngineError::Message("source window close failed".into()))
+                } else {
+                    Ok(())
+                }
+            }
+            fn apply_setting(&mut self, _: &str, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+            fn clear_browsing_data(&mut self, _: &str) -> EngineResult<()> {
+                Ok(())
+            }
+        }
+
+        let store = frost_store::SqliteStore::in_memory().unwrap();
+        let adapter = CloseFailAdapter {
+            fail_close_window: AtomicBool::new(true),
+        };
+        let mut core = BrowserCore::with_adapter_and_settings(adapter, store);
+
+        // Create a tab in the default window
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+        }));
+        assert!(resp.ok);
+
+        let tab_id = core.tabs.list().first().map(|t| t.id.clone()).unwrap();
+
+        // Try to move the tab to a new window
+        let result = core.process(ProtocolRequest::new(Request::TabsMoveToNewWindow {
+            tab_id: tab_id.clone(),
+        }));
+
+        assert!(!result.ok, "expected error on source window close failure");
+        assert!(matches!(result.response, Response::Error(_)));
+
+        // The tab should still be in the original window
+        let tabs = core.tabs.list();
+        assert_eq!(tabs.len(), 1, "should have 1 tab");
+        assert_eq!(tabs[0].id, tab_id, "tab should be the original tab");
+
+        // Should not have any new windows created
+        let windows = core.windows.list();
+        assert_eq!(windows.len(), 1, "should have 1 window");
+
+        // No events should be emitted on failure
+        assert!(
+            core.recent_events()
+                .iter()
+                .all(|e| !matches!(e.event, Event::WindowCreated { .. })),
+            "no WindowCreated event on failure"
+        );
+        assert!(
+            core.recent_events()
+                .iter()
+                .all(|e| !matches!(e.event, Event::TabUpdated { .. })),
+            "no TabUpdated event on failure"
         );
     }
 }

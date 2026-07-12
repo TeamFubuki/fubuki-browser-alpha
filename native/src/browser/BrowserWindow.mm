@@ -4,9 +4,11 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <mutex>
 
 #include "browser/BrowserAppController.h"
 #include "cef/FubukiClient.h"
@@ -964,11 +966,60 @@ bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
   return true;
 }
 
+namespace {
+// Blocks until CEF async operation completes. Used to wait for cookie/cache
+// deletion before returning success to FrostEngine.
+class BlockingCallback : public CefCompletionCallback {
+ public:
+  BlockingCallback() = default;
+  void OnComplete() override {
+    std::lock_guard<std::mutex> lock(mu_);
+    done_ = true;
+    cv_.notify_all();
+  }
+  bool Wait() {
+    std::unique_lock<std::mutex> lock(mu_);
+    cv_.wait_for(lock, std::chrono::seconds(15), [this] { return done_; });
+    return done_;
+  }
+
+ private:
+  std::mutex mu_;
+  std::condition_variable cv_;
+  bool done_ = false;
+  IMPLEMENT_REFCOUNTING(BlockingCallback);
+  DISALLOW_COPY_AND_ASSIGN(BlockingCallback);
+};
+
+// Callback for CefCookieManager::DeleteCookies.
+class DeleteCookiesCallback : public CefDeleteCookiesCallback {
+ public:
+  DeleteCookiesCallback() = default;
+  void OnComplete(int /*num_deleted*/) override {
+    std::lock_guard<std::mutex> lock(mu_);
+    done_ = true;
+    cv_.notify_all();
+  }
+  bool Wait() {
+    std::unique_lock<std::mutex> lock(mu_);
+    cv_.wait_for(lock, std::chrono::seconds(15), [this] { return done_; });
+    return done_;
+  }
+
+ private:
+  std::mutex mu_;
+  std::condition_variable cv_;
+  bool done_ = false;
+  IMPLEMENT_REFCOUNTING(DeleteCookiesCallback);
+  DISALLOW_COPY_AND_ASSIGN(DeleteCookiesCallback);
+};
+}  // namespace
+
 // Clears only CEF-hosted browsing data (cookies, HTTP cache, site data).
 // Database operations (bookmarks, history, downloads, permissions, logs) are
 // handled exclusively by FrostEngine via the DataClear request.
+// Returns true only after all CEF deletion callbacks complete successfully.
 bool BrowserWindow::ClearBrowsingData(const std::string& target) {
-  bool ok = false;
   if (target == "cookies" || target == "cache" || target == "siteData") {
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
@@ -978,13 +1029,19 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     if ((target == "cache" || target == "siteData") && !context) {
       return false;
     }
+    bool cookiesOk = true;
+    bool cacheOk = true;
     if (target == "cookies" || target == "siteData") {
-      cookieManager->DeleteCookies("", "", nullptr);
+      CefRefPtr<DeleteCookiesCallback> cookieCb = new DeleteCookiesCallback();
+      cookieManager->DeleteCookies("", "", cookieCb);
+      cookiesOk = cookieCb->Wait();
     }
     if (target == "cache" || target == "siteData") {
-      context->ClearHttpCache(nullptr);
+      CefRefPtr<BlockingCallback> cacheCb = new BlockingCallback();
+      context->ClearHttpCache(cacheCb);
+      cacheOk = cacheCb->Wait();
     }
-    ok = true;
+    return cookiesOk && cacheOk;
   } else if (target == "all") {
     // "all" from FrostEngine means clear host-side data only;
     // DB targets are handled by Engine before this HostCommand fires.
@@ -993,11 +1050,15 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     if (!cookieManager || !context) {
       return false;
     }
-    cookieManager->DeleteCookies("", "", nullptr);
-    context->ClearHttpCache(nullptr);
-    ok = true;
+    CefRefPtr<DeleteCookiesCallback> cookieCb = new DeleteCookiesCallback();
+    cookieManager->DeleteCookies("", "", cookieCb);
+    bool cookiesOk = cookieCb->Wait();
+    CefRefPtr<BlockingCallback> cacheCb = new BlockingCallback();
+    context->ClearHttpCache(cacheCb);
+    bool cacheOk = cacheCb->Wait();
+    return cookiesOk && cacheOk;
   }
-  return ok;
+  return false;
 }
 
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
