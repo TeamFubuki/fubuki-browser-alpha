@@ -389,6 +389,10 @@ where
                     Ok(Response::Bool(activated))
                 }
                 Request::TabsClose { tab_id } => {
+                    let tabs_before = self.tabs.list();
+                    let windows_before = self.windows.list();
+                    let active_window_before = self.windows.active_window_id().map(str::to_owned);
+                    let closed_tabs_before = self.closed_tabs.clone();
                     let closing_tab = self.tabs.get_tab(&tab_id);
                     if let Some(tab) = closing_tab.clone() {
                         self.closed_tabs.push(tab);
@@ -408,7 +412,16 @@ where
                                 closing_tab.as_ref().map(|tab| tab.window_id.as_str()),
                                 successor_tab_id.as_deref(),
                             )
-                            .map_err(|e| CoreError::Message(e.to_string()))?;
+                            .map_err(|e| {
+                                // Roll back state on close_page failure
+                                self.tabs.replace_all(tabs_before.clone());
+                                self.windows.replace_all(
+                                    windows_before.clone(),
+                                    active_window_before.clone(),
+                                );
+                                self.closed_tabs = closed_tabs_before.clone();
+                                CoreError::Message(e.to_string())
+                            })?;
                         self.emit(Event::TabClosed(TabClosed { tab_id }));
                         if let Some(successor_tab_id) = successor_tab_id {
                             self.emit(Event::TabActivated(TabActivated {
@@ -428,21 +441,36 @@ where
                             );
                             self.windows
                                 .attach_tab(&tab.window_id, &replacement.id, true);
-                            if let Err(error) = self.adapter.create_page(
+                            if let Err(replacement_err) = self.adapter.create_page(
                                 &replacement.id,
                                 &tab.window_id,
                                 &replacement.url,
                                 replacement.is_active,
                             ) {
+                                // Roll back replacement state
                                 self.windows.detach_tab(&replacement.id);
                                 self.tabs.remove_tab(&replacement.id);
-                                let compensation_errors = self
-                                    .adapter
-                                    .create_page(&tab.id, &tab.window_id, &tab.url, tab.is_active)
-                                    .err()
-                                    .map(|error| vec![error.to_string()])
-                                    .unwrap_or_default();
-                                return Err(Self::compensation_error(error, compensation_errors));
+                                // Roll back the entire close operation
+                                self.tabs.replace_all(tabs_before);
+                                self.windows
+                                    .replace_all(windows_before, active_window_before);
+                                self.closed_tabs = closed_tabs_before;
+                                // Compensation: recreate the original tab in native
+                                let compensation_result = self.adapter.create_page(
+                                    &tab.id,
+                                    &tab.window_id,
+                                    &tab.url,
+                                    tab.is_active,
+                                );
+                                return match compensation_result {
+                                    Ok(()) => Err(CoreError::Message(format!(
+                                        "replacement page creation failed: {replacement_err}"
+                                    ))),
+                                    Err(compensation_err) => Err(CoreError::Message(format!(
+                                        "replacement failed: {replacement_err}, \
+                                             compensation also failed: {compensation_err}"
+                                    ))),
+                                };
                             }
                             self.emit(Event::TabCreated(replacement));
                         }
