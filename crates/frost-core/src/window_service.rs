@@ -39,8 +39,9 @@ impl WindowService {
 
     pub fn replace_all(&mut self, windows: Vec<WindowState>, active_window_id: Option<String>) {
         self.windows = windows;
-        self.active_window_id =
-            active_window_id.or_else(|| self.windows.last().map(|w| w.id.clone()));
+        self.active_window_id = active_window_id
+            .filter(|id| self.windows.iter().any(|window| &window.id == id))
+            .or_else(|| self.windows.last().map(|w| w.id.clone()));
     }
 
     pub fn list(&self) -> Vec<WindowState> {

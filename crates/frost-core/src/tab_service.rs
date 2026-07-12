@@ -20,6 +20,15 @@ impl TabService {
 
     pub fn replace_all(&mut self, tabs: Vec<TabState>) {
         self.tabs = tabs;
+        // A restored or externally supplied snapshot may contain more than
+        // one active tab in a window.  Keep the serialized order stable, but
+        // make the first active tab the single source of truth.
+        let mut active_windows = std::collections::HashSet::new();
+        for tab in &mut self.tabs {
+            if tab.is_active && !active_windows.insert(tab.window_id.clone()) {
+                tab.is_active = false;
+            }
+        }
     }
 
     pub fn upsert_tab(&mut self, tab: TabState) {
@@ -35,7 +44,8 @@ impl TabService {
     }
 
     pub fn create_tab(&mut self, window_id: String, url: String, active: bool) -> TabState {
-        if active || self.tabs.is_empty() {
+        let has_window_tabs = self.tabs.iter().any(|t| t.window_id == window_id);
+        if active || !has_window_tabs {
             self.tabs
                 .iter_mut()
                 .filter(|t| t.window_id == window_id)
@@ -57,7 +67,7 @@ impl TabService {
             is_loading: false,
             can_go_back: false,
             can_go_forward: false,
-            is_active: active || self.tabs.is_empty(),
+            is_active: active || !has_window_tabs,
             is_pinned: false,
         };
         self.tabs.push(tab.clone());

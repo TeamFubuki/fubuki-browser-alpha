@@ -314,9 +314,7 @@ where
     }
 
     fn emit_external_event(&mut self, event: ExternalEventEnvelope) {
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(frost_protocol::EventEnvelope::from_external(event));
-        }
+        self.emit(frost_protocol::Event::from_external(event));
     }
 }
 
