@@ -141,6 +141,8 @@ void BrowserAppController::DispatchEngineEvents() {
       PageCache::Instance().Invalidate("fubuki://downloads");
     } else if (eventName == "setting.changed") {
       PageCache::Instance().Invalidate("fubuki://settings");
+      // Settings like newTabPage affect new-tab display.
+      PageCache::Instance().Invalidate("fubuki://newtab");
     }
   }
 }

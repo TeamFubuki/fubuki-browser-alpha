@@ -664,25 +664,26 @@ where
                         return Err(Self::compensation_error(error, compensation_errors));
                     }
 
-                    // If source window has no tabs left, close it.
+                    // If source window has no tabs left, close native window first,
+                    // then remove from engine state only on success.
                     if !source_has_tabs {
-                        self.windows.close_window(&previous_window);
                         if let Err(error) = self.adapter.close_window(&previous_window) {
-                            // Source window native close failed, but we already moved the tab.
-                            // Report the error but don't roll back the tab move.
                             return Err(CoreError::Message(format!(
                                 "source window close failed: {error}"
                             )));
                         }
-                        self.emit(Event::WindowClosed {
-                            window_id: previous_window,
-                        });
+                        self.windows.close_window(&previous_window);
                     }
 
                     // Update active window to the new window.
                     self.windows.set_active_window(&window_id);
 
                     // Emit events after all operations succeed.
+                    if !source_has_tabs {
+                        self.emit(Event::WindowClosed {
+                            window_id: previous_window,
+                        });
+                    }
                     if let Some(window) = self.windows.get_window(&window_id) {
                         self.emit(Event::WindowCreated(window));
                     }
@@ -3232,6 +3233,58 @@ mod tests {
     }
 
     #[test]
+    fn last_tab_move_to_new_window_closes_source_window() {
+        let results = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut core = BrowserCore::with_adapter_and_settings(
+            sequenced_result_adapter(results.clone(), observed.clone()),
+            InMemoryStore::default(),
+        );
+        // Create a single tab in the default window.
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+        }));
+        let tab_id = core.snapshot().tabs[0].id.clone();
+        let source_window_id = core.snapshot().windows[0].id.clone();
+        observed.lock().unwrap().clear();
+        // All operations succeed.
+        results.lock().unwrap().extend([true, true, true, true]);
+
+        let response = core.process(ProtocolRequest::new(Request::TabsMoveToNewWindow {
+            tab_id: tab_id.clone(),
+        }));
+
+        assert!(response.ok, "move should succeed: {response:?}");
+        let snapshot = core.snapshot();
+        // Only one window should remain (the new one).
+        assert_eq!(
+            snapshot.windows.len(),
+            1,
+            "source window should be closed, leaving 1 window"
+        );
+        assert_ne!(
+            snapshot.windows[0].id, source_window_id,
+            "remaining window should be the new window"
+        );
+        assert!(
+            snapshot.windows[0].tab_ids.contains(&tab_id),
+            "tab should be in the new window"
+        );
+        // Verify correct host commands: create window, create page,
+        // close source page, close source window.
+        assert!(matches!(
+            observed.lock().unwrap().as_slice(),
+            [
+                HostCommand::WindowCreate { .. },
+                HostCommand::PageCreate { .. },
+                HostCommand::PageClose { .. },
+                HostCommand::WindowClose { .. }
+            ]
+        ));
+    }
+
+    #[test]
     fn partial_multi_close_recreates_pages_closed_before_failure() {
         let results = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -3533,6 +3586,183 @@ mod tests {
                 .active_window_id
                 .as_ref()
                 .is_some_and(|id| session.windows.iter().any(|window| &window.id == id))
+        );
+    }
+
+    #[test]
+    fn permissions_set_db_failure_emits_no_event_and_returns_error() {
+        use std::cell::Cell;
+
+        /// A wrapper around `InMemoryStore` that fails on `set_permission`.
+        struct FailingPermissionStore {
+            inner: InMemoryStore,
+            fail: Cell<bool>,
+        }
+
+        impl Default for FailingPermissionStore {
+            fn default() -> Self {
+                Self {
+                    inner: InMemoryStore::default(),
+                    fail: Cell::new(true),
+                }
+            }
+        }
+
+        impl frost_store::LogRepository for FailingPermissionStore {
+            fn add_log(&self, level: &str, message: &str) -> frost_store::StoreResult<()> {
+                self.inner.add_log(level, message)
+            }
+            fn list_logs(
+                &self,
+                limit: usize,
+            ) -> frost_store::StoreResult<Vec<frost_store::LogRecord>> {
+                self.inner.list_logs(limit)
+            }
+            fn clear_logs(&self) -> frost_store::StoreResult<()> {
+                self.inner.clear_logs()
+            }
+        }
+
+        impl frost_store::SessionRepository for FailingPermissionStore {
+            fn get_session(&self) -> frost_store::StoreResult<Option<String>> {
+                self.inner.get_session()
+            }
+            fn set_session(&self, data: &str) -> frost_store::StoreResult<()> {
+                self.inner.set_session(data)
+            }
+        }
+
+        impl frost_store::ClearRepository for FailingPermissionStore {
+            fn clear_bookmarks(&self) -> frost_store::StoreResult<()> {
+                self.inner.clear_bookmarks()
+            }
+            fn clear_downloads(&self) -> frost_store::StoreResult<()> {
+                self.inner.clear_downloads()
+            }
+        }
+
+        impl SettingsRepository for FailingPermissionStore {
+            fn get_setting(&self, key: &str) -> frost_store::StoreResult<Option<String>> {
+                self.inner.get_setting(key)
+            }
+            fn set_setting(&self, key: &str, value: &str) -> frost_store::StoreResult<()> {
+                self.inner.set_setting(key, value)
+            }
+            fn remove_setting(&self, key: &str) -> frost_store::StoreResult<()> {
+                self.inner.remove_setting(key)
+            }
+        }
+
+        impl BookmarkRepository for FailingPermissionStore {
+            fn list_bookmarks(
+                &self,
+            ) -> frost_store::StoreResult<Vec<frost_protocol::BookmarkRecord>> {
+                self.inner.list_bookmarks()
+            }
+            fn save_bookmark(
+                &self,
+                title: &str,
+                url: &str,
+                favicon_url: &str,
+            ) -> frost_store::StoreResult<bool> {
+                self.inner.save_bookmark(title, url, favicon_url)
+            }
+            fn remove_bookmark(&self, url: &str) -> frost_store::StoreResult<bool> {
+                self.inner.remove_bookmark(url)
+            }
+        }
+
+        impl HistoryRepository for FailingPermissionStore {
+            fn list_history(&self) -> frost_store::StoreResult<Vec<frost_protocol::HistoryRecord>> {
+                self.inner.list_history()
+            }
+            fn add_history(
+                &self,
+                title: &str,
+                url: &str,
+                favicon_url: &str,
+            ) -> frost_store::StoreResult<()> {
+                self.inner.add_history(title, url, favicon_url)
+            }
+            fn remove_history(&self, url: &str) -> frost_store::StoreResult<bool> {
+                self.inner.remove_history(url)
+            }
+            fn clear_history_range(&self, range: &str) -> frost_store::StoreResult<bool> {
+                self.inner.clear_history_range(range)
+            }
+        }
+
+        impl DownloadRepository for FailingPermissionStore {
+            fn list_downloads(
+                &self,
+            ) -> frost_store::StoreResult<Vec<frost_protocol::DownloadRecord>> {
+                self.inner.list_downloads()
+            }
+            fn upsert_download(
+                &self,
+                url: &str,
+                path: &str,
+                state: &str,
+                percent: i64,
+            ) -> frost_store::StoreResult<()> {
+                self.inner.upsert_download(url, path, state, percent)
+            }
+            fn remove_download(
+                &self,
+                url: Option<&str>,
+                path: Option<&str>,
+            ) -> frost_store::StoreResult<bool> {
+                self.inner.remove_download(url, path)
+            }
+        }
+
+        impl PermissionRepository for FailingPermissionStore {
+            fn list_permissions(
+                &self,
+            ) -> frost_store::StoreResult<Vec<frost_protocol::PermissionRecord>> {
+                self.inner.list_permissions()
+            }
+            fn set_permission(
+                &self,
+                origin: &str,
+                permission: &str,
+                value: &str,
+            ) -> frost_store::StoreResult<()> {
+                if self.fail.get() {
+                    return Err(frost_store::StoreError::InvalidKey(
+                        "permission write failed".into(),
+                    ));
+                }
+                self.inner.set_permission(origin, permission, value)
+            }
+            fn remove_permission(
+                &self,
+                origin: &str,
+                permission: &str,
+            ) -> frost_store::StoreResult<bool> {
+                self.inner.remove_permission(origin, permission)
+            }
+        }
+
+        let store = FailingPermissionStore::default();
+        let mut core = BrowserCore::with_adapter_and_settings(NoopEngineAdapter, store);
+
+        let result = core.process(ProtocolRequest::new(Request::PermissionsSet {
+            origin: "https://example.com".into(),
+            permission: "camera".into(),
+            value: "allow".into(),
+        }));
+
+        assert!(!result.ok, "expected error on DB failure");
+        assert!(
+            matches!(result.response, Response::Error(_)),
+            "response should be an error variant"
+        );
+        assert!(
+            core.recent_events()
+                .iter()
+                .all(|e| !matches!(e.event, Event::PermissionChanged { .. })),
+            "no PermissionChanged event should be emitted on DB failure"
         );
     }
 }
