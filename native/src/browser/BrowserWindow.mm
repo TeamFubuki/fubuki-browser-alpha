@@ -964,17 +964,12 @@ bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
   return true;
 }
 
+// Clears only CEF-hosted browsing data (cookies, HTTP cache, site data).
+// Database operations (bookmarks, history, downloads, permissions, logs) are
+// handled exclusively by FrostEngine via the DataClear request.
 bool BrowserWindow::ClearBrowsingData(const std::string& target) {
   bool ok = false;
-  if (target == "bookmarks") {
-    ok = Store().ClearBookmarks();
-  } else if (target == "history") {
-    ok = Store().ClearHistory();
-  } else if (target == "downloads") {
-    ok = Store().ClearDownloads();
-  } else if (target == "logs") {
-    ok = Store().ClearLogs();
-  } else if (target == "cookies" || target == "cache" || target == "siteData") {
+  if (target == "cookies" || target == "cache" || target == "siteData") {
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
     if ((target == "cookies" || target == "siteData") && !cookieManager) {
@@ -991,6 +986,8 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     ok = true;
   } else if (target == "all") {
+    // "all" from FrostEngine means clear host-side data only;
+    // DB targets are handled by Engine before this HostCommand fires.
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
     if (!cookieManager || !context) {
@@ -998,21 +995,7 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     cookieManager->DeleteCookies("", "", nullptr);
     context->ClearHttpCache(nullptr);
-    ok = Store().ClearHistory() && Store().ClearDownloads() && Store().ClearLogs();
-  }
-  if (ok) {
-    if (target != "logs" && target != "all") {
-      Store().AddLog("info", "Browsing data cleared: " + target);
-    }
-    if (target == "bookmarks") {
-      eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", "clear"});
-    }
-    if (target == "history" || target == "all") {
-      eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear"});
-    }
-    if (target == "downloads" || target == "all") {
-      eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", "clear"});
-    }
+    ok = true;
   }
   return ok;
 }
