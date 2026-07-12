@@ -4,11 +4,14 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
 #include <map>
 
 #include "browser/BrowserAppController.h"
+#include "browser/TabContextMenuState.h"
 #include "cef/FubukiClient.h"
 #include "cef/FubukiSchemeHandler.h"
 #include "include/cef_cookie.h"
@@ -46,6 +49,7 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 }  // namespace fubuki
 
 @interface FubukiWindowDelegate : NSObject <NSWindowDelegate>
+- (void)fubukiPerformTabCommand:(id)sender;
 @end
 
 @implementation FubukiUiHostView
@@ -169,6 +173,31 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 @end
 
 @implementation FubukiWindowDelegate
+- (void)fubukiPerformTabCommand:(id)sender {
+  if (![sender isKindOfClass:[NSMenuItem class]]) {
+    return;
+  }
+  NSDictionary* info = [(NSMenuItem*)sender representedObject];
+  if (![info isKindOfClass:[NSDictionary class]]) {
+    return;
+  }
+  NSWindow* window = [info objectForKey:@"window"];
+  NSString* command = [info objectForKey:@"command"];
+  NSString* tabId = [info objectForKey:@"tabId"];
+  auto* browserWindow = fubuki::GetBrowserWindowForNativeWindow(window);
+  if (!browserWindow || ![command isKindOfClass:[NSString class]] ||
+      ![tabId isKindOfClass:[NSString class]]) {
+    return;
+  }
+  auto params = CefDictionaryValue::Create();
+  params->SetString("tabId", [tabId UTF8String]);
+  if ([command isEqualToString:@"tabs.pin"]) {
+    NSNumber* pinned = [info objectForKey:@"pinned"];
+    params->SetBool("pinned", [pinned boolValue]);
+  }
+  browserWindow->App().RequestEngineCommand([command UTF8String], params);
+}
+
 - (void)windowDidBecomeKey:(NSNotification*)notification {
   NSWindow* window = (NSWindow*)[notification object];
   if (auto* browserWindow = fubuki::GetBrowserWindowForNativeWindow(window)) {
@@ -964,12 +993,17 @@ bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
   return true;
 }
 
-// Clears only CEF-hosted browsing data (cookies, HTTP cache, site data).
-// Database operations (bookmarks, history, downloads, permissions, logs) are
-// handled exclusively by FrostEngine via the DataClear request.
 bool BrowserWindow::ClearBrowsingData(const std::string& target) {
   bool ok = false;
-  if (target == "cookies" || target == "cache" || target == "siteData") {
+  if (target == "bookmarks") {
+    ok = Store().ClearBookmarks();
+  } else if (target == "history") {
+    ok = Store().ClearHistory();
+  } else if (target == "downloads") {
+    ok = Store().ClearDownloads();
+  } else if (target == "logs") {
+    ok = Store().ClearLogs();
+  } else if (target == "cookies" || target == "cache" || target == "siteData") {
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
     if ((target == "cookies" || target == "siteData") && !cookieManager) {
@@ -986,8 +1020,6 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     ok = true;
   } else if (target == "all") {
-    // "all" from FrostEngine means clear host-side data only;
-    // DB targets are handled by Engine before this HostCommand fires.
     CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
     CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
     if (!cookieManager || !context) {
@@ -995,7 +1027,21 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     }
     cookieManager->DeleteCookies("", "", nullptr);
     context->ClearHttpCache(nullptr);
-    ok = true;
+    ok = Store().ClearHistory() && Store().ClearDownloads() && Store().ClearLogs();
+  }
+  if (ok) {
+    if (target != "logs" && target != "all") {
+      Store().AddLog("info", "Browsing data cleared: " + target);
+    }
+    if (target == "bookmarks") {
+      eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", "clear"});
+    }
+    if (target == "history" || target == "all") {
+      eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear"});
+    }
+    if (target == "downloads" || target == "all") {
+      eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", "clear"});
+    }
   }
   return ok;
 }
@@ -1033,9 +1079,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   }
   Store().SetSetting(key, savedValue);
   if (key == "sidebarWidth") {
-    sidebarLayoutState_.UsePersistedWidth();
-  } else if (key == "sidebarVisible") {
-    sidebarLayoutState_.UsePersistedVisibility();
+    liveSidebarWidth_ = 0.0;
   }
   if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
     UpdateContentFrame();
@@ -1051,25 +1095,16 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   return true;
 }
 
-bool BrowserWindow::CanApplySetting(const std::string& key,
-                                    const std::string& value) const {
-  if (key == "sidebarVisible") {
-    return SidebarLayoutState::CanApplyVisibility(value);
-  }
+bool BrowserWindow::ApplySetting(const std::string& key,
+                                 const std::string& value) {
   if (key == "sidebarWidth") {
-    return SidebarLayoutState::CanApplyWidth(value);
-  }
-  return true;
-}
-
-bool BrowserWindow::ApplySetting(const std::string& key, const std::string& value) {
-  if (!CanApplySetting(key, value)) {
-    return false;
-  }
-  if (key == "sidebarVisible") {
-    sidebarLayoutState_.ApplyVisibility(value);
-  } else if (key == "sidebarWidth") {
-    sidebarLayoutState_.ApplyWidth(value, kMinSidebarWidth, kMaxSidebarWidth);
+    try {
+      liveSidebarWidth_ = std::clamp(std::stod(value),
+                                     static_cast<double>(kMinSidebarWidth),
+                                     static_cast<double>(kMaxSidebarWidth));
+    } catch (const std::exception&) {
+      return false;
+    }
   }
   if (key == "sidebarVisible" || key == "sidebarWidth" ||
       key == "toolbarDensity") {
@@ -1085,9 +1120,7 @@ bool BrowserWindow::ApplySetting(const std::string& key, const std::string& valu
 bool BrowserWindow::ResetSetting(const std::string& key) {
   Store().ResetSetting(key);
   if (key == "sidebarWidth") {
-    sidebarLayoutState_.UsePersistedWidth();
-  } else if (key == "sidebarVisible") {
-    sidebarLayoutState_.UsePersistedVisibility();
+    liveSidebarWidth_ = 0.0;
   }
   if (key == "sidebarVisible" || key == "sidebarWidth" || key == "toolbarDensity") {
     UpdateContentFrame();
@@ -1110,8 +1143,80 @@ bool BrowserWindow::SetPermission(const std::string& origin, const std::string& 
 }
 
 bool BrowserWindow::SetLiveSidebarWidth(double width) {
-  sidebarLayoutState_.ApplyWidth(width, kMinSidebarWidth, kMaxSidebarWidth);
+  liveSidebarWidth_ = std::clamp(width, static_cast<double>(kMinSidebarWidth),
+                                 static_cast<double>(kMaxSidebarWidth));
   UpdateContentFrame();
+  return true;
+}
+
+bool BrowserWindow::ShowTabContextMenu(const std::string& tabId, double x,
+                                       double y) {
+  CEF_REQUIRE_UI_THREAD();
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !window_ || !uiHostView_ || !gWindowDelegate ||
+      !std::isfinite(x) || !std::isfinite(y)) {
+    return false;
+  }
+
+  const std::string language = Store().GetSetting("language");
+  NSString* preferredLanguage = [[NSLocale preferredLanguages] firstObject];
+  const bool japanese = language == "ja" ||
+                        (language != "en" && [preferredLanguage hasPrefix:@"ja"]);
+  auto title = [japanese](NSString* ja, NSString* en) {
+    return japanese ? ja : en;
+  };
+
+  NSMenu* menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+  [menu setAutoenablesItems:NO];
+  auto addItem = [&](NSString* itemTitle, NSString* command, bool enabled,
+                     NSNumber* pinned) {
+    NSMenuItem* item = [menu addItemWithTitle:itemTitle
+                                      action:@selector(fubukiPerformTabCommand:)
+                               keyEquivalent:@""];
+    NSMutableDictionary* info = [NSMutableDictionary dictionaryWithDictionary:@{
+      @"window" : window_,
+      @"command" : command,
+      @"tabId" : [NSString stringWithUTF8String:tabId.c_str()],
+    }];
+    if (pinned) {
+      [info setObject:pinned forKey:@"pinned"];
+    }
+    [item setRepresentedObject:info];
+    [item setTarget:gWindowDelegate];
+    [item setEnabled:enabled];
+  };
+
+  const auto allTabs = tabManager_.GetTabs();
+  const auto current = std::find_if(allTabs.begin(), allTabs.end(),
+                                    [&](const Tab& item) { return item.id == tabId; });
+  const std::size_t tabIndex = current == allTabs.end()
+                                   ? allTabs.size()
+                                   : static_cast<std::size_t>(
+                                         std::distance(allTabs.begin(), current));
+  const auto menuState = TabContextMenuStateFor(tabIndex, allTabs.size());
+
+  addItem(title(@"再読み込み", @"Reload"), @"tabs.reload", true, nil);
+  addItem(title(@"タブを複製", @"Duplicate Tab"), @"tabs.duplicate", true,
+          nil);
+  addItem(tab->isPinned ? title(@"タブの固定を解除", @"Unpin Tab")
+                        : title(@"タブを固定", @"Pin Tab"),
+          @"tabs.pin", true, [NSNumber numberWithBool:!tab->isPinned]);
+  [menu addItem:[NSMenuItem separatorItem]];
+  addItem(title(@"タブを閉じる", @"Close Tab"), @"tabs.close", true, nil);
+  addItem(title(@"他のタブを閉じる", @"Close Other Tabs"), @"tabs.closeOther",
+          menuState.can_close_other_tabs, nil);
+  addItem(title(@"右側のタブを閉じる", @"Close Tabs to the Right"),
+          @"tabs.closeToRight", menuState.can_close_to_right, nil);
+  [menu addItem:[NSMenuItem separatorItem]];
+  addItem(title(@"新しいウィンドウへ移動", @"Move Tab to New Window"),
+          @"tabs.moveToNewWindow", true, nil);
+
+  const NSRect bounds = [uiHostView_ bounds];
+  const NSPoint viewPoint = NSMakePoint(
+      std::clamp(x, 0.0, static_cast<double>(bounds.size.width)),
+      std::clamp(static_cast<double>(bounds.size.height) - y, 0.0,
+                 static_cast<double>(bounds.size.height)));
+  [menu popUpMenuPositioningItem:nil atLocation:viewPoint inView:uiHostView_];
   return true;
 }
 
@@ -1174,9 +1279,7 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   } else if (key == "openDevTools") {
     ok = OpenDevTools();
   } else if (key == "clearData") {
-    auto params = CefDictionaryValue::Create();
-    params->SetString("target", value);
-    return app_.RequestEngineCommand("data.clear", params);
+    ok = ClearBrowsingData(value);
   } else if (key == "clearHistoryRange") {
     ok = ClearHistoryRange(value);
   } else {
@@ -1254,9 +1357,7 @@ std::string HostEventJson(const std::string& event,
 
 std::string JsonString(const CefRefPtr<CefDictionaryValue>& dict,
                        const std::string& key, const std::string& fallback = "") {
-  return dict->HasKey(key) && dict->GetType(key) == VTYPE_STRING
-             ? dict->GetString(key).ToString()
-             : fallback;
+  return dict->HasKey(key) ? dict->GetString(key).ToString() : fallback;
 }
 
 bool JsonBool(const CefRefPtr<CefDictionaryValue>& dict, const std::string& key) {
@@ -1287,9 +1388,8 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   if (command == "page.create") {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
-    const bool active = JsonBool(payload, "active");
     ok = !tabId.empty() &&
-         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, active);
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
                                       {{ "tabId", JsonStringValue(tabId) },
@@ -1299,20 +1399,9 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
       error = "failed to create page";
     }
   } else if (command == "page.close") {
-    const std::string tabId = JsonString(payload, "tabId");
-    const std::string successorTabId = JsonString(payload, "successorTabId");
-    const bool validSuccessor = successorTabId.empty() ||
-                                (successorTabId != tabId &&
-                                 tabManager_.GetTab(successorTabId));
-    if (validSuccessor) {
-      ok = CloseTab(tabId);
-      if (ok && !successorTabId.empty()) {
-        ok = ActivateTab(successorTabId);
-      }
-    }
+    ok = CloseTab(JsonString(payload, "tabId"));
     if (!ok) {
-      error = validSuccessor ? "failed to close page or activate successor"
-                             : "invalid successor tab";
+      error = "unknown tab";
     }
   } else if (command == "page.activate") {
     ok = ActivateTab(JsonString(payload, "tabId"));
@@ -1935,15 +2024,6 @@ void BrowserWindow::RegisterCommands() {
 
 void BrowserWindow::WireEvents() {
   auto emit = [this](const Event& event) {
-    const bool tabEvent =
-        event.type == EventType::TabCreated ||
-        event.type == EventType::TabUpdated ||
-        event.type == EventType::TabClosed ||
-        event.type == EventType::TabActivated;
-    if (tabEvent && event.windowId != windowId_) {
-      return;
-    }
-
     auto payload = CefDictionaryValue::Create();
     payload->SetString("windowId", event.windowId);
     payload->SetString("tabId", event.tabId);
@@ -1962,9 +2042,7 @@ void BrowserWindow::WireEvents() {
     auto value = CefValue::Create();
     value->SetDictionary(bridge_->TabToDictionary(event.tab));
     payload->SetValue("tab", value);
-    if (!tabEvent) {
-      bridge_->EmitToUi(event.name, payload);
-    }
+    bridge_->EmitToUi(event.name, payload);
 
     if (event.type == EventType::TabCreated) {
       bridge_->EmitToUi("tab.created", bridge_->TabToDictionary(event.tab));
@@ -2026,20 +2104,25 @@ void BrowserWindow::UpdateContentFrame() {
           ? settingsValue->GetDictionary()
           : CefDictionaryValue::Create();
   const std::string sidebarState = settings->GetString("sidebarVisible");
-  const bool sidebarVisible =
-      sidebarLayoutState_.Visible(sidebarState == "show");
+  const bool sidebarVisible = sidebarState == "show";
   double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;
   if (sidebarVisible) {
-    const std::string widthValue = settings->GetString("sidebarWidth");
-    if (!widthValue.empty()) {
-      try {
-        sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth),
-                                  static_cast<double>(kMaxSidebarWidth));
-      } catch (...) {
-        sidebarWidth = kDefaultSidebarWidth;
+    if (liveSidebarWidth_ > 0.0) {
+      sidebarWidth = liveSidebarWidth_;
+    } else {
+      const std::string widthValue = settings->GetString("sidebarWidth");
+      if (!widthValue.empty()) {
+        try {
+          sidebarWidth = std::clamp(std::stod(widthValue), static_cast<double>(kMinSidebarWidth),
+                                    static_cast<double>(kMaxSidebarWidth));
+        } catch (...) {
+          sidebarWidth = kDefaultSidebarWidth;
+        }
       }
     }
-    sidebarWidth = sidebarLayoutState_.Width(sidebarWidth);
+  }
+  if (!sidebarVisible) {
+    liveSidebarWidth_ = 0.0;
   }
   const CGFloat navHeight = kNavHeight;
   NSRect bounds = [uiHostView_ bounds];

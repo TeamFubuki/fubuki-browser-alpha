@@ -51,6 +51,18 @@ describe('BridgeMethodMap types', () => {
     expectTypeOf<Params>().toMatchTypeOf<{ key: string; value: string }>();
     expectTypeOf<Result>().toBeBoolean();
   });
+
+  it('has typed coordinates for the native tab context menu', () => {
+    type Params = BridgeMethodMap['ui.showTabContextMenu']['params'];
+    type Result = BridgeMethodMap['ui.showTabContextMenu']['result'];
+
+    expectTypeOf<Params>().toEqualTypeOf<{
+      tabId: string;
+      x: number;
+      y: number;
+    }>();
+    expectTypeOf<Result>().toBeBoolean();
+  });
 });
 
 describe('CommandId type', () => {

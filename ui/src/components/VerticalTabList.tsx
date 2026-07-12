@@ -1,12 +1,5 @@
-import {
-  createMemo,
-  createSignal,
-  For,
-  onCleanup,
-  onMount,
-  Show,
-} from 'solid-js';
-import { tabs, type Tab } from '../bridge/fubuki';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import { invokeBridge, tabs, type Tab } from '../bridge/fubuki';
 import { t } from '../i18n';
 import {
   browserState,
@@ -38,11 +31,6 @@ export default function VerticalTabList() {
   const [query, setQuery] = createSignal('');
   const [searchExpanded, setSearchExpanded] = createSignal(false);
   const [dragOverId, setDragOverId] = createSignal<string | null>(null);
-  const [contextMenu, setContextMenu] = createSignal<{
-    tabId: string;
-    x: number;
-    y: number;
-  } | null>(null);
 
   const lang = currentLanguage;
 
@@ -94,53 +82,37 @@ export default function VerticalTabList() {
     }
   };
 
-  onMount(() => {
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target;
-      if (
-        !(target instanceof Element) ||
-        !target.closest('.tab-context-menu')
-      ) {
-        setContextMenu(null);
-      }
-    };
-    const closeMenuOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setContextMenu(null);
-    };
-    window.addEventListener('pointerdown', closeMenu);
-    window.addEventListener('keydown', closeMenuOnEscape);
-    onCleanup(() => {
-      window.removeEventListener('pointerdown', closeMenu);
-      window.removeEventListener('keydown', closeMenuOnEscape);
-    });
-  });
+  const showContextMenu = (tabId: string, x: number, y: number) => {
+    void invokeBridge('ui.showTabContextMenu', { tabId, x, y })
+      .then((shown) => {
+        if (!shown) throw new Error('Native rejected the tab menu request');
+      })
+      .catch((error) => {
+        console.error('[Fubuki] Failed to show the native tab menu:', error);
+      });
+  };
 
   const openContextMenu = (tabId: string, event: MouseEvent) => {
     event.preventDefault();
-    const sidebarRight = (event.currentTarget as Element)
-      .closest('.sidebar')
-      ?.getBoundingClientRect().right;
-    const maxX = (sidebarRight ?? window.innerWidth) - 216;
-    setContextMenu({
-      tabId,
-      x: Math.max(6, Math.min(event.clientX, maxX)),
-      y: Math.max(6, Math.min(event.clientY, window.innerHeight - 286)),
-    });
+    showContextMenu(tabId, event.clientX, event.clientY);
   };
 
-  const runTabAction = async (
-    tabId: string,
-    action: (tabId: string) => Promise<boolean>,
-  ) => {
-    if (!tabId) return;
-    try {
-      const ok = await action(tabId);
-      if (!ok) throw new Error('Tab action was rejected');
-      setContextMenu(null);
-    } catch (error) {
-      console.error('[Fubuki] Tab action failed:', error);
-      setBrowserState('status', 'Error');
-    }
+  const openContextMenuFromKeyboard = (tabId: string, event: KeyboardEvent) => {
+    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))
+      return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+    const bounds = target.getBoundingClientRect();
+    showContextMenu(tabId, bounds.left + 24, bounds.bottom);
+  };
+
+  const openContextMenuFromButton = (tabId: string, event: MouseEvent) => {
+    event.stopPropagation();
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+    const bounds = target.getBoundingClientRect();
+    showContextMenu(tabId, bounds.right, bounds.bottom);
   };
 
   return (
@@ -182,7 +154,12 @@ export default function VerticalTabList() {
                 title={titleFor(tab, lang())}
                 role="tab"
                 aria-selected={tab.isActive}
+                aria-haspopup="menu"
+                tabIndex={0}
                 onContextMenu={(event) => openContextMenu(tab.id, event)}
+                onKeyDown={(event) =>
+                  openContextMenuFromKeyboard(tab.id, event)
+                }
                 onAuxClick={(event) => {
                   if (event.button === 1) void tabs.close(tab.id);
                 }}
@@ -192,6 +169,16 @@ export default function VerticalTabList() {
                   onClick={() => void tabs.activate(tab.id)}
                 >
                   <Favicon tab={tab} />
+                </button>
+                <button
+                  class="tab-menu"
+                  type="button"
+                  title={t('tabs.menu', lang())}
+                  aria-label={`${t('tabs.menu', lang())}: ${titleFor(tab, lang())}`}
+                  aria-haspopup="menu"
+                  onClick={(event) => openContextMenuFromButton(tab.id, event)}
+                >
+                  <span aria-hidden="true">…</span>
                 </button>
               </div>
             )}
@@ -203,37 +190,6 @@ export default function VerticalTabList() {
         role="tablist"
         aria-label={t('tabs.open', lang())}
       >
-        <Show when={browserState.activeTabId}>
-          <details class="tab-bulk-menu">
-            <summary aria-label={t('tabs.actions', lang())}>•••</summary>
-            <div class="tab-bulk-menu-items">
-              <button
-                onClick={() =>
-                  void runTabAction(browserState.activeTabId, tabs.closeOther)
-                }
-              >
-                {t('tabs.closeOther', lang())}
-              </button>
-              <button
-                onClick={() =>
-                  void runTabAction(browserState.activeTabId, tabs.closeToRight)
-                }
-              >
-                {t('tabs.closeToRight', lang())}
-              </button>
-              <button
-                onClick={() =>
-                  void runTabAction(
-                    browserState.activeTabId,
-                    tabs.moveToNewWindow,
-                  )
-                }
-              >
-                {t('tabs.moveToNewWindow', lang())}
-              </button>
-            </div>
-          </details>
-        </Show>
         <For each={filteredTabs()}>
           {(tab) => {
             const closeLabel = `${t('action.closeTab', lang())}: ${titleFor(tab, lang())}`;
@@ -248,6 +204,8 @@ export default function VerticalTabList() {
                 title={titleFor(tab, lang())}
                 role="tab"
                 aria-selected={tab.isActive}
+                aria-haspopup="menu"
+                tabIndex={0}
                 draggable
                 onDragStart={(event) => {
                   const dt = event.dataTransfer;
@@ -266,6 +224,9 @@ export default function VerticalTabList() {
                 onDragEnd={() => setDragOverId(null)}
                 onDrop={(event) => void handleDrop(tab.id, event)}
                 onContextMenu={(event) => openContextMenu(tab.id, event)}
+                onKeyDown={(event) =>
+                  openContextMenuFromKeyboard(tab.id, event)
+                }
                 onAuxClick={(event) => {
                   if (event.button === 1) void tabs.close(tab.id);
                 }}
@@ -288,78 +249,21 @@ export default function VerticalTabList() {
                 >
                   <span aria-hidden="true">x</span>
                 </button>
+                <button
+                  class="tab-menu"
+                  type="button"
+                  title={t('tabs.menu', lang())}
+                  aria-label={`${t('tabs.menu', lang())}: ${titleFor(tab, lang())}`}
+                  aria-haspopup="menu"
+                  onClick={(event) => openContextMenuFromButton(tab.id, event)}
+                >
+                  <span aria-hidden="true">…</span>
+                </button>
               </div>
             );
           }}
         </For>
       </div>
-      <Show when={contextMenu()}>
-        {(menu) => {
-          const tab = () =>
-            browserState.tabs.find((item) => item.id === menu().tabId);
-          return (
-            <div
-              class="tab-context-menu"
-              role="menu"
-              aria-label={t('tabs.actions', lang())}
-              style={{ left: `${menu().x}px`, top: `${menu().y}px` }}
-            >
-              <button
-                role="menuitem"
-                onClick={() => void runTabAction(menu().tabId, tabs.reload)}
-              >
-                {t('common.reload', lang())}
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => void runTabAction(menu().tabId, tabs.duplicate)}
-              >
-                {t('tabs.duplicate', lang())}
-              </button>
-              <button
-                role="menuitem"
-                onClick={() =>
-                  void runTabAction(menu().tabId, (tabId) =>
-                    tabs.pin(tabId, !tab()?.isPinned),
-                  )
-                }
-              >
-                {t(tab()?.isPinned ? 'tabs.unpin' : 'tabs.pin', lang())}
-              </button>
-              <hr />
-              <button
-                role="menuitem"
-                onClick={() => void runTabAction(menu().tabId, tabs.close)}
-              >
-                {t('action.closeTab', lang())}
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => void runTabAction(menu().tabId, tabs.closeOther)}
-              >
-                {t('tabs.closeOther', lang())}
-              </button>
-              <button
-                role="menuitem"
-                onClick={() =>
-                  void runTabAction(menu().tabId, tabs.closeToRight)
-                }
-              >
-                {t('tabs.closeToRight', lang())}
-              </button>
-              <hr />
-              <button
-                role="menuitem"
-                onClick={() =>
-                  void runTabAction(menu().tabId, tabs.moveToNewWindow)
-                }
-              >
-                {t('tabs.moveToNewWindow', lang())}
-              </button>
-            </div>
-          );
-        }}
-      </Show>
     </section>
   );
 }

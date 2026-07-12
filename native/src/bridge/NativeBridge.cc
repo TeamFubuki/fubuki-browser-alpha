@@ -8,6 +8,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_closure_task.h"
 
+#include <thread>
 #include <unordered_set>
 
 namespace fubuki {
@@ -44,15 +45,8 @@ bool IsFrostMethod(const std::string &method) {
 }  // namespace
 
 NativeBridge::NativeBridge(BrowserWindow &window, FrostBridge &frostBridge)
-    : window_(window), frostBridge_(frostBridge),
-      pendingQueries_(std::make_shared<PendingQueryState>()) {
+    : window_(window), frostBridge_(frostBridge) {
   RegisterMethods();
-}
-
-NativeBridge::~NativeBridge() {
-  std::lock_guard<std::mutex> lock(pendingQueries_->mutex);
-  pendingQueries_->accepting = false;
-  pendingQueries_->queryIds.clear();
 }
 
 void NativeBridge::RegisterMethods() {
@@ -254,6 +248,13 @@ void NativeBridge::RegisterMethods() {
         window_.SetLiveSidebarWidth(params->GetDouble("width")));
   };
 
+  methods_["ui.showTabContextMenu"] = [this](
+                                            CefRefPtr<CefDictionaryValue> params) {
+    return BoolValue(window_.ShowTabContextMenu(
+        params->GetString("tabId").ToString(), params->GetDouble("x"),
+        params->GetDouble("y")));
+  };
+
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return FrostInvoke("permissions.set", params);
   };
@@ -277,7 +278,7 @@ void NativeBridge::RegisterMethods() {
 }
 
 bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
-                           int64_t queryId, const CefString &request, bool,
+                           int64_t, const CefString &request, bool,
                            CefRefPtr<Callback> callback) {
   CEF_REQUIRE_UI_THREAD();
   if (!IsAllowedUiFrame(frame)) {
@@ -311,44 +312,19 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
     auto frostValue = CefValue::Create();
     frostValue->SetDictionary(frostRequest);
     const std::string requestJson = WriteValue(frostValue);
-    auto pendingQueries = pendingQueries_;
-    {
-      std::lock_guard<std::mutex> lock(pendingQueries->mutex);
-      if (!pendingQueries->accepting) {
-        callback->Failure(503, "Native bridge is shutting down");
-        return true;
-      }
-      pendingQueries->queryIds.insert(queryId);
-    }
-    const bool queued = frostBridge_.ProcessJsonAsync(
-        requestJson,
-        [callback, pendingQueries, queryId](std::string responseJson) {
+    FrostBridge *bridge = &frostBridge_;
+    std::thread([bridge, requestJson, callback]() {
+      std::string responseJson = bridge->ProcessJson(requestJson);
       CefPostTask(TID_UI, base::BindOnce(
-          [](CefRefPtr<Callback> callback,
-             std::shared_ptr<PendingQueryState> pendingQueries,
-             int64_t queryId, std::string responseJson) {
-            {
-              std::lock_guard<std::mutex> lock(pendingQueries->mutex);
-              if (!pendingQueries->accepting ||
-                  pendingQueries->queryIds.erase(queryId) == 0) {
-                return;
-              }
-            }
+          [](CefRefPtr<Callback> callback, std::string responseJson) {
             if (auto *app = GetBrowserAppController()) {
               app->DispatchEngineEvents();
             }
             auto response = NativeBridge::FrostResultValue(responseJson);
             callback->Success(NativeBridge::WriteValue(response));
           },
-          callback, pendingQueries, queryId, std::move(responseJson)));
-    });
-    if (!queued) {
-      {
-        std::lock_guard<std::mutex> lock(pendingQueries->mutex);
-        pendingQueries->queryIds.erase(queryId);
-      }
-      callback->Failure(503, "FrostEngine request queue is unavailable or full");
-    }
+          callback, std::move(responseJson)));
+    }).detach();
     return true;
   }
 
@@ -358,10 +334,7 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
 }
 
 void NativeBridge::OnQueryCanceled(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                                   int64_t queryId) {
-  std::lock_guard<std::mutex> lock(pendingQueries_->mutex);
-  pendingQueries_->queryIds.erase(queryId);
-}
+                                   int64_t) {}
 
 CefRefPtr<CefValue> NativeBridge::Invoke(const std::string &method,
                                          CefRefPtr<CefDictionaryValue> params) {

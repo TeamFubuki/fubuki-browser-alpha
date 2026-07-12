@@ -7,7 +7,6 @@
 
 #include "bridge/NativeBridge.h"
 #include "browser/FrostStore.h"
-#include "browser/SidebarLayoutState.h"
 #include "browser/TabManager.h"
 #include "commands/CommandRegistry.h"
 #include "events/EventBus.h"
@@ -81,12 +80,12 @@ class BrowserWindow {
   bool ClearHistoryRange(const std::string& range);
   bool SetSetting(const std::string& key, const std::string& value);
   // Applies an Engine-owned setting to native views without persisting it.
-  bool CanApplySetting(const std::string& key, const std::string& value) const;
   bool ApplySetting(const std::string& key, const std::string& value);
   bool ResetSetting(const std::string& key);
   bool SetPermission(const std::string& origin, const std::string& permission,
                      const std::string& value);
   bool SetLiveSidebarWidth(double width);
+  bool ShowTabContextMenu(const std::string& tabId, double x, double y);
   bool SetUiOverlayActive(bool active, double overlayWidth = 392.0,
                           double overlayHeight = 560.0);
   bool HandleSettingsUrl(const std::string &tabId, const std::string &url);
@@ -177,9 +176,7 @@ class BrowserWindow {
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
   std::vector<ClosedTab> closedTabs_;
-  // Engine-applied layout values take effect before repository persistence.
-  // Persisted settings remain the startup/fallback source of truth.
-  SidebarLayoutState sidebarLayoutState_;
+  double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
   std::string windowId_;
   NSWindow* window_ = nullptr;

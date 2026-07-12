@@ -249,6 +249,10 @@ export type BridgeMethodMap = {
   'settings.set': { params: { key: string; value: string }; result: boolean };
   'settings.reset': { params: { key: string }; result: boolean };
   'ui.setSidebarWidth': { params: { width: number }; result: boolean };
+  'ui.showTabContextMenu': {
+    params: { tabId: string; x: number; y: number };
+    result: boolean;
+  };
   'ui.setOverlayActive': {
     params: { active: boolean; width?: number; height?: number };
     result: boolean;

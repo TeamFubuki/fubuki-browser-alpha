@@ -1,10 +1,8 @@
 #include "browser/BrowserAppController.h"
-#include "browser/HostCommandRouting.h"
-#include "cef/FubukiSchemeHandler.h"
 
 #include <algorithm>
 #include <chrono>
-#include <set>
+#include <thread>
 
 #include "browser/BrowserWindow.h"
 #include "include/base/cef_callback.h"
@@ -20,8 +18,7 @@ namespace {
 BrowserAppController *gController = nullptr;
 
 void OnHostCommandReady(void *context) {
-  auto *callbackContext = static_cast<HostCommandCallbackContext *>(context);
-  auto *app = callbackContext ? callbackContext->app.load() : nullptr;
+  auto *app = static_cast<BrowserAppController *>(context);
   if (app) {
     app->NotifyHostCommandReady();
   }
@@ -33,22 +30,11 @@ BrowserAppController::BrowserAppController(std::filesystem::path profilePath)
     : profilePath_(std::move(profilePath)),
       engine_(profilePath_.string() + "/frost-engine.sqlite3"),
       store_(profilePath_, engine_.RawHandle()) {
-  hostCommandCallbackContext_.app.store(this);
-  engine_.SetHostCommandNotifier(&OnHostCommandReady,
-                                 &hostCommandCallbackContext_);
+  engine_.SetHostCommandNotifier(&OnHostCommandReady, this);
   store_.AddLog("info", "BrowserAppController initialized");
 }
 
-BrowserAppController::~BrowserAppController() {
-  // Async callbacks may reference the controller and its store. Stop and join
-  // the engine request worker while all dependent members are still alive.
-  if (GetBrowserAppController() == this) {
-    SetBrowserAppController(nullptr);
-  }
-  hostCommandCallbackContext_.app.store(nullptr);
-  engine_.SetHostCommandNotifier(nullptr, nullptr);
-  engine_.ShutdownAsync();
-}
+BrowserAppController::~BrowserAppController() = default;
 
 void BrowserAppController::Start() {
   CEF_REQUIRE_UI_THREAD();
@@ -56,9 +42,11 @@ void BrowserAppController::Start() {
   // resulting window/page commands are consumed by the shared dispatcher.
   // windows.create now automatically creates a startup tab, so we only
   // need a single InvokeEngine call.
-  if (!InvokeEngine("app.startup")) {
-    store_.AddLog("error", "FrostEngine failed to queue the initial browser state");
-  }
+  std::thread([this]() {
+    if (!InvokeEngine("app.startup")) {
+      store_.AddLog("error", "FrostEngine failed to create the initial browser state");
+    }
+  }).detach();
 }
 
 namespace {
@@ -73,19 +61,6 @@ std::string HostCommandResultJson(const std::string &commandId, bool ok,
   if (!ok) {
     root->SetString("error", error);
   }
-  auto value = CefValue::Create();
-  value->SetDictionary(root);
-  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
-}
-
-std::string WindowHostEventJson(const std::string &eventName,
-                                const std::string &windowId) {
-  auto payload = CefDictionaryValue::Create();
-  payload->SetString("windowId", windowId);
-  auto root = CefDictionaryValue::Create();
-  root->SetInt("version", 0);
-  root->SetString("event", eventName);
-  root->SetDictionary("payload", payload);
   auto value = CefValue::Create();
   value->SetDictionary(root);
   return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
@@ -109,40 +84,16 @@ void BrowserAppController::DispatchEngineEvents() {
       continue;
     }
     const std::string eventName = envelope->GetString("event").ToString();
-
-    // Durable data events are delivered to all UI bridges so every window
-    // receives the latest state.  Tab/window lifecycle events are already
-    // handled by the host-side EventBus and must not be duplicated here.
-    static const std::set<std::string> kDurableEvents = {
-        "setting.changed",
-        "bookmark.changed",
-        "history.changed",
-        "download.changed",
-        "permission.changed",
-    };
-    if (kDurableEvents.find(eventName) == kDurableEvents.end()) {
+    // Settings are global, so broadcast them to every UI bridge. Other
+    // lifecycle events are already emitted by the host-side event bus.
+    if (eventName != "setting.changed") {
       continue;
     }
-
     auto payload = envelope->GetDictionary("payload");
     for (const auto &context : windows_) {
       if (context && context->window && context->window->Bridge()) {
         context->window->Bridge()->EmitToUi(eventName, payload->Copy(false));
       }
-    }
-
-    // Invalidate the internal-page cache so the next navigation picks up
-    // fresh data.
-    if (eventName == "bookmark.changed") {
-      PageCache::Instance().Invalidate("fubuki://bookmarks");
-    } else if (eventName == "history.changed") {
-      PageCache::Instance().Invalidate("fubuki://history");
-    } else if (eventName == "download.changed") {
-      PageCache::Instance().Invalidate("fubuki://downloads");
-    } else if (eventName == "setting.changed") {
-      PageCache::Instance().Invalidate("fubuki://settings");
-      // Settings like newTabPage affect new-tab display.
-      PageCache::Instance().Invalidate("fubuki://newtab");
     }
   }
 }
@@ -219,32 +170,10 @@ void BrowserAppController::DispatchHostCommands() {
         bool ok = !key.empty();
         for (const auto &context : windows_) {
           ok = context && context->window &&
-               context->window->CanApplySetting(key, settingValue) && ok;
-        }
-        // Validation is side-effect free, so an invalid value cannot leave a
-        // subset of windows updated.
-        if (ok) {
-          for (const auto &context : windows_) {
-            ok = context->window->ApplySetting(key, settingValue) && ok;
-          }
+               context->window->ApplySetting(key, settingValue) && ok;
         }
         engine_.PushHostCommandResultJson(HostCommandResultJson(
             commandId, ok, ok ? "" : "failed to apply setting"));
-      } else if (command == "browsingData.clear") {
-        const std::string target =
-            payload->HasKey("target") ? payload->GetString("target").ToString() : "all";
-        // CEF data clearing involves async callbacks. Execute in the window
-        // that currently owns the BrowserDataStore.
-        bool ok = false;
-        for (const auto &context : windows_) {
-          if (context && context->window) {
-            ok = context->window->ClearBrowsingData(target);
-            break;
-          }
-        }
-        engine_.PushHostCommandResultJson(HostCommandResultJson(
-            commandId, ok,
-            ok ? "" : "failed to clear browsing data"));
       } else {
         const std::string windowId = payload->HasKey("windowId")
                                          ? payload->GetString("windowId").ToString()
@@ -252,10 +181,8 @@ void BrowserAppController::DispatchHostCommands() {
         const std::string tabId = payload->HasKey("tabId")
                                       ? payload->GetString("tabId").ToString()
                                       : "";
-        BrowserWindow *tabOwner = FindWindowForTab(tabId);
-        const std::string targetWindowId = ResolveHostCommandWindowId(
-            windowId, tabOwner ? tabOwner->WindowId() : "");
-        BrowserWindow *target = FindWindow(targetWindowId);
+        BrowserWindow *target = !windowId.empty() ? FindWindow(windowId)
+                                                    : FindWindowForTab(tabId);
         if (!target) {
           engine_.PushHostCommandResultJson(HostCommandResultJson(
               commandId, false, "target window or tab does not exist"));
@@ -349,8 +276,8 @@ bool BrowserAppController::RequestSettingChange(
   const std::string requestJson =
       CefWriteJSON(requestValue, JSON_WRITER_DEFAULT).ToString();
 
-  return engine_.ProcessJsonAsync(
-      requestJson, [this, tabId, returnUrl, key](std::string response) {
+  std::thread([this, requestJson, tabId, returnUrl, key]() {
+    const std::string response = engine_.ProcessJson(requestJson);
     auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
     const bool ok = parsed && parsed->GetType() == VTYPE_DICTIONARY &&
                     (!parsed->GetDictionary()->HasKey("ok") ||
@@ -371,16 +298,13 @@ bool BrowserAppController::RequestSettingChange(
           }
         },
         this, tabId, returnUrl, key, ok));
-  });
+  }).detach();
+  return true;
 }
 
 void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
   activeWindow_ = window;
   if (window) {
-    if (!engine_.PushHostEventJson(
-            WindowHostEventJson("window.focused", window->WindowId()))) {
-      store_.AddLog("error", "Failed to notify FrostEngine of window focus");
-    }
     eventBus_.Publish({EventType::WindowFocused,
                        "window.focused",
                        {},
@@ -396,10 +320,6 @@ void BrowserAppController::NotifyWindowClosed(BrowserWindow *window) {
     return;
   }
   const std::string windowId = window->WindowId();
-  if (!engine_.PushHostEventJson(
-          WindowHostEventJson("window.closed", windowId))) {
-    store_.AddLog("error", "Failed to notify FrostEngine of window close");
-  }
   if (!window->IsPrivate()) {
     closedWindows_.push_back(window->SessionSnapshot());
     if (closedWindows_.size() > 10) {
@@ -471,14 +391,16 @@ bool BrowserAppController::InvokeEngine(const std::string &method,
   const std::string requestJson =
       CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
   if (CefCurrentlyOn(TID_UI)) {
-    return engine_.ProcessJsonAsync(requestJson, [this](std::string response) {
+    std::thread([this, requestJson]() {
+      const std::string response = engine_.ProcessJson(requestJson);
       auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
       if (!parsed || parsed->GetType() != VTYPE_DICTIONARY ||
           (parsed->GetDictionary()->HasKey("ok") &&
            !parsed->GetDictionary()->GetBool("ok"))) {
         store_.AddLog("error", "FrostEngine request failed");
       }
-    });
+    }).detach();
+    return true;
   }
   const std::string response = engine_.ProcessJson(requestJson);
   auto parsed = CefParseJSON(response, JSON_PARSER_RFC);
