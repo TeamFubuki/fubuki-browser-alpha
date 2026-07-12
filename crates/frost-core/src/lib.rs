@@ -267,18 +267,15 @@ where
                         self.closed_tabs = closed_tabs_before.clone();
                         return Err(CoreError::Message(error.to_string()));
                     }
-                    self.emit(Event::TabClosed(TabClosed { tab_id }));
-                    if let Some(successor_tab_id) = successor_tab_id {
-                        self.emit(Event::TabActivated(TabActivated {
-                            tab_id: successor_tab_id.clone(),
-                        }));
-                    }
 
                     // Keep the browser usable, but do so in the engine rather
                     // than letting the native tab manager invent a second tab.
-                    if let Some(tab) = closing_tab
-                        && !self.tabs.has_tabs_in_window(&tab.window_id)
-                    {
+                    let needs_replacement = if let Some(ref tab) = closing_tab {
+                        !self.tabs.has_tabs_in_window(&tab.window_id)
+                    } else {
+                        false
+                    };
+                    if needs_replacement && let Some(ref tab) = closing_tab {
                         let replacement = self.tabs.create_tab(
                             tab.window_id.clone(),
                             "fubuki://newtab/".into(),
@@ -286,27 +283,55 @@ where
                         );
                         self.windows
                             .attach_tab(&tab.window_id, &replacement.id, true);
-                        if let Err(error) = self.adapter.create_page(
+                        if let Err(replacement_err) = self.adapter.create_page(
                             &replacement.id,
                             &tab.window_id,
                             &replacement.url,
                             replacement.is_active,
                         ) {
+                            // Roll back replacement state
                             self.windows.detach_tab(&replacement.id);
                             self.tabs.remove_tab(&replacement.id);
+                            // Roll back the entire close operation
                             self.tabs.replace_all(tabs_before.clone());
                             self.windows
                                 .replace_all(windows_before.clone(), active_window_before.clone());
                             self.closed_tabs = closed_tabs_before.clone();
-                            let _ = self.adapter.create_page(
+                            // Compensation: recreate the original tab in native
+                            let compensation_result = self.adapter.create_page(
                                 &tab.id,
                                 &tab.window_id,
                                 &tab.url,
                                 tab.is_active,
                             );
-                            return Err(CoreError::Message(error.to_string()));
+                            return match compensation_result {
+                                Ok(()) => {
+                                    // Original tab recreated successfully;
+                                    // compensation succeeded but the close failed
+                                    Err(CoreError::Message(format!(
+                                        "replacement page creation failed: {replacement_err}"
+                                    )))
+                                }
+                                Err(compensation_err) => {
+                                    // Both replacement and compensation failed;
+                                    // report the combined failure
+                                    Err(CoreError::Message(format!(
+                                        "replacement failed: {replacement_err}, \
+                                         compensation also failed: {compensation_err}"
+                                    )))
+                                }
+                            };
                         }
                         self.emit(Event::TabCreated(replacement));
+                    }
+
+                    // Emit close/activate events only after any
+                    // replacement logic succeeds.
+                    self.emit(Event::TabClosed(TabClosed { tab_id }));
+                    if let Some(successor_tab_id) = successor_tab_id {
+                        self.emit(Event::TabActivated(TabActivated {
+                            tab_id: successor_tab_id.clone(),
+                        }));
                     }
                 }
                 Ok(Response::Bool(close_outcome.is_some()))
@@ -1355,6 +1380,56 @@ mod tests {
         }
     }
 
+    /// Adapter that succeeds on the first `create_page` call but fails
+    /// on every subsequent call. Used to test the case where both the
+    /// replacement and the compensation (original tab re-creation) fail.
+    #[derive(Default)]
+    struct FailFromSecondCreateAdapter {
+        create_count: usize,
+    }
+
+    impl EngineAdapter for FailFromSecondCreateAdapter {
+        fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
+            self.create_count += 1;
+            if self.create_count >= 2 {
+                return Err(EngineError::Message("create fails from second call".into()));
+            }
+            Ok(())
+        }
+
+        fn close_page(&mut self, _: &str, _: Option<&str>) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn navigate(&mut self, _: &str, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn reload(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn stop(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn go_back(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn go_forward(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn create_window(&mut self, _: &str, _: bool) -> EngineResult<()> {
+            Ok(())
+        }
+
+        fn close_window(&mut self, _: &str) -> EngineResult<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn creates_and_activates_tabs() {
         let mut core = BrowserCore::new();
@@ -1399,14 +1474,18 @@ mod tests {
 
     #[test]
     fn failed_last_tab_replacement_does_not_leave_ghost_state() {
+        let (tx, rx) = crossbeam_channel::unbounded();
         let mut core = BrowserCore::with_adapter_and_settings(
             FailSecondCreateAdapter::default(),
             InMemoryStore::default(),
         );
+        core.set_event_sender(tx);
         core.process(ProtocolRequest::new(Request::TabsCreate {
             url: None,
             active: true,
         }));
+        // Drain the TabCreated event from the initial TabsCreate.
+        let _ = rx.try_iter().collect::<Vec<_>>();
         let tab_id = core.snapshot().tabs[0].id.clone();
 
         let response = core.process(ProtocolRequest::new(Request::TabsClose {
@@ -1418,6 +1497,64 @@ mod tests {
         assert_eq!(state.tabs.len(), 1);
         assert_eq!(state.tabs[0].id, tab_id);
         assert_eq!(state.windows[0].tab_ids, vec![tab_id]);
+
+        // No TabClosed or TabCreated events should have been emitted
+        // because the close operation was rolled back.
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(
+            events.is_empty(),
+            "expected no events on failed replacement, got {events:?}"
+        );
+    }
+
+    #[test]
+    fn failed_last_tab_replacement_reports_compensation_error() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            FailFromSecondCreateAdapter::default(),
+            InMemoryStore::default(),
+        );
+        core.set_event_sender(tx);
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://original.example".into()),
+            active: true,
+        }));
+        // Drain the TabCreated event from the initial TabsCreate.
+        let _ = rx.try_iter().collect::<Vec<_>>();
+        let tab_id = core.snapshot().tabs[0].id.clone();
+        let tab_url = core.snapshot().tabs[0].url.clone();
+
+        let response = core.process(ProtocolRequest::new(Request::TabsClose {
+            tab_id: tab_id.clone(),
+        }));
+
+        // Both replacement and compensation failed.
+        assert!(
+            !response.ok,
+            "expected error when both replacement and compensation fail"
+        );
+        let error_msg = match &response.response {
+            Response::Error(msg) => msg.clone(),
+            other => panic!("expected error response, got {other:?}"),
+        };
+        assert!(
+            error_msg.contains("compensation also failed"),
+            "error should mention compensation failure: {error_msg}"
+        );
+
+        // State should be fully restored.
+        let state = core.snapshot();
+        assert_eq!(state.tabs.len(), 1);
+        assert_eq!(state.tabs[0].id, tab_id);
+        assert_eq!(state.tabs[0].url, tab_url);
+        assert_eq!(state.windows[0].tab_ids, vec![tab_id]);
+
+        // No TabClosed event should have been emitted.
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(
+            events.is_empty(),
+            "expected no events when close is rolled back, got {events:?}"
+        );
     }
 
     #[test]
