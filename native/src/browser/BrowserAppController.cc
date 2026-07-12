@@ -1,8 +1,10 @@
 #include "browser/BrowserAppController.h"
 #include "browser/HostCommandRouting.h"
+#include "cef/FubukiSchemeHandler.h"
 
 #include <algorithm>
 #include <chrono>
+#include <set>
 
 #include "browser/BrowserWindow.h"
 #include "include/base/cef_callback.h"
@@ -107,16 +109,38 @@ void BrowserAppController::DispatchEngineEvents() {
       continue;
     }
     const std::string eventName = envelope->GetString("event").ToString();
-    // Settings are global, so broadcast them to every UI bridge. Other
-    // lifecycle events are already emitted by the host-side event bus.
-    if (eventName != "setting.changed") {
+
+    // Durable data events are delivered to all UI bridges so every window
+    // receives the latest state.  Tab/window lifecycle events are already
+    // handled by the host-side EventBus and must not be duplicated here.
+    static const std::set<std::string> kDurableEvents = {
+        "setting.changed",
+        "bookmark.changed",
+        "history.changed",
+        "download.changed",
+        "permission.changed",
+    };
+    if (kDurableEvents.find(eventName) == kDurableEvents.end()) {
       continue;
     }
+
     auto payload = envelope->GetDictionary("payload");
     for (const auto &context : windows_) {
       if (context && context->window && context->window->Bridge()) {
         context->window->Bridge()->EmitToUi(eventName, payload->Copy(false));
       }
+    }
+
+    // Invalidate the internal-page cache so the next navigation picks up
+    // fresh data.
+    if (eventName == "bookmark.changed") {
+      PageCache::Instance().Invalidate("fubuki://bookmarks");
+    } else if (eventName == "history.changed") {
+      PageCache::Instance().Invalidate("fubuki://history");
+    } else if (eventName == "download.changed") {
+      PageCache::Instance().Invalidate("fubuki://downloads");
+    } else if (eventName == "setting.changed") {
+      PageCache::Instance().Invalidate("fubuki://settings");
     }
   }
 }
@@ -204,6 +228,21 @@ void BrowserAppController::DispatchHostCommands() {
         }
         engine_.PushHostCommandResultJson(HostCommandResultJson(
             commandId, ok, ok ? "" : "failed to apply setting"));
+      } else if (command == "browsingData.clear") {
+        const std::string target =
+            payload->HasKey("target") ? payload->GetString("target").ToString() : "all";
+        // CEF data clearing involves async callbacks. Execute in the window
+        // that currently owns the BrowserDataStore.
+        bool ok = false;
+        for (const auto &context : windows_) {
+          if (context && context->window) {
+            ok = context->window->ClearBrowsingData(target);
+            break;
+          }
+        }
+        engine_.PushHostCommandResultJson(HostCommandResultJson(
+            commandId, ok,
+            ok ? "" : "failed to clear browsing data"));
       } else {
         const std::string windowId = payload->HasKey("windowId")
                                          ? payload->GetString("windowId").ToString()
