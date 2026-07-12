@@ -839,21 +839,7 @@ where
                 }
                 Request::DataClear { target } => {
                     let target = target.unwrap_or_else(|| "all".into());
-                    if target == "bookmarks" || target == "all" {
-                        let _ = self.repository.clear_bookmarks();
-                        self.emit(Event::BookmarkChanged { url: String::new() });
-                    }
-                    if target == "history" || target == "all" {
-                        let _ = HistoryService::clear_range(&self.repository, "all");
-                        self.emit(Event::HistoryChanged { url: None });
-                    }
-                    if target == "downloads" || target == "all" {
-                        let _ = self.repository.clear_downloads();
-                        self.emit(Event::DownloadChanged {
-                            url: None,
-                            path: None,
-                        });
-                    }
+                    self.clear_browsing_data(&target)?;
                     Ok(Response::Bool(true))
                 }
                 Request::PermissionsSet {
@@ -992,12 +978,25 @@ where
                         }
                     }
                     if let Some(settings) = state.settings.as_object() {
-                        for (key, value) in settings {
-                            if let Some(value) = value.as_str()
-                                && let Err(e) = self.repository.set_setting(key, value)
-                            {
-                                errors.push(format!("setting '{}': {}", key, e));
+                        let invalid_settings: Vec<String> = settings
+                            .iter()
+                            .filter_map(|(key, value)| {
+                                let value = value.as_str()?;
+                                SettingsService::validate(key, value)
+                                    .err()
+                                    .map(|error| format!("setting '{}': {}", key, error))
+                            })
+                            .collect();
+                        if invalid_settings.is_empty() {
+                            for (key, value) in settings {
+                                if let Some(value) = value.as_str()
+                                    && let Err(e) = self.repository.set_setting(key, value)
+                                {
+                                    errors.push(format!("setting '{}': {}", key, e));
+                                }
                             }
+                        } else {
+                            errors.extend(invalid_settings);
                         }
                     }
                     self.tabs.replace_all(state.tabs);
@@ -1418,14 +1417,21 @@ where
             .filter(|window| window.is_private)
             .map(|window| window.id)
             .collect();
+        let windows: Vec<_> = self
+            .windows
+            .list()
+            .into_iter()
+            .filter(|window| !window.is_private)
+            .collect();
+        let active_window_id = self
+            .windows
+            .active_window_id()
+            .filter(|id| windows.iter().any(|window| &window.id == id))
+            .map(ToOwned::to_owned)
+            .or_else(|| windows.last().map(|window| window.id.clone()));
         let session = SessionState {
-            active_window_id: self.windows.active_window_id().map(ToOwned::to_owned),
-            windows: self
-                .windows
-                .list()
-                .into_iter()
-                .filter(|window| !window.is_private)
-                .collect(),
+            active_window_id,
+            windows,
             tabs: self
                 .tabs
                 .list()
@@ -1491,7 +1497,7 @@ where
         }
     }
 
-    fn emit(&mut self, event: Event) {
+    pub(crate) fn emit(&mut self, event: Event) {
         let envelope = EventEnvelope::new(event);
         self.events.push(envelope.clone());
         if self.events.len() > 100 {
@@ -1507,6 +1513,147 @@ where
             let excess = self.closed_tabs.len() - 50;
             self.closed_tabs.drain(..excess);
         }
+    }
+
+    fn clear_browsing_data(&mut self, target: &str) -> CoreResult<()> {
+        let all = target == "all";
+        let clear_bookmarks = all || target == "bookmarks";
+        let clear_history = all || target == "history";
+        let clear_downloads = all || target == "downloads";
+        let clear_permissions = all || target == "permissions";
+        let clear_logs = all || target == "logs";
+        if !(clear_bookmarks || clear_history || clear_downloads || clear_permissions || clear_logs)
+        {
+            return Err(CoreError::Message(format!(
+                "unknown data clear target: {target}"
+            )));
+        }
+
+        let bookmarks = clear_bookmarks
+            .then(|| self.repository.list_bookmarks())
+            .transpose()
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        let history = clear_history
+            .then(|| self.repository.list_history())
+            .transpose()
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        let downloads = clear_downloads
+            .then(|| self.repository.list_downloads())
+            .transpose()
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        let permissions = clear_permissions
+            .then(|| self.repository.list_permissions())
+            .transpose()
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+        let logs = clear_logs
+            .then(|| self.repository.list_logs(300))
+            .transpose()
+            .map_err(|e| CoreError::Message(e.to_string()))?;
+
+        let result = (|| -> Result<(), String> {
+            if clear_bookmarks {
+                self.repository
+                    .clear_bookmarks()
+                    .map_err(|e| e.to_string())?;
+            }
+            if clear_history {
+                HistoryService::clear_range(&self.repository, "all").map_err(|e| e.to_string())?;
+            }
+            if clear_downloads {
+                self.repository
+                    .clear_downloads()
+                    .map_err(|e| e.to_string())?;
+            }
+            if clear_permissions {
+                for permission in permissions.as_deref().unwrap_or_default() {
+                    self.repository
+                        .remove_permission(&permission.origin, &permission.permission)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            if clear_logs {
+                self.repository.clear_logs().map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let mut compensation = Vec::new();
+            if let Some(records) = bookmarks.as_deref() {
+                for record in records {
+                    if let Err(e) = self.repository.save_bookmark(
+                        &record.title,
+                        &record.url,
+                        &record.favicon_url,
+                    ) {
+                        compensation.push(e.to_string());
+                    }
+                }
+            }
+            if let Some(records) = history.as_deref() {
+                for record in records {
+                    if let Err(e) =
+                        self.repository
+                            .add_history(&record.title, &record.url, &record.favicon_url)
+                    {
+                        compensation.push(e.to_string());
+                    }
+                }
+            }
+            if let Some(records) = downloads.as_deref() {
+                for record in records {
+                    if let Err(e) = self.repository.upsert_download(
+                        &record.url,
+                        &record.path,
+                        &record.state,
+                        record.percent,
+                    ) {
+                        compensation.push(e.to_string());
+                    }
+                }
+            }
+            if let Some(records) = permissions.as_deref() {
+                for record in records {
+                    if let Err(e) = self.repository.set_permission(
+                        &record.origin,
+                        &record.permission,
+                        &record.value,
+                    ) {
+                        compensation.push(e.to_string());
+                    }
+                }
+            }
+            if let Some(records) = logs.as_deref() {
+                for record in records.iter().rev() {
+                    if let Err(e) = self.repository.add_log(&record.level, &record.message) {
+                        compensation.push(e.to_string());
+                    }
+                }
+            }
+            return Err(Self::compensation_error(
+                EngineError::Message(error),
+                compensation,
+            ));
+        }
+
+        if clear_bookmarks {
+            self.emit(Event::BookmarkChanged { url: String::new() });
+        }
+        if clear_history {
+            self.emit(Event::HistoryChanged { url: None });
+        }
+        if clear_downloads {
+            self.emit(Event::DownloadChanged {
+                url: None,
+                path: None,
+            });
+        }
+        if clear_permissions {
+            self.emit(Event::PermissionChanged {
+                origin: String::new(),
+                permission: String::new(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1815,7 +1962,10 @@ impl frost_store::ClearRepository for InMemoryStore {
 #[cfg(test)]
 mod tests {
     use frost_engine_api::{EngineAdapter, EngineResult};
-    use frost_protocol::{HostCommand, HostEvent, HostEventEnvelope, Request, Response};
+    use frost_protocol::{
+        ExternalCapability, ExternalCommand, ExternalCommandEnvelope, HostCommand, HostEvent,
+        HostEventEnvelope, Request, Response,
+    };
 
     use super::*;
 
@@ -3148,5 +3298,83 @@ mod tests {
                 }
             ] if next == "hide" && previous == "show"
         ));
+    }
+
+    #[test]
+    fn data_clear_all_removes_every_browsing_data_collection_and_emits_once() {
+        let store = frost_store::SqliteStore::in_memory().unwrap();
+        store
+            .save_bookmark("bookmark", "https://bookmark.example", "")
+            .unwrap();
+        store
+            .add_history("history", "https://history.example", "")
+            .unwrap();
+        store
+            .upsert_download("https://download.example", "/tmp/file", "done", 100)
+            .unwrap();
+        store
+            .set_permission("https://permission.example", "camera", "allow")
+            .unwrap();
+        store.add_log("info", "log entry").unwrap();
+        let mut core = BrowserCore::with_adapter_and_settings(NoopEngineAdapter, store);
+
+        let response = core.process(ProtocolRequest::new(Request::DataClear { target: None }));
+
+        assert!(matches!(response.response, Response::Bool(true)));
+        assert!(core.repository.list_bookmarks().unwrap().is_empty());
+        assert!(core.repository.list_history().unwrap().is_empty());
+        assert!(core.repository.list_downloads().unwrap().is_empty());
+        assert!(core.repository.list_permissions().unwrap().is_empty());
+        assert!(core.repository.list_logs(10).unwrap().is_empty());
+        assert!(matches!(
+            core.recent_events()[0].event,
+            Event::BookmarkChanged { .. }
+        ));
+        assert_eq!(core.recent_events().len(), 4);
+    }
+
+    #[test]
+    fn external_events_use_the_owned_event_history_and_delivery_path() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::new();
+        core.set_event_sender(tx);
+        let mut policy = ExternalPolicy::new();
+
+        let command = ExternalCommandEnvelope::new(
+            "request-1",
+            "automation",
+            ExternalCapability::ReadState,
+            ExternalCommand::StateRead,
+        );
+        let outcome = core.process_external(command, &mut policy);
+
+        assert!(!outcome.allowed);
+        assert!(matches!(
+            core.recent_events().last().map(|event| &event.event),
+            Some(Event::ExternalAudit { allowed: false, .. })
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().event,
+            Event::ExternalAudit { allowed: false, .. }
+        ));
+    }
+
+    #[test]
+    fn private_active_window_is_not_persisted_in_session() {
+        let store = frost_store::SqliteStore::in_memory().unwrap();
+        let mut core = BrowserCore::with_adapter_and_settings(NoopEngineAdapter, store);
+        core.process(ProtocolRequest::new(Request::WindowsCreatePrivate));
+        core.flush_session(true).unwrap();
+
+        let session = core.repository.get_session().unwrap().unwrap();
+        let session: SessionState = serde_json::from_str(&session).unwrap();
+        assert!(session.active_window_id.is_some());
+        assert!(session.windows.iter().all(|window| !window.is_private));
+        assert!(
+            session
+                .active_window_id
+                .as_ref()
+                .is_some_and(|id| session.windows.iter().any(|window| &window.id == id))
+        );
     }
 }
