@@ -8,7 +8,9 @@ mod window_service;
 
 pub use external_router::{ExternalPolicy, ExternalResponse};
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
@@ -43,6 +45,7 @@ pub struct HostCommandAdapter {
     tx: Sender<HostCommandEnvelope>,
     result_rx: Option<Receiver<HostCommandResultEnvelope>>,
     notify: Option<Arc<dyn Fn() + Send + Sync>>,
+    pending_results: Arc<Mutex<HashMap<String, HostCommandResultEnvelope>>>,
 }
 
 impl HostCommandAdapter {
@@ -51,6 +54,7 @@ impl HostCommandAdapter {
             tx,
             result_rx: None,
             notify: None,
+            pending_results: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -63,6 +67,7 @@ impl HostCommandAdapter {
             tx,
             result_rx: Some(result_rx),
             notify: Some(notify),
+            pending_results: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -77,15 +82,36 @@ impl HostCommandAdapter {
         let Some(result_rx) = &self.result_rx else {
             return Ok(());
         };
-        let result = result_rx
-            .recv_timeout(Duration::from_secs(10))
-            .map_err(|e| EngineError::Message(format!("host command {id} timed out: {e}")))?;
-        if result.command_id != id {
-            return Err(EngineError::Message(format!(
-                "unexpected host command result {} while waiting for {id}",
-                result.command_id
-            )));
-        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let result = loop {
+            if let Some(result) = self
+                .pending_results
+                .lock()
+                .map_err(|_| EngineError::Message("host result map poisoned".into()))?
+                .remove(&id)
+            {
+                break result;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(EngineError::Message(format!("host command {id} timed out")));
+            }
+            match result_rx.recv_timeout(remaining) {
+                Ok(result) if result.command_id == id => break result,
+                Ok(result) => {
+                    self.pending_results
+                        .lock()
+                        .map_err(|_| EngineError::Message("host result map poisoned".into()))?
+                        .entry(result.command_id.clone())
+                        .or_insert(result);
+                }
+                Err(error) => {
+                    return Err(EngineError::Message(format!(
+                        "host command {id} timed out: {error}"
+                    )));
+                }
+            }
+        };
         if result.ok {
             Ok(())
         } else {
@@ -2187,6 +2213,43 @@ mod tests {
             command.command,
             HostCommand::PageCreate { url, active: true, .. } if url == "https://example.com"
         ));
+    }
+
+    #[test]
+    fn host_command_adapter_retains_out_of_order_results() {
+        let (command_tx, command_rx) = crossbeam_channel::unbounded::<HostCommandEnvelope>();
+        let (result_tx, result_rx) = crossbeam_channel::unbounded::<HostCommandResultEnvelope>();
+        let notify = Arc::new(move || {
+            let command = command_rx.try_recv().expect("host command");
+            result_tx
+                .send(HostCommandResultEnvelope {
+                    version: frost_protocol::PROTOCOL_VERSION,
+                    command_id: "later-command".into(),
+                    ok: true,
+                    error: None,
+                })
+                .unwrap();
+            result_tx
+                .send(HostCommandResultEnvelope {
+                    version: frost_protocol::PROTOCOL_VERSION,
+                    command_id: command.id,
+                    ok: true,
+                    error: None,
+                })
+                .unwrap();
+        });
+        let mut adapter = HostCommandAdapter::with_results(command_tx, result_rx, notify);
+
+        adapter
+            .create_page("tab-1", "window-1", "about:blank", true)
+            .unwrap();
+        assert!(
+            adapter
+                .pending_results
+                .lock()
+                .unwrap()
+                .contains_key("later-command")
+        );
     }
 
     #[test]
