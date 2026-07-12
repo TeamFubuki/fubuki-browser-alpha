@@ -233,18 +233,31 @@ void BrowserAppController::DispatchHostCommands() {
       } else if (command == "browsingData.clear") {
         const std::string target =
             payload->HasKey("target") ? payload->GetString("target").ToString() : "all";
-        // CEF data clearing involves async callbacks. Execute in the window
-        // that currently owns the BrowserDataStore.
-        bool ok = false;
+        // CEF data clearing is fully async. Find a window and start the
+        // operation. The completion fires on the UI thread after all required
+        // CEF callbacks complete.
+        BrowserWindow *targetWindow = nullptr;
         for (const auto &context : windows_) {
           if (context && context->window) {
-            ok = context->window->ClearBrowsingData(target);
+            targetWindow = context->window.get();
             break;
           }
         }
-        engine_.PushHostCommandResultJson(HostCommandResultJson(
-            commandId, ok,
-            ok ? "" : "failed to clear browsing data"));
+        if (!targetWindow) {
+          engine_.PushHostCommandResultJson(HostCommandResultJson(
+              commandId, false, "no window available for browsing data clear"));
+        } else {
+          // The engine_ member is owned by this controller and outlives any
+          // async callback because the controller is destroyed only after all
+          // windows (and their pending callbacks) are destroyed.
+          targetWindow->ClearBrowsingDataAsync(
+              target,
+              [this, commandId](bool ok, const std::string &error) {
+                engine_.PushHostCommandResultJson(
+                    HostCommandResultJson(commandId, ok,
+                                          ok ? "" : error));
+              });
+        }
       } else {
         const std::string windowId = payload->HasKey("windowId")
                                          ? payload->GetString("windowId").ToString()

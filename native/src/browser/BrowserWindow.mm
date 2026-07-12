@@ -4,7 +4,6 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
-#include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
@@ -967,98 +966,134 @@ bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
 }
 
 namespace {
-// Blocks until CEF async operation completes. Used to wait for cookie/cache
-// deletion before returning success to FrostEngine.
-class BlockingCallback : public CefCompletionCallback {
- public:
-  BlockingCallback() = default;
-  void OnComplete() override {
-    std::lock_guard<std::mutex> lock(mu_);
-    done_ = true;
-    cv_.notify_all();
-  }
-  bool Wait() {
-    std::unique_lock<std::mutex> lock(mu_);
-    cv_.wait_for(lock, std::chrono::seconds(15), [this] { return done_; });
-    return done_;
+// Shared state for async browsing data clearing.
+// Completion is called exactly once, after all required operations finish.
+struct ClearBrowsingDataContext : public CefBaseRefCounted {
+  ClearBrowsingDataContext() = default;
+
+  std::atomic<int> pendingCount{0};
+  std::atomic<bool> completed{false};
+  std::atomic<bool> failed{false};
+  std::string errorMsg;
+  std::function<void(bool, const std::string&)> completion;
+
+  // Call completion exactly once.
+  void CompleteOnce(bool ok, const std::string& error) {
+    bool expected = false;
+    if (completed.compare_exchange_strong(expected, true)) {
+      if (completion) {
+        completion(ok, error);
+      }
+    }
   }
 
  private:
-  std::mutex mu_;
-  std::condition_variable cv_;
-  bool done_ = false;
-  IMPLEMENT_REFCOUNTING(BlockingCallback);
-  DISALLOW_COPY_AND_ASSIGN(BlockingCallback);
+  IMPLEMENT_REFCOUNTING(ClearBrowsingDataContext);
+  DISALLOW_COPY_AND_ASSIGN(ClearBrowsingDataContext);
 };
 
 // Callback for CefCookieManager::DeleteCookies.
-class DeleteCookiesCallback : public CefDeleteCookiesCallback {
+class AsyncDeleteCookiesCallback : public CefDeleteCookiesCallback {
  public:
-  DeleteCookiesCallback() = default;
+  AsyncDeleteCookiesCallback(CefRefPtr<ClearBrowsingDataContext> ctx)
+      : ctx_(std::move(ctx)) {}
   void OnComplete(int /*num_deleted*/) override {
-    std::lock_guard<std::mutex> lock(mu_);
-    done_ = true;
-    cv_.notify_all();
-  }
-  bool Wait() {
-    std::unique_lock<std::mutex> lock(mu_);
-    cv_.wait_for(lock, std::chrono::seconds(15), [this] { return done_; });
-    return done_;
+    // If a previous operation already failed, don't decrement further.
+    if (ctx_->failed.load()) {
+      return;
+    }
+    int remaining = ctx_->pendingCount.fetch_sub(1) - 1;
+    if (remaining == 0) {
+      ctx_->CompleteOnce(!ctx_->failed.load(), ctx_->errorMsg);
+    }
   }
 
  private:
-  std::mutex mu_;
-  std::condition_variable cv_;
-  bool done_ = false;
-  IMPLEMENT_REFCOUNTING(DeleteCookiesCallback);
-  DISALLOW_COPY_AND_ASSIGN(DeleteCookiesCallback);
+  CefRefPtr<ClearBrowsingDataContext> ctx_;
+  IMPLEMENT_REFCOUNTING(AsyncDeleteCookiesCallback);
+  DISALLOW_COPY_AND_ASSIGN(AsyncDeleteCookiesCallback);
+};
+
+// Callback for CefRequestContext::ClearHttpCache.
+class AsyncCacheCallback : public CefCompletionCallback {
+ public:
+  AsyncCacheCallback(CefRefPtr<ClearBrowsingDataContext> ctx)
+      : ctx_(std::move(ctx)) {}
+  void OnComplete() override {
+    if (ctx_->failed.load()) {
+      return;
+    }
+    int remaining = ctx_->pendingCount.fetch_sub(1) - 1;
+    if (remaining == 0) {
+      ctx_->CompleteOnce(!ctx_->failed.load(), ctx_->errorMsg);
+    }
+  }
+
+ private:
+  CefRefPtr<ClearBrowsingDataContext> ctx_;
+  IMPLEMENT_REFCOUNTING(AsyncCacheCallback);
+  DISALLOW_COPY_AND_ASSIGN(AsyncCacheCallback);
 };
 }  // namespace
 
-// Clears only CEF-hosted browsing data (cookies, HTTP cache, site data).
-// Database operations (bookmarks, history, downloads, permissions, logs) are
-// handled exclusively by FrostEngine via the DataClear request.
-// Returns true only after all CEF deletion callbacks complete successfully.
-bool BrowserWindow::ClearBrowsingData(const std::string& target) {
-  if (target == "cookies" || target == "cache" || target == "siteData") {
-    CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
-    CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
-    if ((target == "cookies" || target == "siteData") && !cookieManager) {
-      return false;
-    }
-    if ((target == "cache" || target == "siteData") && !context) {
-      return false;
-    }
-    bool cookiesOk = true;
-    bool cacheOk = true;
-    if (target == "cookies" || target == "siteData") {
-      CefRefPtr<DeleteCookiesCallback> cookieCb = new DeleteCookiesCallback();
-      cookieManager->DeleteCookies("", "", cookieCb);
-      cookiesOk = cookieCb->Wait();
-    }
-    if (target == "cache" || target == "siteData") {
-      CefRefPtr<BlockingCallback> cacheCb = new BlockingCallback();
-      context->ClearHttpCache(cacheCb);
-      cacheOk = cacheCb->Wait();
-    }
-    return cookiesOk && cacheOk;
-  } else if (target == "all") {
-    // "all" from FrostEngine means clear host-side data only;
-    // DB targets are handled by Engine before this HostCommand fires.
-    CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
-    CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
-    if (!cookieManager || !context) {
-      return false;
-    }
-    CefRefPtr<DeleteCookiesCallback> cookieCb = new DeleteCookiesCallback();
-    cookieManager->DeleteCookies("", "", cookieCb);
-    bool cookiesOk = cookieCb->Wait();
-    CefRefPtr<BlockingCallback> cacheCb = new BlockingCallback();
-    context->ClearHttpCache(cacheCb);
-    bool cacheOk = cacheCb->Wait();
-    return cookiesOk && cacheOk;
+
+void BrowserWindow::ClearBrowsingDataAsync(
+    const std::string& target,
+    ClearBrowsingDataCompletion completion) {
+  auto ctx = new ClearBrowsingDataContext();
+  ctx->completion = std::move(completion);
+
+  bool needsCookies = (target == "cookies" || target == "siteData" || target == "all");
+  bool needsCache = (target == "cache" || target == "siteData" || target == "all");
+
+  if (!needsCookies && !needsCache) {
+    ctx->CompleteOnce(false, "unknown browsing data target: " + target);
+    return;
   }
-  return false;
+
+  CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
+  CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
+
+  // Validate required objects before starting any operations.
+  if (needsCookies && !cookieManager) {
+    ctx->CompleteOnce(false, "cookie manager unavailable");
+    return;
+  }
+  if (needsCache && !context) {
+    ctx->CompleteOnce(false, "request context unavailable");
+    return;
+  }
+
+  // Count pending operations.
+  int pendingCount = 0;
+  if (needsCookies) pendingCount++;
+  if (needsCache) pendingCount++;
+  ctx->pendingCount.store(pendingCount);
+
+  // Start cookie deletion.
+  if (needsCookies) {
+    CefRefPtr<AsyncDeleteCookiesCallback> cookieCb =
+        new AsyncDeleteCookiesCallback(ctx);
+    if (!cookieManager->DeleteCookies("", "", cookieCb)) {
+      // API call failed to start; mark failure and let the remaining callback
+      // (if any) complete the context.
+      ctx->failed.store(true);
+      ctx->errorMsg = "failed to start cookie deletion";
+    }
+  }
+
+  // Start cache deletion. ClearHttpCache returns void, so always assume it
+  // started successfully. The callback will signal completion.
+  if (needsCache) {
+    CefRefPtr<AsyncCacheCallback> cacheCb = new AsyncCacheCallback(ctx);
+    context->ClearHttpCache(cacheCb);
+  }
+
+  // If both operations failed to start (or one failed and there's only one
+  // pending), complete immediately.
+  if (ctx->pendingCount.load() == 0) {
+    ctx->CompleteOnce(false, ctx->errorMsg);
+  }
 }
 
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {

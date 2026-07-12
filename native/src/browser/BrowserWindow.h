@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -77,7 +78,11 @@ class BrowserWindow {
   bool RemoveDownload(const std::string& url, const std::string& path);
   bool OpenDownloadedFile(const std::string& path);
   bool RevealDownloadedFile(const std::string& path);
-  bool ClearBrowsingData(const std::string& target);
+  // Async version: starts CEF deletion and calls completion on the UI thread
+  // when all required operations finish. The completion is called exactly once.
+  using ClearBrowsingDataCompletion = std::function<void(bool, const std::string&)>;
+  void ClearBrowsingDataAsync(const std::string& target,
+                              ClearBrowsingDataCompletion completion);
   bool ClearHistoryRange(const std::string& range);
   bool SetSetting(const std::string& key, const std::string& value);
   // Applies an Engine-owned setting to native views without persisting it.
