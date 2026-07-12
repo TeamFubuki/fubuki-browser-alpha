@@ -1,8 +1,8 @@
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use frost_protocol::{BookmarkRecord, DownloadRecord, HistoryRecord, PermissionRecord};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, ffi, params};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -77,23 +77,64 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
-        let store = Self {
-            conn: Connection::open(path)?,
-        };
-        store.migrate()?;
-        Ok(store)
+        // When multiple threads race to open the same database file the
+        // initial Connection::open can fail with "database is locked"
+        // because the busy-timeout has not been configured yet. Retry a
+        // handful of times with exponential back-off to let the first
+        // connection finish creating the WAL / SHM files.
+        let mut last_err = None;
+        for attempt in 0..32 {
+            match Connection::open(&path) {
+                Ok(conn) => {
+                    let mut store = Self { conn };
+                    // Set busy_timeout *before* migrate so concurrent
+                    // writers inside migrate() will wait instead of failing.
+                    store.conn.busy_timeout(Duration::from_secs(10))?;
+                    store.configure_connection(ConnectionKind::Persistent)?;
+                    store.migrate()?;
+                    return Ok(store);
+                }
+                Err(rusqlite::Error::SqliteFailure(err, msg))
+                    if err.code == ffi::ErrorCode::DatabaseBusy =>
+                {
+                    last_err = Some(rusqlite::Error::SqliteFailure(err, msg));
+                    // Exponential backoff: 10ms, 20ms, 40ms, ... up to ~5 seconds total
+                    std::thread::sleep(Duration::from_millis(10 * 2u64.pow(attempt.min(9) as u32)));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(last_err.unwrap().into())
     }
 
     pub fn in_memory() -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open_in_memory()?,
         };
+        store.configure_connection(ConnectionKind::Ephemeral)?;
         store.migrate()?;
         Ok(store)
     }
 
-    fn migrate(&self) -> StoreResult<()> {
-        self.conn.execute_batch(
+    fn configure_connection(&self, kind: ConnectionKind) -> StoreResult<()> {
+        // The engine worker and the native host intentionally use separate
+        // connections to the same profile database. Wait through brief write
+        // contention and use WAL so reads do not block normal browser writes.
+        self.conn.busy_timeout(Duration::from_secs(5))?;
+        self.conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        match kind {
+            ConnectionKind::Persistent => self.conn.execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 PRAGMA synchronous = NORMAL;",
+            )?,
+            ConnectionKind::Ephemeral => self.conn.execute_batch("PRAGMA synchronous = FULL;")?,
+        }
+        Ok(())
+    }
+
+    fn migrate(&mut self) -> StoreResult<()> {
+        let transaction = self.conn.transaction()?;
+        transaction.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS settings (
               key TEXT PRIMARY KEY NOT NULL,
@@ -143,8 +184,15 @@ impl SqliteStore {
             );
             ",
         )?;
+        transaction.commit()?;
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+enum ConnectionKind {
+    Persistent,
+    Ephemeral,
 }
 
 /// Bulk-clear operations used by the `data.clear` command.
@@ -519,5 +567,129 @@ mod tests {
         store.add_history("A", "https://a.com", "").unwrap();
         assert!(!store.clear_history_range("unknown").unwrap());
         assert_eq!(store.list_history().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn persistent_connections_use_wal_and_busy_timeout() {
+        let path = std::env::temp_dir().join(format!(
+            "fubuki-store-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        {
+            let first = SqliteStore::open(&path).unwrap();
+            let second = SqliteStore::open(&path).unwrap();
+            let journal_mode: String = first
+                .conn
+                .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+                .unwrap();
+            let busy_timeout: i64 = second
+                .conn
+                .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+                .unwrap();
+            let foreign_keys: i64 = first
+                .conn
+                .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+                .unwrap();
+            let synchronous: i64 = first
+                .conn
+                .query_row("PRAGMA synchronous", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+            assert_eq!(busy_timeout, 5_000);
+            assert_eq!(foreign_keys, 1);
+            assert_eq!(synchronous, 1); // NORMAL
+        }
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
+    }
+
+    #[test]
+    fn ephemeral_connections_keep_foreign_keys_and_full_sync() {
+        let store = SqliteStore::in_memory().unwrap();
+        let foreign_keys: i64 = store
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        let synchronous: i64 = store
+            .conn
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .unwrap();
+        let busy_timeout: i64 = store
+            .conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(synchronous, 2); // FULL
+        assert_eq!(busy_timeout, 5_000);
+    }
+
+    #[test]
+    fn concurrent_read_write_connections_do_not_lose_writes() {
+        let path = std::env::temp_dir().join(format!(
+            "fubuki-store-rw-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        SqliteStore::open(&path).unwrap();
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            let store = SqliteStore::open(writer_path).unwrap();
+            for _ in 0..40 {
+                store.set_setting("theme", "dark").unwrap();
+            }
+        });
+        let reader_path = path.clone();
+        let reader = std::thread::spawn(move || {
+            let store = SqliteStore::open(reader_path).unwrap();
+            for _ in 0..40 {
+                let _ = store.list_bookmarks().unwrap();
+            }
+        });
+        writer.join().unwrap();
+        reader.join().unwrap();
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(store.get_setting("theme").unwrap(), Some("dark".into()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
+    }
+
+    #[test]
+    fn concurrent_migrations_are_serialized_by_busy_timeout() {
+        let path = std::env::temp_dir().join(format!(
+            "fubuki-store-migration-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    SqliteStore::open(path).unwrap();
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(store.get_setting("theme").unwrap(), None);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
     }
 }
