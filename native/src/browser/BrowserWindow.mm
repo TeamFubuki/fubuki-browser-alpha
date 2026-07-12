@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <iterator>
 #include <map>
+#include <mutex>
 
 #include "browser/BrowserAppController.h"
 #include "browser/TabContextMenuState.h"
@@ -1043,7 +1044,114 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
       eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", "clear"});
     }
   }
-  return ok;
+
+ private:
+  IMPLEMENT_REFCOUNTING(ClearBrowsingDataContext);
+  DISALLOW_COPY_AND_ASSIGN(ClearBrowsingDataContext);
+};
+
+// Callback for CefCookieManager::DeleteCookies.
+class AsyncDeleteCookiesCallback : public CefDeleteCookiesCallback {
+ public:
+  AsyncDeleteCookiesCallback(CefRefPtr<ClearBrowsingDataContext> ctx)
+      : ctx_(std::move(ctx)) {}
+  void OnComplete(int /*num_deleted*/) override {
+    // If a previous operation already failed, don't decrement further.
+    if (ctx_->failed.load()) {
+      return;
+    }
+    int remaining = ctx_->pendingCount.fetch_sub(1) - 1;
+    if (remaining == 0) {
+      ctx_->CompleteOnce(!ctx_->failed.load(), ctx_->errorMsg);
+    }
+  }
+
+ private:
+  CefRefPtr<ClearBrowsingDataContext> ctx_;
+  IMPLEMENT_REFCOUNTING(AsyncDeleteCookiesCallback);
+  DISALLOW_COPY_AND_ASSIGN(AsyncDeleteCookiesCallback);
+};
+
+// Callback for CefRequestContext::ClearHttpCache.
+class AsyncCacheCallback : public CefCompletionCallback {
+ public:
+  AsyncCacheCallback(CefRefPtr<ClearBrowsingDataContext> ctx)
+      : ctx_(std::move(ctx)) {}
+  void OnComplete() override {
+    if (ctx_->failed.load()) {
+      return;
+    }
+    int remaining = ctx_->pendingCount.fetch_sub(1) - 1;
+    if (remaining == 0) {
+      ctx_->CompleteOnce(!ctx_->failed.load(), ctx_->errorMsg);
+    }
+  }
+
+ private:
+  CefRefPtr<ClearBrowsingDataContext> ctx_;
+  IMPLEMENT_REFCOUNTING(AsyncCacheCallback);
+  DISALLOW_COPY_AND_ASSIGN(AsyncCacheCallback);
+};
+}  // namespace
+
+
+void BrowserWindow::ClearBrowsingDataAsync(
+    const std::string& target,
+    ClearBrowsingDataCompletion completion) {
+  auto ctx = new ClearBrowsingDataContext();
+  ctx->completion = std::move(completion);
+
+  bool needsCookies = (target == "cookies" || target == "siteData" || target == "all");
+  bool needsCache = (target == "cache" || target == "siteData" || target == "all");
+
+  if (!needsCookies && !needsCache) {
+    ctx->CompleteOnce(false, "unknown browsing data target: " + target);
+    return;
+  }
+
+  CefRefPtr<CefCookieManager> cookieManager = CefCookieManager::GetGlobalManager(nullptr);
+  CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
+
+  // Validate required objects before starting any operations.
+  if (needsCookies && !cookieManager) {
+    ctx->CompleteOnce(false, "cookie manager unavailable");
+    return;
+  }
+  if (needsCache && !context) {
+    ctx->CompleteOnce(false, "request context unavailable");
+    return;
+  }
+
+  // Count pending operations.
+  int pendingCount = 0;
+  if (needsCookies) pendingCount++;
+  if (needsCache) pendingCount++;
+  ctx->pendingCount.store(pendingCount);
+
+  // Start cookie deletion.
+  if (needsCookies) {
+    CefRefPtr<AsyncDeleteCookiesCallback> cookieCb =
+        new AsyncDeleteCookiesCallback(ctx);
+    if (!cookieManager->DeleteCookies("", "", cookieCb)) {
+      // API call failed to start; mark failure and let the remaining callback
+      // (if any) complete the context.
+      ctx->failed.store(true);
+      ctx->errorMsg = "failed to start cookie deletion";
+    }
+  }
+
+  // Start cache deletion. ClearHttpCache returns void, so always assume it
+  // started successfully. The callback will signal completion.
+  if (needsCache) {
+    CefRefPtr<AsyncCacheCallback> cacheCb = new AsyncCacheCallback(ctx);
+    context->ClearHttpCache(cacheCb);
+  }
+
+  // If both operations failed to start (or one failed and there's only one
+  // pending), complete immediately.
+  if (ctx->pendingCount.load() == 0) {
+    ctx->CompleteOnce(false, ctx->errorMsg);
+  }
 }
 
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
