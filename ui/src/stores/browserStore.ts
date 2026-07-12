@@ -10,6 +10,7 @@ import {
   type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
+import { patchTabForNavigation } from '../tabEventPatch';
 
 const initialState: BrowserState & { status: string } = {
   bridgeVersion: '1',
@@ -280,6 +281,38 @@ export function bindNativeEvents() {
       setBrowserState('tabs', (tab) => tab.id !== tabId, {
         isActive: false,
       });
+    }),
+
+    onBridgeEvent('navigation.started', ({ tabId, url }) => {
+      setBrowserState('tabs', (tabs) =>
+        tabs.map(
+          (tab) =>
+            patchTabForNavigation(tab, { type: 'started', tabId, url }) ?? tab,
+        ),
+      );
+    }),
+
+    onBridgeEvent('navigation.finished', ({ tabId, url }) => {
+      setBrowserState('tabs', (tabs) =>
+        tabs.map(
+          (tab) =>
+            patchTabForNavigation(tab, { type: 'finished', tabId, url }) ?? tab,
+        ),
+      );
+    }),
+
+    onBridgeEvent('navigation.failed', ({ tabId, url, errorText }) => {
+      setBrowserState('tabs', (tabs) =>
+        tabs.map(
+          (tab) =>
+            patchTabForNavigation(tab, {
+              type: 'failed',
+              tabId,
+              url,
+              errorText,
+            }) ?? tab,
+        ),
+      );
     }),
 
     // --- Window lifecycle (direct patches) ---
