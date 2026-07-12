@@ -109,13 +109,22 @@ impl EventEnvelope {
     /// Wraps an external automation event into an engine event envelope so it
     /// can be delivered over the same event channel as internal events.
     pub fn from_external(external: crate::ExternalEventEnvelope) -> Self {
-        let event = match external.event {
+        Self {
+            version: crate::PROTOCOL_VERSION,
+            event: Event::from_external(external),
+        }
+    }
+}
+
+impl Event {
+    pub fn from_external(external: crate::ExternalEventEnvelope) -> Self {
+        match external.event {
             crate::ExternalEvent::Audit {
                 command_id,
                 capability,
                 allowed,
                 reason,
-            } => Event::ExternalAudit {
+            } => Self::ExternalAudit {
                 command_id,
                 capability,
                 allowed,
@@ -124,14 +133,10 @@ impl EventEnvelope {
             crate::ExternalEvent::RateLimited {
                 command_id,
                 retry_after_ms,
-            } => Event::ExternalRateLimited {
+            } => Self::ExternalRateLimited {
                 command_id,
                 retry_after_ms,
             },
-        };
-        Self {
-            version: crate::PROTOCOL_VERSION,
-            event,
         }
     }
 }
