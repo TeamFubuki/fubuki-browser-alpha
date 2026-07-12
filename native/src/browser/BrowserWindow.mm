@@ -1424,7 +1424,8 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     ok = MoveTab(JsonString(payload, "tabId"),
                  payload->HasKey("toIndex") ? payload->GetInt("toIndex") : 0);
     if (!ok) {
-      error = "unknown tab";
+      error = validSuccessor ? "failed to close page or activate successor"
+                             : "invalid successor tab";
     }
   } else if (command == "page.navigate") {
     ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
