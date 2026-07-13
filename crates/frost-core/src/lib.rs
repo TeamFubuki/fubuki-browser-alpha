@@ -21,7 +21,7 @@ use frost_protocol::{
     Request, Response, SettingChanged, TabActivated, TabClosed, TabPatch,
 };
 use frost_store::{
-    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRecord,
+    BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository,
     LogRepository, PermissionRepository, SessionRepository, SettingsRepository,
 };
 use thiserror::Error;
