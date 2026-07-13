@@ -22,7 +22,7 @@
     "@tailwindcss/vite": "^4.3.1",
     "oxc-resolver": "^11.23.0",
     "oxlint": "^1.72.0",
-    "oxfmt": "^0.57.0",
+    "oxfmt": "^0.58.0",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
