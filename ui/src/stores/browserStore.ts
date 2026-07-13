@@ -213,11 +213,11 @@ export function toggleSidebar(): void {
 
 export function navigateInternal(url: string): void {
   const tab = activeTab();
-  const promise = tab
+  const request = tab
     ? invokeBridge('tabs.navigate', { tabId: tab.id, input: url })
     : invokeBridge('tabs.create', { url, active: true });
-  void promise.catch((error) =>
-    console.error('[Fubuki] Failed to navigate:', error),
+  void request.catch((error) =>
+    console.error('[Fubuki] Failed to open internal page:', error),
   );
 }
 
@@ -259,10 +259,16 @@ export function bindNativeEvents() {
 
     onBridgeEvent('tab.closed', ({ tabId }) => {
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
-      setBrowserState('tabs', remaining);
-      if (browserState.activeTabId === tabId) {
-        setBrowserState('activeTabId', remaining[0]?.id ?? '');
-      }
+      const nextActive =
+        remaining.find((tab) => tab.isActive) ?? remaining[0];
+      setBrowserState(
+        'tabs',
+        remaining.map((tab) => ({
+          ...tab,
+          isActive: tab.id === nextActive?.id,
+        })),
+      );
+      setBrowserState('activeTabId', nextActive?.id ?? '');
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {

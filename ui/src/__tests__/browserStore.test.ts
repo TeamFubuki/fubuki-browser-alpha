@@ -161,11 +161,11 @@ describe('navigateInternal logic', () => {
     expect(tab?.id).toBe('tab-1');
   });
 
-  it('falls back to create when no active tab', () => {
+  it('does not create a tab when no active tab exists', () => {
     activeTabId = 'nonexistent';
     const tab = mockActiveTab();
-    const shouldCreateNew = !tab;
-    expect(shouldCreateNew).toBe(true);
+    const canNavigate = Boolean(tab);
+    expect(canNavigate).toBe(false);
   });
 });
 

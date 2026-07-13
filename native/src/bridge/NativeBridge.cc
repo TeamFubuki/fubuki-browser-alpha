@@ -11,7 +11,11 @@ namespace {
 
 bool IsAllowedUiFrame(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                       CefRefPtr<CefBrowser> expectedUiBrowser) {
-  return browser && browser == expectedUiBrowser && frame && frame->IsMain() &&
+  // The browser-side message router can hand us a CefBrowser reference that
+  // is not pointer-equal to the one retained by BrowserWindow, even though it
+  // represents the same UI browser. The router is attached only to the UI
+  // client, so the origin and main-frame checks are the authoritative guard.
+  return browser && expectedUiBrowser && frame && frame->IsMain() &&
          frame->GetURL().ToString().rfind("fubuki://app/", 0) == 0;
 }
 
@@ -269,6 +273,55 @@ void NativeBridge::RegisterMethods() {
     }
     if (id.rfind("tabs.", 0) == 0 && !args->HasKey("tabId")) {
       args->SetString("tabId", window_.Tabs().GetActiveTabId());
+    }
+
+    // Menu and command-palette actions must use FrostEngine as well. Directly
+    // invoking BrowserWindow handlers here used to desynchronize the engine
+    // from the native tab strip, especially for close and internal pages.
+    if (id == "tabs.create") {
+      if (!args->HasKey("active")) args->SetBool("active", true);
+      if (!args->HasKey("url")) args->SetString("url", "fubuki://newtab/");
+      return FrostInvoke(id, args);
+    }
+    if (id == "tabs.pin" || id == "tabs.unpin") {
+      if (!args->HasKey("tabId") || args->GetString("tabId").empty()) {
+        return BoolValue(false);
+      }
+      args->SetBool("pinned", id == "tabs.pin");
+      return FrostInvoke("tabs.pin", args);
+    }
+    if (id == "tabs.close" || id == "tabs.activate" ||
+        id == "tabs.duplicate" || id == "tabs.closeOther" ||
+        id == "tabs.closeToRight" || id == "tabs.move" ||
+        id == "tabs.moveToNewWindow" || id == "tabs.navigate" ||
+        id == "tabs.reload" || id == "tabs.stop" || id == "tabs.goBack" ||
+        id == "tabs.goForward") {
+      if (!args->HasKey("tabId") || args->GetString("tabId").empty()) {
+        return BoolValue(false);
+      }
+      return FrostInvoke(id, args);
+    }
+    if (id == "tabs.reopenClosed" || id == "tabs.home" ||
+        id == "windows.create" || id == "windows.createPrivate" ||
+        id == "windows.reopenClosed") {
+      return FrostInvoke(id, args);
+    }
+    if (id == "app.openSettings" || id == "app.openHistory" ||
+        id == "app.openBookmarks" || id == "app.openDownloads" ||
+        id == "app.openDebug") {
+      const std::string activeTabId = window_.Tabs().GetActiveTabId();
+      if (activeTabId.empty()) return BoolValue(false);
+      args->SetString("tabId", activeTabId);
+      args->SetString("input", id == "app.openSettings"
+                                    ? "fubuki://settings/"
+                                : id == "app.openHistory"
+                                    ? "fubuki://history/"
+                                : id == "app.openBookmarks"
+                                    ? "fubuki://bookmarks/"
+                                : id == "app.openDownloads"
+                                    ? "fubuki://downloads/"
+                                    : "fubuki://debug/");
+      return FrostInvoke("tabs.navigate", args);
     }
     return Invoke(id, args);
   };

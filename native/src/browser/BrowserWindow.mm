@@ -1314,6 +1314,14 @@ void BrowserWindow::OnTabUrl(const std::string& tabId, const std::string& url) {
       tab->isPendingPopup = false;
     }
     UpdateTabPatch(tabId, tab->title, url, tab->isLoading, tab->canGoBack, tab->canGoForward);
+    auto patch = CefDictionaryValue::Create();
+    patch->SetString("tabId", tabId);
+    patch->SetString("url", url);
+    patch->SetString("title", tab->title);
+    patch->SetBool("isLoading", tab->isLoading);
+    patch->SetBool("canGoBack", tab->canGoBack);
+    patch->SetBool("canGoForward", tab->canGoForward);
+    bridge_->EmitToUi("tab.updated", patch);
     PushHostEventJson(HostEventJson("page.urlChanged", {{ "tabId", JsonStringValue(tabId) }, { "url", JsonStringValue(url) }}));
   }
 }

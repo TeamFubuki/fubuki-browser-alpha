@@ -20,6 +20,7 @@ impl TabService {
 
     pub fn replace_all(&mut self, tabs: Vec<TabState>) {
         self.tabs = tabs;
+        self.ensure_active_tabs();
     }
 
     pub fn upsert_tab(&mut self, tab: TabState) {
@@ -101,12 +102,17 @@ impl TabService {
         if was_active && let Some(next) = self.tabs.iter_mut().find(|t| t.window_id == window_id) {
             next.is_active = true;
         }
+        self.ensure_active_tab_for_window(&window_id, None);
         true
     }
 
     pub fn remove_tab(&mut self, tab_id: &str) -> Option<TabState> {
         let index = self.tabs.iter().position(|t| t.id == tab_id)?;
-        Some(self.tabs.remove(index))
+        let removed = self.tabs.remove(index);
+        if removed.is_active {
+            self.ensure_active_tab_for_window(&removed.window_id, None);
+        }
+        Some(removed)
     }
 
     pub fn get_tab(&self, tab_id: &str) -> Option<TabState> {
@@ -181,6 +187,9 @@ impl TabService {
             closed.push(tab.clone());
             false
         });
+        // Closing tabs to the right may remove the active tab while leaving
+        // the selected target behind. Keep exactly one active tab per window.
+        self.ensure_active_tab_for_window(&window_id, Some(tab_id));
         closed
     }
 
@@ -219,6 +228,14 @@ impl TabService {
     }
 
     pub fn move_tab_to_window(&mut self, tab_id: &str, window_id: &str) -> bool {
+        let Some(source_window_id) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.window_id.clone())
+        else {
+            return false;
+        };
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return false;
         };
@@ -234,6 +251,7 @@ impl TabService {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.is_active = true;
         }
+        self.ensure_active_tab_for_window(&source_window_id, None);
         true
     }
 
@@ -308,5 +326,49 @@ impl TabService {
         tab.error_text = error_text.to_owned();
         tab.is_loading = false;
         true
+    }
+
+    fn ensure_active_tabs(&mut self) {
+        let window_ids: Vec<String> = self.tabs.iter().map(|tab| tab.window_id.clone()).collect();
+        for window_id in window_ids {
+            self.ensure_active_tab_for_window(&window_id, None);
+        }
+    }
+
+    fn ensure_active_tab_for_window(&mut self, window_id: &str, preferred_id: Option<&str>) {
+        let mut active_seen = false;
+        for tab in self
+            .tabs
+            .iter_mut()
+            .filter(|tab| tab.window_id == window_id)
+        {
+            if tab.is_active && !active_seen {
+                active_seen = true;
+            } else if tab.is_active {
+                tab.is_active = false;
+            }
+        }
+        if active_seen {
+            return;
+        }
+
+        let target_id = preferred_id
+            .filter(|id| {
+                self.tabs
+                    .iter()
+                    .any(|tab| tab.window_id == window_id && tab.id == *id)
+            })
+            .map(str::to_owned)
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|tab| tab.window_id == window_id)
+                    .map(|tab| tab.id.clone())
+            });
+        if let Some(target_id) = target_id {
+            if let Some(target) = self.tabs.iter_mut().find(|tab| tab.id == target_id) {
+                target.is_active = true;
+            }
+        }
     }
 }

@@ -21,15 +21,24 @@ export default function Omnibox() {
   const [focused, setFocused] = createSignal(false);
   let composing = false;
   let lastSyncedTabId = '';
+  let lastSyncedUrl = '';
 
   createEffect(() => {
     const tabId = browserState.activeTabId;
     const tab = browserState.tabs.find((t) => t.id === tabId);
     const url = tab?.url ?? '';
 
-    if (!focused() || tabId !== lastSyncedTabId) {
+    // Keep typed text while the user is editing, but always accept a URL
+    // change reported by the browser (redirects, back/forward, and internal
+    // pages) even when the same tab remains active.
+    if (
+      !focused() ||
+      tabId !== lastSyncedTabId ||
+      url !== lastSyncedUrl
+    ) {
       setDraft(url);
       lastSyncedTabId = tabId;
+      lastSyncedUrl = url;
     }
   });
 
@@ -43,11 +52,11 @@ export default function Omnibox() {
       input.kind === 'search' ? buildSearchUrl(input.value) : input.value;
 
     const tabId = browserState.activeTabId;
-    if (tabId) {
-      void tabs.navigate(tabId, url);
-    } else {
-      void tabs.create(url);
-    }
+    // Navigation must always target an existing tab. A missing active tab is
+    // an invalid transient state, not a reason to create a tab implicitly
+    // from a search submission.
+    if (!tabId) return;
+    void tabs.navigate(tabId, url);
   };
 
   let inputRef: HTMLInputElement | undefined;
@@ -94,7 +103,10 @@ export default function Omnibox() {
           setDraft(event.currentTarget.value);
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !composing) {
+          if (
+            (event.key === 'Enter' || event.key === 'Return') &&
+            !composing
+          ) {
             event.preventDefault();
             submit();
           }

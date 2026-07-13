@@ -844,7 +844,14 @@ bool FubukiSchemeHandler::LoadRequest(CefRefPtr<CefRequest> request) {
     return true;
   }
   const std::string url = request->GetURL().ToString();
-  if (request->GetMethod().ToString() != "GET") {
+  const std::string method = request->GetMethod().ToString();
+
+  // Handle POST requests for settings changes
+  if (method == "POST" && url.rfind("fubuki://settings/set", 0) == 0) {
+    return HandleSettingsPost(request);
+  }
+
+  if (method != "GET") {
     LoadText("Method not allowed", "text/plain", 405);
     return true;
   }
@@ -1005,6 +1012,112 @@ std::string FubukiSchemeHandler::ResolveAppPath(const std::string& url) const {
     return "";
   }
   return resolved.string();
+}
+
+bool FubukiSchemeHandler::HandleSettingsPost(CefRefPtr<CefRequest> request) {
+  // Parse POST body
+  CefRefPtr<CefPostData> postData = request->GetPostData();
+  if (!postData || postData->GetElementCount() == 0) {
+    LoadText("No form data", "text/plain", 400);
+    return true;
+  }
+
+  // Get body as string
+  std::string body;
+  CefPostData::ElementVector elements;
+  postData->GetElements(elements);
+  for (const auto& elem : elements) {
+    cef_postdataelement_type_t type = elem->GetType();
+    if (type == PDE_TYPE_BYTES) {
+      size_t size = elem->GetBytesCount();
+      std::vector<char> buf(size);
+      elem->GetBytes(size, buf.data());
+      body.append(buf.data(), size);
+    }
+  }
+
+  // Parse URL-encoded form data
+  auto parseField = [&body](const std::string& fieldName) -> std::string {
+    const std::string needle = fieldName + "=";
+    size_t pos = body.find(needle);
+    if (pos == std::string::npos) return "";
+    pos += needle.size();
+    size_t end = body.find('&', pos);
+    if (end == std::string::npos) end = body.size();
+    return CefURIDecode(body.substr(pos, end - pos), true,
+                       static_cast<cef_uri_unescape_rule_t>(UU_SPACES | UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS))
+        .ToString();
+  };
+
+  std::string key = parseField("key");
+  std::string value = parseField("value");
+  std::string returnUrl = parseField("return");
+
+  if (key.empty()) {
+    LoadText("Missing key", "text/plain", 400);
+    return true;
+  }
+
+  BrowserAppController* app = GetBrowserAppController();
+  if (!app) {
+    LoadText("App not ready", "text/plain", 500);
+    return true;
+  }
+
+  // Handle special actions
+  if (key == "removeBookmark") {
+    app->Store().RemoveBookmark(value);
+    PageCache::Instance().Invalidate("fubuki://bookmarks");
+  } else if (key == "removeHistory") {
+    app->Store().RemoveHistory(value);
+    PageCache::Instance().Invalidate("fubuki://history");
+  } else if (key == "clearHistoryRange") {
+    app->Store().ClearHistoryRange(value);
+    PageCache::Instance().Invalidate("fubuki://history");
+  } else if (key == "clearData") {
+    // Handle clear data actions
+    if (value == "history") {
+      app->Store().ClearHistory();
+    } else if (value == "downloads") {
+      app->Store().ClearDownloads();
+    } else if (value == "cookies") {
+      // TODO: Clear cookies via CEF
+    } else if (value == "cache") {
+      // TODO: Clear cache via CEF
+    } else if (value == "all") {
+      app->Store().ClearHistory();
+      app->Store().ClearDownloads();
+      // TODO: Clear cookies and cache
+    }
+    PageCache::Instance().Invalidate("fubuki://" + value);
+    PageCache::Instance().Invalidate("fubuki://settings");
+  } else if (key == "openDownload" && !value.empty()) {
+    app->Store().HasDownloadPath(value); // Verify path exists
+    // TODO: Open file with default app
+  } else if (key == "revealDownload" && !value.empty()) {
+    // TODO: Reveal in Finder
+  } else if (key == "removeDownload" && !value.empty()) {
+    app->Store().RemoveDownload("", value);
+    PageCache::Instance().Invalidate("fubuki://downloads");
+  } else if (key == "openDevTools") {
+    // Open DevTools for active window
+    // TODO: Implement via BrowserWindow
+  } else if (key == "resetSetting") {
+    app->Store().ResetSetting(value);
+    PageCache::Instance().Invalidate("fubuki://settings");
+  } else {
+    // Regular setting update
+    app->Store().SetSetting(key, value);
+    PageCache::Instance().Invalidate("fubuki://settings");
+  }
+
+  // Redirect to return URL or settings page
+  if (returnUrl.empty()) {
+    returnUrl = "fubuki://settings/";
+  }
+  LoadText("<!doctype html><meta http-equiv=\"refresh\" content=\"0;url=" +
+           HtmlEscape(returnUrl) + "\">", "text/html", 200);
+  return true;
 }
 
 FubukiSchemeHandlerFactory::FubukiSchemeHandlerFactory(std::string uiDistPath)

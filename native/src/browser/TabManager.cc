@@ -83,7 +83,9 @@ bool TabManager::CloseTab(const std::string &tabId) {
       {EventType::TabClosed, "tabs.closed", closed, "", tabId, ""});
 
   if (tabs_.empty()) {
-    CreateTab("fubuki://newtab/", true);
+    // FrostEngine owns the tab lifecycle and will issue a page.create command
+    // for the replacement tab. Creating one here as well races that command
+    // and leaves duplicate tabs after closing the last tab.
     return true;
   }
 

@@ -34,6 +34,8 @@
   background: transparent;
   color: var(--text);
   font-size: 14px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
   contain: layout style;
   transition:
     background-color 0.14s ease,
@@ -58,6 +60,7 @@
 .omnibox {
   -webkit-app-region: no-drag;
   min-width: 0;
+  pointer-events: auto;
   contain: layout style;
 }
 
@@ -72,6 +75,8 @@
   color: var(--text);
   font-size: 12.5px;
   outline: none;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
   transition:
     border-color 0.14s ease,
     background-color 0.14s ease;
@@ -98,6 +103,7 @@
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.14);
+  pointer-events: auto;
   contain: layout style;
   transition: opacity 0.14s ease;
 }
@@ -111,6 +117,7 @@
   background: var(--content-bg);
   color: var(--text);
   font: inherit;
+  pointer-events: auto;
 }
 
 .find-bar button {
@@ -119,6 +126,7 @@
   border-radius: 5px;
   background: transparent;
   color: var(--text);
+  pointer-events: auto;
   transition: background-color 0.14s ease;
 }
 

@@ -2100,6 +2100,7 @@ mod tests {
         let w2_remaining: Vec<_> = s.tabs.iter().filter(|t| t.window_id == *w2_id).collect();
         assert_eq!(w2_remaining.len(), 1);
         assert_eq!(w2_remaining[0].id, target);
+        assert!(w2_remaining[0].is_active);
     }
 
     #[test]

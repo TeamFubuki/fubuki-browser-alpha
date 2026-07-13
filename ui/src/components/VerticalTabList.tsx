@@ -26,6 +26,7 @@ export default function VerticalTabList() {
   const [query, setQuery] = createSignal('');
   const [searchExpanded, setSearchExpanded] = createSignal(false);
   const [dragOverId, setDragOverId] = createSignal<string | null>(null);
+  const closingTabs = new Set<string>();
 
   const lang = currentLanguage;
 
@@ -163,7 +164,11 @@ export default function VerticalTabList() {
                   aria-label={closeLabel}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void tabs.close(tab.id);
+                    if (closingTabs.has(tab.id)) return;
+                    closingTabs.add(tab.id);
+                    void tabs.close(tab.id).finally(() => {
+                      closingTabs.delete(tab.id);
+                    });
                   }}
                 >
                   <span aria-hidden="true">x</span>
