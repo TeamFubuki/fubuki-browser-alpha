@@ -97,6 +97,7 @@ pub enum HostEvent {
     PageLoadFailed { tab_id: String, error_text: String },
     #[serde(rename = "download.updated", rename_all = "camelCase")]
     DownloadUpdated {
+        download_id: String,
         url: String,
         path: String,
         state: String,

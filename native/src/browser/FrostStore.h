@@ -43,11 +43,13 @@ public:
   bool AddHistory(const std::string &title, const std::string &url,
                   const std::string &faviconUrl);
   bool RemoveHistory(const std::string &url);
-  bool AddDownload(const std::string &url, const std::string &path,
-                   const std::string &state);
-  bool UpdateDownload(const std::string &url, const std::string &path,
-                      const std::string &state, int percent);
-  bool RemoveDownload(const std::string &url, const std::string &path);
+  bool AddDownload(const std::string &downloadId, const std::string &url,
+                   const std::string &path, const std::string &state);
+  bool UpdateDownload(const std::string &downloadId, const std::string &url,
+                      const std::string &path, const std::string &state,
+                      int percent);
+  bool RemoveDownload(const std::string &downloadId, const std::string &url,
+                      const std::string &path);
   bool HasDownloadPath(const std::string &path) const;
   bool SetPermission(const std::string &origin, const std::string &permission,
                      const std::string &value);

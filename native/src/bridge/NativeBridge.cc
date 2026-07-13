@@ -252,7 +252,8 @@ void NativeBridge::RegisterMethods() {
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return HostBackedFrostInvoke("downloads.remove", params, [this, params] {
-      return window_.RemoveDownload(params->GetString("url"),
+      return window_.RemoveDownload(params->GetString("downloadId"),
+                                    params->GetString("url"),
                                     params->GetString("path"));
     });
   };

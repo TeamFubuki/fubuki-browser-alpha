@@ -535,12 +535,15 @@ fn route_external_to_core(
                 range: range.clone(),
             }))
         }
-        ExternalCommand::DownloadRemove { url, path } => {
-            Some(ProtocolRequest::new(Request::DownloadsRemove {
-                url: url.clone(),
-                path: path.clone(),
-            }))
-        }
+        ExternalCommand::DownloadRemove {
+            download_id,
+            url,
+            path,
+        } => Some(ProtocolRequest::new(Request::DownloadsRemove {
+            download_id: download_id.clone(),
+            url: url.clone(),
+            path: path.clone(),
+        })),
         ExternalCommand::DebugOpenDevTools { .. } => None,
     };
 
@@ -876,18 +879,28 @@ pub unsafe extern "C" fn frost_store_add_history(
 ///
 /// # Safety
 /// - `handle` must be a valid pointer obtained from `frost_store_open`.
-/// - `url`, `path`, `state` must be valid null-terminated UTF-8 strings.
+/// - `download_id`, `url`, `path`, `state` must be valid null-terminated UTF-8 strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn frost_store_upsert_download(
     handle: *mut FrostStoreHandle,
+    download_id: *const c_char,
     url: *const c_char,
     path: *const c_char,
     state: *const c_char,
     percent: i64,
 ) -> bool {
-    if handle.is_null() || url.is_null() || path.is_null() || state.is_null() {
+    if handle.is_null()
+        || download_id.is_null()
+        || url.is_null()
+        || path.is_null()
+        || state.is_null()
+    {
         return false;
     }
+    let download_id = match unsafe { CStr::from_ptr(download_id) }.to_str() {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
     let url = match unsafe { CStr::from_ptr(url) }.to_str() {
         Ok(u) => u,
         Err(_) => return false,
@@ -903,7 +916,7 @@ pub unsafe extern "C" fn frost_store_upsert_download(
     let store = unsafe { &*handle };
     store
         .store
-        .upsert_download(url, path, state, percent)
+        .upsert_download(download_id, url, path, state, percent)
         .is_ok()
 }
 

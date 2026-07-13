@@ -267,9 +267,18 @@ where
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 Ok(serde_json::json!({ "ok": true }))
             }
-            ExternalCommand::DownloadRemove { url, path } => {
-                DownloadService::remove(&self.repository, url.as_deref(), path.as_deref())
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+            ExternalCommand::DownloadRemove {
+                download_id,
+                url,
+                path,
+            } => {
+                DownloadService::remove(
+                    &self.repository,
+                    download_id.as_deref(),
+                    url.as_deref(),
+                    path.as_deref(),
+                )
+                .map_err(|e| CoreError::Message(e.to_string()))?;
                 Ok(serde_json::json!({ "ok": true }))
             }
             ExternalCommand::DebugOpenDevTools { tab_id } => {

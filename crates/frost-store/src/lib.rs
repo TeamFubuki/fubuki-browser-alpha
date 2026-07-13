@@ -35,8 +35,20 @@ pub trait HistoryRepository {
 
 pub trait DownloadRepository {
     fn list_downloads(&self) -> StoreResult<Vec<DownloadRecord>>;
-    fn upsert_download(&self, url: &str, path: &str, state: &str, percent: i64) -> StoreResult<()>;
-    fn remove_download(&self, url: Option<&str>, path: Option<&str>) -> StoreResult<bool>;
+    fn upsert_download(
+        &self,
+        download_id: &str,
+        url: &str,
+        path: &str,
+        state: &str,
+        percent: i64,
+    ) -> StoreResult<()>;
+    fn remove_download(
+        &self,
+        download_id: Option<&str>,
+        url: Option<&str>,
+        path: Option<&str>,
+    ) -> StoreResult<bool>;
 }
 
 pub trait PermissionRepository {
@@ -113,6 +125,7 @@ impl SqliteStore {
             );
             CREATE TABLE IF NOT EXISTS downloads (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              download_id TEXT NOT NULL DEFAULT '',
               url TEXT NOT NULL DEFAULT '',
               path TEXT NOT NULL DEFAULT '',
               state TEXT NOT NULL,
@@ -139,6 +152,25 @@ impl SqliteStore {
               snapshot TEXT NOT NULL
             );
             ",
+        )?;
+        let has_download_id = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('downloads') WHERE name = 'download_id'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if !has_download_id {
+            self.conn.execute(
+                "ALTER TABLE downloads ADD COLUMN download_id TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        self.conn.execute(
+            "UPDATE downloads SET download_id = 'legacy-' || id WHERE download_id IS NULL OR download_id = ''",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS downloads_download_id ON downloads(download_id)",
+            [],
         )?;
         Ok(())
     }
@@ -264,59 +296,84 @@ impl HistoryRepository for SqliteStore {
 impl DownloadRepository for SqliteStore {
     fn list_downloads(&self) -> StoreResult<Vec<DownloadRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT url, path, state, percent, created_at FROM downloads ORDER BY id DESC LIMIT 200",
+            "SELECT download_id, url, path, state, percent, created_at FROM downloads ORDER BY id DESC LIMIT 200",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(DownloadRecord {
-                url: row.get(0)?,
-                path: row.get(1)?,
-                state: row.get(2)?,
-                percent: row.get(3)?,
-                created_at: row.get(4)?,
+                download_id: row.get(0)?,
+                url: row.get(1)?,
+                path: row.get(2)?,
+                state: row.get(3)?,
+                percent: row.get(4)?,
+                created_at: row.get(5)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }
 
-    fn upsert_download(&self, url: &str, path: &str, state: &str, percent: i64) -> StoreResult<()> {
+    fn upsert_download(
+        &self,
+        download_id: &str,
+        url: &str,
+        path: &str,
+        state: &str,
+        percent: i64,
+    ) -> StoreResult<()> {
         let now = now_text();
+        let download_id = if download_id.is_empty() {
+            format!("legacy-import:{url}:{path}")
+        } else {
+            download_id.to_owned()
+        };
         let changed = self.conn.execute(
             "
             UPDATE downloads
-            SET path = CASE WHEN ?2 <> '' THEN ?2 ELSE path END,
-                state = ?3,
-                percent = ?4,
-                updated_at = ?5
-            WHERE id = (
-              SELECT id FROM downloads
-              WHERE url = ?1
-                AND (path = ?2 OR state IN ('started', 'in_progress'))
-              ORDER BY CASE WHEN path = ?2 THEN 0 ELSE 1 END, id DESC
-              LIMIT 1
-            )
+            SET url = ?2,
+                path = CASE WHEN ?3 <> '' THEN ?3 ELSE path END,
+                state = ?4,
+                percent = ?5,
+                updated_at = ?6
+            WHERE download_id = ?1
             ",
-            params![url, path, state, percent, now],
+            params![download_id, url, path, state, percent, now],
         )?;
         if changed == 0 {
             self.conn.execute(
                 "
-                INSERT INTO downloads (url, path, state, percent, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+                INSERT INTO downloads
+                  (download_id, url, path, state, percent, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
                 ",
-                params![url, path, state, percent, now],
+                params![download_id, url, path, state, percent, now],
             )?;
         }
         Ok(())
     }
 
-    fn remove_download(&self, url: Option<&str>, path: Option<&str>) -> StoreResult<bool> {
+    fn remove_download(
+        &self,
+        download_id: Option<&str>,
+        url: Option<&str>,
+        path: Option<&str>,
+    ) -> StoreResult<bool> {
         let changed = self.conn.execute(
             "
             DELETE FROM downloads
-            WHERE (url = ?1 AND ?1 <> '') OR (path = ?2 AND ?2 <> '')
+            WHERE id = (
+              SELECT id FROM downloads
+              WHERE (?1 <> '' AND download_id = ?1)
+                 OR (?1 = '' AND ?3 <> '' AND path = ?3)
+                 OR (?1 = '' AND ?3 = '' AND ?2 <> '' AND url = ?2)
+              ORDER BY id DESC
+              LIMIT 1
+            )
             ",
-            params![url.unwrap_or_default(), path.unwrap_or_default()],
+            params![
+                download_id.unwrap_or_default(),
+                url.unwrap_or_default(),
+                path.unwrap_or_default()
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -498,19 +555,41 @@ mod tests {
         assert!(store.remove_history("https://example.com").unwrap());
 
         store
-            .upsert_download("https://example.com/file", "/tmp/file", "started", 0)
+            .upsert_download(
+                "download-1",
+                "https://example.com/file",
+                "/tmp/file",
+                "started",
+                0,
+            )
             .unwrap();
         assert_eq!(store.list_downloads().unwrap()[0].path, "/tmp/file");
-        assert!(store.remove_download(None, Some("/tmp/file")).unwrap());
+        assert!(
+            store
+                .remove_download(Some("download-1"), None, None)
+                .unwrap()
+        );
 
         store
-            .upsert_download("blob:null/download-id", "/tmp/planned", "started", 0)
+            .upsert_download(
+                "download-2",
+                "blob:null/download-id",
+                "/tmp/planned",
+                "started",
+                0,
+            )
             .unwrap();
         store
-            .upsert_download("blob:null/download-id", "", "in_progress", 45)
+            .upsert_download("download-2", "blob:null/download-id", "", "in_progress", 45)
             .unwrap();
         store
-            .upsert_download("blob:null/download-id", "/tmp/selected", "completed", 100)
+            .upsert_download(
+                "download-2",
+                "blob:null/download-id",
+                "/tmp/selected",
+                "completed",
+                100,
+            )
             .unwrap();
         let downloads = store.list_downloads().unwrap();
         assert_eq!(downloads.len(), 1);
@@ -518,10 +597,99 @@ mod tests {
         assert_eq!(downloads[0].state, "completed");
         assert!(
             store
-                .remove_download(Some("blob:null/download-id"), None)
+                .remove_download(Some("download-2"), None, None)
                 .unwrap()
         );
         assert!(store.list_downloads().unwrap().is_empty());
+    }
+
+    #[test]
+    fn keeps_same_url_downloads_independent() {
+        let store = SqliteStore::in_memory().unwrap();
+        let url = "https://example.com/archive.zip";
+
+        store
+            .upsert_download("download-a", url, "/tmp/archive.zip", "started", 0)
+            .unwrap();
+        store
+            .upsert_download("download-b", url, "/tmp/archive-1.zip", "started", 0)
+            .unwrap();
+        store
+            .upsert_download("download-a", url, "", "in_progress", 40)
+            .unwrap();
+        store
+            .upsert_download("download-b", url, "/tmp/archive-1.zip", "completed", 100)
+            .unwrap();
+
+        let downloads = store.list_downloads().unwrap();
+        assert_eq!(downloads.len(), 2);
+        assert_eq!(
+            downloads
+                .iter()
+                .find(|download| download.download_id == "download-a")
+                .unwrap()
+                .percent,
+            40
+        );
+        assert_eq!(
+            downloads
+                .iter()
+                .find(|download| download.download_id == "download-b")
+                .unwrap()
+                .state,
+            "completed"
+        );
+
+        assert!(
+            store
+                .remove_download(Some("download-a"), None, None)
+                .unwrap()
+        );
+        let remaining = store.list_downloads().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].download_id, "download-b");
+    }
+
+    #[test]
+    fn migrates_legacy_same_url_downloads_to_distinct_ids() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE downloads (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              download_id TEXT,
+              url TEXT NOT NULL DEFAULT '',
+              path TEXT NOT NULL DEFAULT '',
+              state TEXT NOT NULL,
+              percent INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO downloads (url, path, state, created_at, updated_at)
+            VALUES
+              ('https://example.com/file', '/tmp/file', 'completed', '1', '1'),
+              ('https://example.com/file', '/tmp/file-1', 'completed', '2', '2');
+            ",
+        )
+        .unwrap();
+        let store = SqliteStore { conn };
+
+        store.migrate().unwrap();
+
+        let downloads = store.list_downloads().unwrap();
+        assert_eq!(downloads.len(), 2);
+        assert_ne!(downloads[0].download_id, downloads[1].download_id);
+        assert!(
+            downloads
+                .iter()
+                .all(|download| download.download_id.starts_with("legacy-"))
+        );
+        assert!(
+            store
+                .remove_download(Some(&downloads[0].download_id), None, None)
+                .unwrap()
+        );
+        assert_eq!(store.list_downloads().unwrap().len(), 1);
     }
 
     #[test]

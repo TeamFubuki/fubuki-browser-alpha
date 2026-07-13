@@ -9,7 +9,6 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "browser/BrowserAppController.h"
@@ -28,6 +27,7 @@ struct Record {
   std::string state;
   int percent = 0;
   std::string createdAt;
+  std::string downloadId;
 };
 
 std::filesystem::path ProfilePath() {
@@ -130,6 +130,12 @@ sqlite3* OpenDatabase() {
   // Migration for existing databases that lack download_id column.
   // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
   Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
+  Execute(cached,
+          "UPDATE downloads SET download_id='legacy-' || id WHERE "
+          "download_id IS NULL OR download_id=''");
+  Execute(cached,
+          "CREATE UNIQUE INDEX IF NOT EXISTS downloads_download_id ON "
+          "downloads(download_id)");
   Execute(cached,
           "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
           "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
@@ -286,15 +292,16 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
   if (!db)
     return {};
 
-  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at "
+  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at,'' "
                                                  "FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history" ? "SELECT title,url,'','','',0,created_at FROM "
+                          : table == "history" ? "SELECT title,url,'','','',0,created_at,'' FROM "
                                                  "history ORDER BY id DESC LIMIT ?"
                           : table == "logs"
-                              ? "SELECT message,'','',level,'',0,created_at FROM logs ORDER BY id "
+                              ? "SELECT message,'','',level,'',0,created_at,'' FROM logs ORDER BY id "
                                 "DESC LIMIT ?"
                               : "SELECT "
-                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at) FROM "
+                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at),"
+                                "download_id FROM "
                                 "downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC "
                                 "LIMIT ?";
   sqlite3_stmt* statement = nullptr;
@@ -311,6 +318,7 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
     record.state = ColumnText(statement, 4);
     record.percent = sqlite3_column_int(statement, 5);
     record.createdAt = ColumnText(statement, 6);
+    record.downloadId = ColumnText(statement, 7);
     records.push_back(record);
   }
 
@@ -427,22 +435,11 @@ std::string DownloadsHtml() {
     body << "<p class=\"empty\">" << Label("No downloads") << "</p>";
   } else {
     body << "<div class=\"list\">";
-    std::unordered_set<std::string> completedUrls;
     for (const auto& record : records) {
       const std::string state = NormalizedDownloadState(record);
-      if (IsActiveDownloadState(state) && completedUrls.contains(record.url)) {
-        continue;
-      }
-      if (state == "completed" && record.path.empty() && completedUrls.contains(record.url)) {
-        continue;
-      }
-      if (state == "completed" && !record.url.empty()) {
-        completedUrls.insert(record.url);
-      }
       const int percent = state == "completed" ? 100 : ClampPercent(record.percent);
       const std::string status = DownloadStatusText(state, percent);
       const bool hasPath = !record.path.empty();
-      const std::string removeValue = record.url.empty() ? record.path : record.url;
       body << "<article class=\"row\"><span "
               "aria-hidden=\"true\">↓</span><div class=\"download-main\"><div><div class=\"title\">"
            << HtmlEscape(FileName(record.path, record.url)) << "</div><div class=\"meta\">"
@@ -465,7 +462,7 @@ std::string DownloadsHtml() {
              << "<span class=\"chip disabled\" aria-disabled=\"true\">"
              << HtmlEscape(Label("Reveal")) << "</span>";
       }
-      body << ActionForm("removeDownload", removeValue, "fubuki://downloads/",
+      body << ActionForm("removeDownload", record.downloadId, "fubuki://downloads/",
                          Label("Remove"), "chip danger")
            << "</div></article>";
     }
