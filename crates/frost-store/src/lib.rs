@@ -284,10 +284,19 @@ impl DownloadRepository for SqliteStore {
         let changed = self.conn.execute(
             "
             UPDATE downloads
-            SET state = ?1, percent = ?2, updated_at = ?3
-            WHERE url = ?4 AND path = ?5
+            SET path = CASE WHEN ?2 <> '' THEN ?2 ELSE path END,
+                state = ?3,
+                percent = ?4,
+                updated_at = ?5
+            WHERE id = (
+              SELECT id FROM downloads
+              WHERE url = ?1
+                AND (path = ?2 OR state IN ('started', 'in_progress'))
+              ORDER BY CASE WHEN path = ?2 THEN 0 ELSE 1 END, id DESC
+              LIMIT 1
+            )
             ",
-            params![state, percent, now, url, path],
+            params![url, path, state, percent, now],
         )?;
         if changed == 0 {
             self.conn.execute(
@@ -493,6 +502,26 @@ mod tests {
             .unwrap();
         assert_eq!(store.list_downloads().unwrap()[0].path, "/tmp/file");
         assert!(store.remove_download(None, Some("/tmp/file")).unwrap());
+
+        store
+            .upsert_download("blob:null/download-id", "/tmp/planned", "started", 0)
+            .unwrap();
+        store
+            .upsert_download("blob:null/download-id", "", "in_progress", 45)
+            .unwrap();
+        store
+            .upsert_download("blob:null/download-id", "/tmp/selected", "completed", 100)
+            .unwrap();
+        let downloads = store.list_downloads().unwrap();
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].path, "/tmp/selected");
+        assert_eq!(downloads[0].state, "completed");
+        assert!(
+            store
+                .remove_download(Some("blob:null/download-id"), None)
+                .unwrap()
+        );
+        assert!(store.list_downloads().unwrap().is_empty());
     }
 
     #[test]

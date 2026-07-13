@@ -848,6 +848,7 @@ bool BrowserWindow::AddActiveBookmark() {
   Store().AddLog("info", "Bookmark added: " + tab->url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
@@ -937,6 +938,15 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     ok = Store().ClearHistory() && Store().ClearDownloads() && Store().ClearLogs();
   }
   if (ok) {
+    if (target == "bookmarks") {
+      PageCache::Instance().Invalidate("fubuki://bookmarks");
+    }
+    if (target == "history" || target == "all") {
+      PageCache::Instance().Invalidate("fubuki://history");
+    }
+    if (target == "downloads" || target == "all") {
+      PageCache::Instance().Invalidate("fubuki://downloads");
+    }
     if (target != "logs" && target != "all") {
       Store().AddLog("info", "Browsing data cleared: " + target);
     }
@@ -948,6 +958,7 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
   const bool ok = Store().ClearHistoryRange(range);
   if (ok) {
+    PageCache::Instance().Invalidate("fubuki://history");
     eventBus_.Publish(
         {EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
@@ -992,7 +1003,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     app_.PersistSession();
   }
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://");
   return true;
 }
 
@@ -1000,7 +1011,7 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
   Store().ResetSetting(key);
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://");
   return true;
 }
 
@@ -1360,7 +1371,9 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      Store().AddHistory(tab->title, tab->url, tab->faviconUrl);
+      if (Store().AddHistory(tab->title, tab->url, tab->faviconUrl)) {
+        PageCache::Instance().Invalidate("fubuki://history");
+      }
       app_.PersistSession();
     }
     eventBus_.Publish(
