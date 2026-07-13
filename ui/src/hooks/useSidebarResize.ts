@@ -1,11 +1,16 @@
 import { createSignal, onCleanup } from 'solid-js';
-import { fubuki } from '../bridge/fubuki';
-import { browserState, refreshState } from '../stores/browserStore';
+import { invokeBridge, requireBridgeSuccess } from '../bridge/fubuki';
+import { browserState, runBrowserAction } from '../stores/browserStore';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
 
 function applyLiveSidebarWidth(width: number) {
   document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
-  void fubuki.invoke('ui.setSidebarWidth', { width });
+  runBrowserAction(
+    invokeBridge('ui.setSidebarWidth', { width }).then((result) =>
+      requireBridgeSuccess(result, 'ui.setSidebarWidth'),
+    ),
+    'ui.setSidebarWidth',
+  );
 }
 
 function currentSidebarWidth() {
@@ -33,9 +38,10 @@ export function useSidebarResize() {
   let animationFrame = 0;
 
   const saveWidth = (width: number) =>
-    fubuki
-      .invoke('settings.set', { key: 'sidebarWidth', value: String(width) })
-      .then(() => refreshState('settings.saved'));
+    invokeBridge('settings.set', {
+      key: 'sidebarWidth',
+      value: String(width),
+    }).then((result) => requireBridgeSuccess(result, 'settings.set'));
 
   const flushLiveWidth = () => {
     animationFrame = 0;
@@ -82,7 +88,7 @@ export function useSidebarResize() {
       handle.releasePointerCapture(activePointerId);
     }
     activePointerId = -1;
-    void saveWidth(width);
+    runBrowserAction(saveWidth(width), 'settings.set');
   };
 
   const onPointerMove = (event: PointerEvent) => {
@@ -131,7 +137,7 @@ export function useSidebarResize() {
   const resetWidth = () => {
     const width = clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
     applyLiveSidebarWidth(width);
-    void saveWidth(width);
+    runBrowserAction(saveWidth(width), 'settings.set');
   };
 
   onCleanup(() => {

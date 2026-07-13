@@ -1,7 +1,7 @@
 import { tabs } from '../bridge/fubuki';
 import { useSidebarResize } from '../hooks/useSidebarResize';
 import { t } from '../i18n';
-import { browserState } from '../stores/browserStore';
+import { browserState, runBrowserAction } from '../stores/browserStore';
 import SidebarActions from './SidebarActions';
 import VerticalTabList from './VerticalTabList';
 
@@ -20,7 +20,7 @@ export default function Sidebar() {
         class="new-tab-button"
         title={t('common.newTab', lang())}
         aria-label={t('common.newTab', lang())}
-        onClick={() => void tabs.create()}
+        onClick={() => runBrowserAction(tabs.create())}
       >
         <span aria-hidden="true">+</span>
       </button>

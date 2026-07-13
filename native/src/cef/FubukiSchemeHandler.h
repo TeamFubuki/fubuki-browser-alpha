@@ -11,9 +11,12 @@
 
 namespace fubuki {
 
+class FrostBridge;
+
 class FubukiSchemeHandler : public CefResourceHandler {
 public:
-  explicit FubukiSchemeHandler(std::string uiDistPath);
+  FubukiSchemeHandler(std::string uiDistPath, FrostBridge *engine,
+                      bool privateRuntime);
 
   bool Open(CefRefPtr<CefRequest> request, bool &handle_request,
             CefRefPtr<CefCallback> callback) override;
@@ -31,6 +34,11 @@ private:
   std::string ResolveAppPath(const std::string &url) const;
 
   std::string uiDistPath_;
+  // FrostBridge lifetime is owned by BrowserAppController and outlives CEF
+  // handlers. This token is immutable and safe to use from the scheme
+  // handler's request thread; never retain or inspect BrowserWindow here.
+  FrostBridge *engine_ = nullptr;
+  bool privateRuntime_ = false;
   std::string data_;
   std::string mimeType_ = "text/plain";
   size_t offset_ = 0;
@@ -64,7 +72,9 @@ private:
 
 class FubukiSchemeHandlerFactory : public CefSchemeHandlerFactory {
 public:
-  explicit FubukiSchemeHandlerFactory(std::string uiDistPath);
+  explicit FubukiSchemeHandlerFactory(std::string uiDistPath,
+                                      FrostBridge *engine = nullptr,
+                                      bool privateRuntime = false);
   CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefFrame> frame,
                                        const CefString &scheme_name,
@@ -72,6 +82,8 @@ public:
 
 private:
   std::string uiDistPath_;
+  FrostBridge *engine_ = nullptr;
+  bool privateRuntime_ = false;
   IMPLEMENT_REFCOUNTING(FubukiSchemeHandlerFactory);
 };
 

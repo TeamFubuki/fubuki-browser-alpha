@@ -88,9 +88,10 @@ class BrowserWindow {
   // Polls pending HostCommands from FrostEngine and executes them, routing
   // host side effects (page/window I/O) back as HostEvents/results.
   void PollAndExecuteHostCommands();
-  // Executes a single HostCommand JSON envelope. Returns true if the command
-  // was recognized and dispatched (regardless of host-side success).
-  bool ExecuteHostCommand(const std::string &commandJson);
+  // Executes a single HostCommand JSON envelope. It does not acknowledge the
+  // command: BrowserAppController owns exactly-once result delivery.
+  bool ExecuteHostCommand(const std::string &commandJson,
+                          std::string *error = nullptr);
   // Pushes a HostEvent JSON envelope back to FrostEngine.
   bool PushHostEventJson(const std::string &eventJson);
   std::string DownloadPathFor(const std::string &suggestedName) const;
@@ -127,6 +128,11 @@ class BrowserWindow {
   }
   FrostStore &Store();
   const FrostStore &Store() const;
+  // Reads settings from this window's FrostRuntime. Private windows therefore
+  // consult only their isolated in-memory engine, never the profile DB.
+  std::string EngineSetting(const std::string &key,
+                            const std::string &fallback = "") const;
+  bool IsApprovedDownloadPath(const std::string &path) const;
   BrowserAppController& App() {
     return app_;
   }

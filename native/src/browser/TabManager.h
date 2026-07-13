@@ -13,10 +13,8 @@ class TabManager {
 public:
   explicit TabManager(EventBus &eventBus);
 
-  Tab &CreateTab(const std::string &url, bool active);
-  // Creates a tab with an explicit id. Used when the id is owned by an
-  // external authority (e.g. FrostEngine HostCommand page.create) so that
-  // host-side and engine-side tab ids stay in sync.
+  // Creates a host page registry entry with an explicit Rust-owned tab ID.
+  // C++ must never allocate logical tab IDs.
   Tab &CreateTab(const std::string &url, bool active, const std::string &tabId);
   bool CloseTab(const std::string &tabId);
   bool ActivateTab(const std::string &tabId);
@@ -32,11 +30,9 @@ public:
   void SetBrowser(const std::string &tabId, CefRefPtr<CefBrowser> browser);
 
 private:
-  std::string NextId();
   void EnsureActiveTab();
 
   EventBus &eventBus_;
-  int nextId_ = 1;
   std::vector<Tab> tabs_;
   std::string activeTabId_;
 };

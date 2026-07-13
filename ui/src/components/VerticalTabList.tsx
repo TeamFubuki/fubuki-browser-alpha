@@ -1,7 +1,11 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { tabs, type Tab } from '../bridge/fubuki';
 import { t } from '../i18n';
-import { browserState, currentLanguage } from '../stores/browserStore';
+import {
+  browserState,
+  currentLanguage,
+  runBrowserAction,
+} from '../stores/browserStore';
 
 function titleFor(tab: Tab, lang: string) {
   return (
@@ -59,7 +63,7 @@ export default function VerticalTabList() {
     const targetIndex = browserState.tabs.findIndex(
       (item) => item.id === targetId,
     );
-    if (targetIndex >= 0) void tabs.move(draggedId, targetIndex);
+    if (targetIndex >= 0) runBrowserAction(tabs.move(draggedId, targetIndex));
   };
 
   return (
@@ -104,7 +108,7 @@ export default function VerticalTabList() {
               >
                 <button
                   class="pinned-tab-activate"
-                  onClick={() => void tabs.activate(tab.id)}
+                  onClick={() => runBrowserAction(tabs.activate(tab.id))}
                 >
                   <Favicon tab={tab} />
                 </button>
@@ -152,7 +156,7 @@ export default function VerticalTabList() {
               >
                 <button
                   class="tab-activate"
-                  onClick={() => void tabs.activate(tab.id)}
+                  onClick={() => runBrowserAction(tabs.activate(tab.id))}
                 >
                   <Favicon tab={tab} />
                   <span class="tab-title">{titleFor(tab, lang())}</span>
@@ -163,7 +167,7 @@ export default function VerticalTabList() {
                   aria-label={closeLabel}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void tabs.close(tab.id);
+                    runBrowserAction(tabs.close(tab.id));
                   }}
                 >
                   <span aria-hidden="true">x</span>

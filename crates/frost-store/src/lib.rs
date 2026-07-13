@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,6 +10,10 @@ use thiserror::Error;
 pub enum StoreError {
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    #[error("failed to prepare database directory: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("legacy database migration failed: {0}")]
+    Migration(String),
     #[error("invalid setting key: {0}")]
     InvalidKey(String),
 }
@@ -74,10 +79,17 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
+        }
         let store = Self {
             conn: Connection::open(path)?,
         };
         store.migrate()?;
+        store.migrate_legacy_database(path)?;
         Ok(store)
     }
 
@@ -138,10 +150,199 @@ impl SqliteStore {
               id INTEGER PRIMARY KEY CHECK (id = 1),
               snapshot TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              name TEXT PRIMARY KEY NOT NULL,
+              applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             ",
         )?;
         Ok(())
     }
+
+    /// Imports the previous host-owned database once, without ever deleting
+    /// the original. The migration is transactional and records its marker
+    /// only after all copies complete, so a failed run can safely be retried.
+    fn migrate_legacy_database(&self, target_path: &Path) -> StoreResult<()> {
+        if target_path.file_name().and_then(|name| name.to_str()) != Some("frost-engine.sqlite3") {
+            return Ok(());
+        }
+        let Some(parent) = target_path.parent() else {
+            return Ok(());
+        };
+        let legacy_path = parent.join("fubuki.sqlite3");
+        if !legacy_path.is_file() {
+            return Ok(());
+        }
+
+        let already_migrated: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name = 'host-fubuki-sqlite-v1')",
+            [],
+            |row| row.get(0),
+        )?;
+        if already_migrated {
+            return Ok(());
+        }
+
+        let backup_path = parent.join("fubuki.sqlite3.pre-frost-backup");
+        if !backup_path.exists() {
+            fs::copy(&legacy_path, &backup_path).map_err(|error| {
+                StoreError::Migration(format!(
+                    "could not back up {} to {}: {error}",
+                    legacy_path.display(),
+                    backup_path.display()
+                ))
+            })?;
+        }
+
+        self.conn.execute(
+            "ATTACH DATABASE ?1 AS legacy",
+            [&legacy_path.to_string_lossy()],
+        )?;
+        let migration = (|| -> StoreResult<()> {
+            let tx = self.conn.unchecked_transaction()?;
+            copy_legacy_table(
+                &tx,
+                "settings",
+                "INSERT OR REPLACE INTO settings(key, value, updated_at) SELECT key, value, CURRENT_TIMESTAMP FROM legacy.settings",
+            )?;
+            copy_legacy_table(
+                &tx,
+                "bookmarks",
+                "INSERT OR IGNORE INTO bookmarks(title, url, favicon_url, created_at) SELECT title, url, COALESCE(favicon_url, ''), COALESCE(created_at, strftime('%s','now')) FROM legacy.bookmarks",
+            )?;
+            copy_legacy_history(&tx)?;
+            copy_legacy_downloads(&tx)?;
+            copy_legacy_table(
+                &tx,
+                "logs",
+                "INSERT INTO logs(level, message, created_at) SELECT COALESCE(level, 'info'), COALESCE(message, ''), COALESCE(created_at, strftime('%s','now')) FROM legacy.logs",
+            )?;
+            copy_legacy_table(
+                &tx,
+                "site_permissions",
+                "INSERT OR REPLACE INTO permissions(origin, permission, value, created_at) SELECT origin, permission, value, COALESCE(updated_at, strftime('%s','now')) FROM legacy.site_permissions",
+            )?;
+            verify_legacy_copy(&tx, "settings", "settings")?;
+            verify_legacy_copy(&tx, "bookmarks", "bookmarks")?;
+            verify_legacy_copy(&tx, "history", "history")?;
+            verify_legacy_copy(&tx, "downloads", "downloads")?;
+            verify_legacy_copy(&tx, "logs", "logs")?;
+            verify_legacy_copy(&tx, "site_permissions", "permissions")?;
+            tx.execute(
+                "INSERT INTO schema_migrations(name) VALUES ('host-fubuki-sqlite-v1')",
+                [],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })();
+        let detach = self.conn.execute_batch("DETACH DATABASE legacy");
+        match (migration, detach) {
+            (Err(migration_error), _) => Err(migration_error),
+            (Ok(()), Err(detach_error)) => Err(detach_error.into()),
+            (Ok(()), Ok(())) => Ok(()),
+        }
+    }
+}
+
+/// Refuse to mark a legacy migration complete unless every source table that
+/// existed has at least as many rows in its destination. This runs inside the
+/// same transaction as the copy and marker, so a partial copy rolls back and
+/// remains safely retryable from the untouched backup/source database.
+fn verify_legacy_copy(
+    tx: &rusqlite::Transaction<'_>,
+    legacy_table: &str,
+    target_table: &str,
+) -> StoreResult<()> {
+    if !legacy_table_exists(tx, legacy_table)? {
+        return Ok(());
+    }
+    let legacy_count: i64 = tx.query_row(
+        &format!("SELECT COUNT(*) FROM legacy.{legacy_table}"),
+        [],
+        |row| row.get(0),
+    )?;
+    let target_count: i64 =
+        tx.query_row(&format!("SELECT COUNT(*) FROM {target_table}"), [], |row| {
+            row.get(0)
+        })?;
+    if target_count < legacy_count {
+        return Err(StoreError::Migration(format!(
+            "legacy table {legacy_table} copied only {target_count} of {legacy_count} rows into {target_table}"
+        )));
+    }
+    Ok(())
+}
+
+fn legacy_table_exists(tx: &rusqlite::Transaction<'_>, table: &str) -> StoreResult<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM legacy.sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
+fn legacy_column_exists(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    column: &str,
+) -> StoreResult<bool> {
+    if !legacy_table_exists(tx, table)? {
+        return Ok(false);
+    }
+    let mut statement = tx.prepare(&format!("PRAGMA legacy.table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for name in columns {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn copy_legacy_table(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    statement: &str,
+) -> StoreResult<()> {
+    if legacy_table_exists(tx, table)? {
+        tx.execute_batch(statement)?;
+    }
+    Ok(())
+}
+
+fn copy_legacy_history(tx: &rusqlite::Transaction<'_>) -> StoreResult<()> {
+    if !legacy_table_exists(tx, "history")? {
+        return Ok(());
+    }
+    let favicon = if legacy_column_exists(tx, "history", "favicon_url")? {
+        "COALESCE(favicon_url, '')"
+    } else {
+        "''"
+    };
+    tx.execute_batch(&format!(
+        "INSERT INTO history(title, url, favicon_url, created_at) SELECT title, url, {favicon}, COALESCE(created_at, strftime('%s','now')) FROM legacy.history"
+    ))?;
+    Ok(())
+}
+
+fn copy_legacy_downloads(tx: &rusqlite::Transaction<'_>) -> StoreResult<()> {
+    if !legacy_table_exists(tx, "downloads")? {
+        return Ok(());
+    }
+    let created = if legacy_column_exists(tx, "downloads", "created_at")? {
+        "COALESCE(created_at, strftime('%s','now'))"
+    } else {
+        "strftime('%s','now')"
+    };
+    let updated = if legacy_column_exists(tx, "downloads", "updated_at")? {
+        format!("COALESCE(updated_at, {created})")
+    } else {
+        created.to_owned()
+    };
+    tx.execute_batch(&format!(
+        "INSERT INTO downloads(url, path, state, percent, created_at, updated_at) SELECT COALESCE(url, ''), COALESCE(path, ''), COALESCE(state, 'unknown'), COALESCE(percent, 0), {created}, {updated} FROM legacy.downloads"
+    ))?;
+    Ok(())
 }
 
 /// Bulk-clear operations used by the `data.clear` command.
@@ -460,6 +661,7 @@ fn now_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn stores_settings() {
@@ -510,5 +712,44 @@ mod tests {
         store.add_history("A", "https://a.com", "").unwrap();
         assert!(!store.clear_history_range("unknown").unwrap());
         assert_eq!(store.list_history().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn migrates_legacy_database_transactionally_without_removing_source() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let profile = std::env::temp_dir().join(format!(
+            "frost-store-migration-{}-{suffix}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&profile).unwrap();
+        let legacy = profile.join("fubuki.sqlite3");
+        let legacy_conn = Connection::open(&legacy).unwrap();
+        legacy_conn
+            .execute_batch(
+                "
+                CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE history(id INTEGER PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL);
+                INSERT INTO settings(key, value) VALUES ('theme', 'dark');
+                INSERT INTO history(title, url, created_at) VALUES ('Example', 'https://example.com', '1');
+                ",
+            )
+            .unwrap();
+        drop(legacy_conn);
+
+        let target = profile.join("frost-engine.sqlite3");
+        let store = SqliteStore::open(&target).unwrap();
+        assert_eq!(store.get_setting("theme").unwrap(), Some("dark".into()));
+        assert_eq!(store.list_history().unwrap()[0].favicon_url, "");
+        drop(store);
+
+        assert!(legacy.is_file());
+        assert!(profile.join("fubuki.sqlite3.pre-frost-backup").is_file());
+        let reopened = SqliteStore::open(&target).unwrap();
+        assert_eq!(reopened.list_history().unwrap().len(), 1);
+        drop(reopened);
+        fs::remove_dir_all(profile).unwrap();
     }
 }

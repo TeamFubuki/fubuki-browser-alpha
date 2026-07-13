@@ -132,11 +132,42 @@ std::string BrowserAppearance(BrowserWindow *window) {
     return "system";
   }
   const std::string appearance =
-      window->Store().GetSetting("appearance");
+      window->EngineSetting("appearance", "system");
   if (appearance == "light" || appearance == "dark") {
     return appearance;
   }
   return "system";
+}
+
+// Popup navigations are requests for Rust-owned tabs. The CEF callback must
+// never allocate a host-only tab ID, because that would diverge from the
+// FrostEngine state. The command pump creates the CEF browser after Rust has
+// assigned the ID and accepted the operation.
+bool RequestPopupTab(BrowserWindow *window, const std::string &url) {
+  if (!window || url.empty()) {
+    return false;
+  }
+  auto *app = GetBrowserAppController();
+  if (!app) {
+    return false;
+  }
+  auto request = CefDictionaryValue::Create();
+  request->SetInt("version", 0);
+  request->SetString("method", "tabs.create");
+  auto params = CefDictionaryValue::Create();
+  params->SetString("url", url);
+  params->SetBool("active", true);
+  params->SetString("windowId", window->WindowId());
+  request->SetDictionary("params", params);
+  auto request_value = CefValue::Create();
+  request_value->SetDictionary(request);
+  auto response = CefParseJSON(
+      app->EngineForWindow(window).ProcessJson(
+          CefWriteJSON(request_value, JSON_WRITER_DEFAULT).ToString()),
+      JSON_PARSER_RFC);
+  return response && response->GetType() == VTYPE_DICTIONARY &&
+         response->GetDictionary()->HasKey("ok") &&
+         response->GetDictionary()->GetBool("ok");
 }
 
 }  // namespace
@@ -195,56 +226,18 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
     return true;
   }
   if (IsBlankPopupUrl(url)) {
-    const std::string popupTabId = window_->CreatePendingPopupTab("about:blank", true);
-    if (popupTabId.empty()) {
-      return true;
-    }
     if (!window_->IsPrivate()) {
-      window_->Store().AddLog("info", "Opened blank popup as pending tab: " + popupTabId);
+      window_->Store().AddLog(
+          "warning", "Blocked blank popup because it has no navigable URL");
     }
-    windowInfo = window_->PopupWindowInfo();
-    client = new FubukiClient(window_, popupTabId, false);
-    settings.background_color = CefColorSetARGB(255, 255, 255, 255);
-    if (no_javascript_access) {
-      *no_javascript_access = false;
-    }
-    const std::string windowId = window_->WindowId();
-    CefPostDelayedTask(TID_UI,
-                       base::BindOnce(
-                           [](std::string windowId, std::string tabId) {
-                             BrowserAppController* app = GetBrowserAppController();
-                             if (!app) {
-                               return;
-                             }
-                             for (auto* window : app->Windows()) {
-                               if (window && window->WindowId() == windowId) {
-                                 window->ExpirePendingPopupTab(tabId);
-                                 return;
-                               }
-                             }
-                           },
-                           windowId, popupTabId),
-                       15000);
-    return false;
+    return true;
   }
   if (!window_->IsPrivate()) {
     window_->Store().AddLog("info", "Opened popup in new tab: " + url);
   }
-  const std::string windowId = window_->WindowId();
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](std::string windowId, std::string url) {
-                            BrowserAppController* app = GetBrowserAppController();
-                            if (!app) {
-                              return;
-                            }
-                            for (auto* window : app->Windows()) {
-                              if (window && window->WindowId() == windowId) {
-                                window->CreateTab(url, true);
-                                return;
-                              }
-                            }
-                          },
-                          windowId, url));
+  if (!RequestPopupTab(window_, url)) {
+    LOG(ERROR) << "[FubukiClient] failed to queue popup tab through FrostEngine";
+  }
   return true;
 }
 
@@ -252,7 +245,12 @@ bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
   return false;
 }
 
-void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {}
+void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!isUi_ && window_) {
+    window_->App().NotifyPageClosed(window_, tabId_);
+  }
+}
 
 void FubukiClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack,
                                         bool canGoForward) {
@@ -361,7 +359,7 @@ bool FubukiClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownload
   }
   const std::string path = window_->DownloadPathFor(suggested_name.ToString());
   const bool askBeforeDownload =
-      window_->Store().GetSetting("askBeforeDownload") == "on";
+      window_->EngineSetting("askBeforeDownload", "off") == "on";
   window_->OnDownloadStarted(std::to_string(download_item->GetId()),
                              download_item->GetURL().ToString(), path);
   callback->Continue(path, askBeforeDownload);

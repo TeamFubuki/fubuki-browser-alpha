@@ -1,8 +1,7 @@
 #include "cef/FubukiSchemeHandler.h"
 
-#include <sqlite3.h>
-
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -12,12 +11,36 @@
 #include <vector>
 
 #include "browser/BrowserAppController.h"
-#include "browser/BrowserWindow.h"
+#include "bridge/FrostBridge.h"
 #include "include/cef_parser.h"
 
 namespace fubuki {
 
 namespace {
+
+// Scheme handlers can run off the CEF UI thread. Keep only a stable runtime
+// token in thread-local request context; touching BrowserWindow/TabManager
+// here would race NSWindow and CEF destruction.
+thread_local FrostBridge *gSchemeEngine = nullptr;
+thread_local bool gSchemePrivateRuntime = false;
+
+class SchemeOwnerScope {
+ public:
+  SchemeOwnerScope(FrostBridge *engine, bool privateRuntime)
+      : previousEngine_(gSchemeEngine),
+        previousPrivateRuntime_(gSchemePrivateRuntime) {
+    gSchemeEngine = engine;
+    gSchemePrivateRuntime = privateRuntime;
+  }
+  ~SchemeOwnerScope() {
+    gSchemeEngine = previousEngine_;
+    gSchemePrivateRuntime = previousPrivateRuntime_;
+  }
+
+ private:
+  FrostBridge *previousEngine_;
+  bool previousPrivateRuntime_;
+};
 
 struct Record {
   std::string title;
@@ -30,13 +53,9 @@ struct Record {
 };
 
 std::filesystem::path ProfilePath() {
-  const char* home = std::getenv("HOME");
-  return home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
-              : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
-}
-
-std::filesystem::path DatabasePath() {
-  return ProfilePath() / "fubuki.sqlite3";
+  // Debug pages must not disclose the normal profile path to an isolated
+  // runtime, and the scheme thread must not touch the UI-owned store.
+  return {};
 }
 
 std::string MimeForPath(const std::string& path) {
@@ -85,72 +104,31 @@ std::string HtmlEscape(const std::string& value) {
   return out;
 }
 
-void Execute(sqlite3* db, const std::string& sql) {
-  sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
-}
-
-std::string ColumnText(sqlite3_stmt* statement, int column) {
-  const unsigned char* text = sqlite3_column_text(statement, column);
-  return text ? reinterpret_cast<const char*>(text) : "";
-}
-
-sqlite3* OpenDatabase() {
-  // Cache a single process-lifetime connection. Opening the database (and
-  // running the DDL) on every Setting()/QueryRecords() call was a major source
-  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
-  // The connection is now opened once and reused for the process lifetime.
-  static sqlite3* cached = nullptr;
-  static bool initialized = false;
-  if (initialized) {
-    return cached;
-  }
-  std::filesystem::create_directories(ProfilePath());
-  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
-    cached = nullptr;
-    return nullptr;
-  }
-  // Only mark as initialized after a successful open so retries are possible.
-  initialized = true;
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL "
-          "UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
-          "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  // Migration for existing databases that lack download_id column.
-  // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
-  Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT "
-          "NULL,permission TEXT NOT NULL,value TEXT NOT NULL,updated_at "
-          "TEXT NOT NULL,PRIMARY KEY(origin,permission))");
-  return cached;
-}
-
 std::string Setting(const std::string& key, const std::string& fallback = "") {
-  sqlite3* db = OpenDatabase();
-  if (!db)
+  if (!gSchemeEngine) {
     return fallback;
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &statement, nullptr);
-  sqlite3_bind_text(statement, 1, key.c_str(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
-  std::string value = fallback;
-  if (sqlite3_step(statement) == SQLITE_ROW) {
-    value = ColumnText(statement, 0);
   }
-  sqlite3_finalize(statement);
+  auto request = CefDictionaryValue::Create();
+  request->SetInt("version", 0);
+  request->SetString("method", "settings.get");
+  auto params = CefDictionaryValue::Create();
+  params->SetString("key", key);
+  request->SetDictionary("params", params);
+  auto request_value = CefValue::Create();
+  request_value->SetDictionary(request);
+  auto response = CefParseJSON(
+      gSchemeEngine->ProcessJson(
+          CefWriteJSON(request_value, JSON_WRITER_DEFAULT).ToString()),
+      JSON_PARSER_RFC);
+  if (!response || response->GetType() != VTYPE_DICTIONARY) {
+    return fallback;
+  }
+  auto envelope = response->GetDictionary();
+  if (!envelope->HasKey("ok") || !envelope->GetBool("ok") ||
+      !envelope->HasKey("result") || envelope->GetType("result") != VTYPE_STRING) {
+    return fallback;
+  }
+  const std::string value = envelope->GetString("result").ToString();
   return value.empty() ? fallback : value;
 }
 
@@ -277,39 +255,51 @@ std::string DownloadStatusText(const std::string& state, int percent) {
 }
 
 std::vector<Record> QueryRecords(const std::string& table, int limit) {
-  sqlite3* db = OpenDatabase();
-  if (!db)
+  if (!gSchemeEngine) {
     return {};
-
-  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at "
-                                                 "FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history" ? "SELECT title,url,'','','',0,created_at FROM "
-                                                 "history ORDER BY id DESC LIMIT ?"
-                          : table == "logs"
-                              ? "SELECT message,'','',level,'',0,created_at FROM logs ORDER BY id "
-                                "DESC LIMIT ?"
-                              : "SELECT "
-                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at) FROM "
-                                "downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC "
-                                "LIMIT ?";
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
-  sqlite3_bind_int(statement, 1, limit);
+  }
+  const char* method = table == "bookmarks" ? "bookmarks.list"
+      : table == "history" ? "history.list"
+      : table == "downloads" ? "downloads.list" : "";
+  if (!*method) {
+    // Logs are diagnostic host data exposed by the Rust-owned FrostStore FFI.
+    // They are not read by opening SQLite from the scheme handler.
+    // Host diagnostics are intentionally not exposed through a second
+    // SQLite handle on a scheme-handler thread.
+    return {};
+  }
+  auto request = CefDictionaryValue::Create();
+  request->SetInt("version", 0);
+  request->SetString("method", method);
+  request->SetDictionary("params", CefDictionaryValue::Create());
+  auto request_value = CefValue::Create();
+  request_value->SetDictionary(request);
+  auto response = CefParseJSON(
+      gSchemeEngine->ProcessJson(
+          CefWriteJSON(request_value, JSON_WRITER_DEFAULT).ToString()),
+      JSON_PARSER_RFC);
+  if (!response || response->GetType() != VTYPE_DICTIONARY) return {};
+  auto envelope = response->GetDictionary();
+  if (!envelope->HasKey("ok") || !envelope->GetBool("ok") ||
+      !envelope->HasKey("result") || envelope->GetType("result") != VTYPE_LIST) return {};
+  auto list = envelope->GetList("result");
+  if (!list) return {};
 
   std::vector<Record> records;
-  while (sqlite3_step(statement) == SQLITE_ROW) {
+  const size_t count = std::min(list->GetSize(), static_cast<size_t>(std::max(0, limit)));
+  for (size_t i = 0; i < count; ++i) {
+    auto item = list->GetDictionary(i);
+    if (!item) continue;
     Record record;
-    record.title = ColumnText(statement, 0);
-    record.url = ColumnText(statement, 1);
-    record.faviconUrl = ColumnText(statement, 2);
-    record.path = ColumnText(statement, 3);
-    record.state = ColumnText(statement, 4);
-    record.percent = sqlite3_column_int(statement, 5);
-    record.createdAt = ColumnText(statement, 6);
+    record.title = item->GetString("title").ToString();
+    record.url = item->GetString("url").ToString();
+    record.faviconUrl = item->GetString("faviconUrl").ToString();
+    record.path = item->GetString("path").ToString();
+    record.state = item->GetString("state").ToString();
+    record.percent = item->HasKey("percent") ? item->GetInt("percent") : 0;
+    record.createdAt = item->GetString("createdAt").ToString();
     records.push_back(record);
   }
-
-  sqlite3_finalize(statement);
   return records;
 }
 
@@ -666,54 +656,14 @@ std::string SettingsHtml() {
 
 std::string DebugHtml() {
   std::ostringstream body;
-  BrowserAppController* app = GetBrowserAppController();
   body << "<section class=\"section\">";
   body << "<div class=\"field\"><span>Bridge</span><div class=\"meta\">Version "
           "1</div></div>";
   body << "<div class=\"field\"><span>" << Label("Profile path") << "</span><div class=\"meta\">"
        << HtmlEscape(ProfilePath().string()) << "</div></div>";
-  if (app) {
-    body << "<div class=\"field\"><span>" << Label("Windows and tabs")
-         << "</span><div class=\"list\">";
-    for (auto* window : app->Windows()) {
-      body << "<article class=\"row\"><span>▣</span><div><div class=\"title\">"
-           << HtmlEscape(window->WindowId()) << (window->IsPrivate() ? " (Private)" : "")
-           << "</div><div class=\"meta\">";
-      const auto tabs = window->Tabs().GetTabs();
-      for (const auto& tab : tabs) {
-        body << HtmlEscape((tab.isActive ? "* " : "") + (tab.title.empty() ? tab.url : tab.title))
-             << " ";
-      }
-      body << "</div></div><span class=\"meta\">" << tabs.size() << " tabs</span></article>";
-    }
-    body << "</div></div>";
-
-    body << "<div class=\"field\"><span>" << Label("Registered commands")
-         << "</span><div class=\"list\">";
-    if (auto* active = app->ActiveWindow()) {
-      auto commands = active->Commands().List();
-      for (size_t i = 0; i < commands->GetSize(); ++i) {
-        auto command = commands->GetDictionary(i);
-        if (!command)
-          continue;
-        body << "<article class=\"row\"><span>⌘</span><div><div class=\"title\">"
-             << HtmlEscape(command->GetString("title")) << "</div><div class=\"meta\">"
-             << HtmlEscape(command->GetString("id")) << "</div></div><span class=\"meta\">"
-             << HtmlEscape(command->GetString("shortcut")) << "</span></article>";
-      }
-    }
-    body << "</div></div>";
-
-    body << "<div class=\"field\"><span>" << Label("Recent events")
-         << "</span><div class=\"list\">";
-    for (const auto& event : app->Events().RecentEvents()) {
-      body << "<article class=\"row\"><span>•</span><div><div class=\"title\">"
-           << HtmlEscape(event.name) << "</div><div class=\"meta\">"
-           << HtmlEscape(event.windowId + " " + event.tabId + " " + event.message)
-           << "</div></div><span></span></article>";
-    }
-    body << "</div></div>";
-  }
+  body << "<div class=\"field\"><span>Runtime diagnostics</span><div class=\"meta\">"
+          "Window-local state is intentionally not inspected from the scheme handler."
+       << "</div></div>";
 
   body << "<div class=\"field\"><span>" << Label("Logs") << "</span><div class=\"list\">";
   const auto logs = QueryRecords("logs", 80);
@@ -801,8 +751,11 @@ void PageCache::Invalidate(const std::string& prefix) {
   }
 }
 
-FubukiSchemeHandler::FubukiSchemeHandler(std::string uiDistPath)
-    : uiDistPath_(std::move(uiDistPath)) {}
+FubukiSchemeHandler::FubukiSchemeHandler(std::string uiDistPath,
+                                         FrostBridge *engine,
+                                         bool privateRuntime)
+    : uiDistPath_(std::move(uiDistPath)), engine_(engine),
+      privateRuntime_(privateRuntime) {}
 
 bool FubukiSchemeHandler::Open(CefRefPtr<CefRequest> request, bool& handle_request,
                                CefRefPtr<CefCallback>) {
@@ -882,8 +835,16 @@ std::string SearchRedirectUrl(const std::string& query) {
 }
 
 bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
+  // All generated internal-page content must use the same runtime as the
+  // browser that requested it.  In particular, private pages must never read
+  // the profile-backed engine or its cached HTML.
+  SchemeOwnerScope ownerScope(engine_, privateRuntime_);
   offset_ = 0;
   auto& cache = PageCache::Instance();
+  const std::string cacheKey =
+      privateRuntime_
+          ? "private:" + std::to_string(reinterpret_cast<uintptr_t>(engine_)) + ":" + url
+          : url;
 
   // Destructive internal-page actions must never execute from a URL GET.
   // `fubuki://settings/set?...` is only honored when submitted as a POST form
@@ -915,55 +876,55 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
 
   if (url.rfind("fubuki://newtab/", 0) == 0) {
     std::string html;
-    if (cache.Get(url, html)) {
+    if (cache.Get(cacheKey, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
       html = NewTabHtml();
-      cache.Set(url, html);
+      cache.Set(cacheKey, html);
       LoadText(std::move(html), "text/html", 200);
     }
     return true;
   }
   if (url.rfind("fubuki://bookmarks/", 0) == 0) {
     std::string html;
-    if (cache.Get(url, html)) {
+    if (cache.Get(cacheKey, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
       html = BookmarksHtml();
-      cache.Set(url, html);
+      cache.Set(cacheKey, html);
       LoadText(std::move(html), "text/html", 200);
     }
     return true;
   }
   if (url.rfind("fubuki://downloads/", 0) == 0) {
     std::string html;
-    if (cache.Get(url, html)) {
+    if (cache.Get(cacheKey, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
       html = DownloadsHtml();
-      cache.Set(url, html);
+      cache.Set(cacheKey, html);
       LoadText(std::move(html), "text/html", 200);
     }
     return true;
   }
   if (url.rfind("fubuki://history/", 0) == 0) {
     std::string html;
-    if (cache.Get(url, html)) {
+    if (cache.Get(cacheKey, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
       html = HistoryHtml();
-      cache.Set(url, html);
+      cache.Set(cacheKey, html);
       LoadText(std::move(html), "text/html", 200);
     }
     return true;
   }
   if (url.rfind("fubuki://settings", 0) == 0) {
     std::string html;
-    if (cache.Get(url, html)) {
+    if (cache.Get(cacheKey, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
       html = SettingsHtml();
-      cache.Set(url, html, std::chrono::seconds{2});
+      cache.Set(cacheKey, html, std::chrono::seconds{2});
       LoadText(std::move(html), "text/html", 200);
     }
     return true;
@@ -1013,14 +974,23 @@ std::string FubukiSchemeHandler::ResolveAppPath(const std::string& url) const {
   return uiDistPath_ + "/" + path;
 }
 
-FubukiSchemeHandlerFactory::FubukiSchemeHandlerFactory(std::string uiDistPath)
-    : uiDistPath_(std::move(uiDistPath)) {}
+FubukiSchemeHandlerFactory::FubukiSchemeHandlerFactory(std::string uiDistPath,
+                                                       FrostBridge *engine,
+                                                       bool privateRuntime)
+    : uiDistPath_(std::move(uiDistPath)), engine_(engine),
+      privateRuntime_(privateRuntime) {}
 
 CefRefPtr<CefResourceHandler> FubukiSchemeHandlerFactory::Create(CefRefPtr<CefBrowser>,
                                                                  CefRefPtr<CefFrame>,
                                                                  const CefString&,
                                                                  CefRefPtr<CefRequest>) {
-  return new FubukiSchemeHandler(uiDistPath_);
+  FrostBridge *engine = engine_;
+  if (!engine && !privateRuntime_) {
+    // The profile runtime is process-long-lived and initialized before any
+    // normal browser request. Do not inspect window/tab state from here.
+    if (auto *controller = GetBrowserAppController()) engine = &controller->Engine();
+  }
+  return new FubukiSchemeHandler(uiDistPath_, engine, privateRuntime_);
 }
 
 }  // namespace fubuki

@@ -8,6 +8,9 @@ extern "C" {
 
 // Engine instance ----------------------------------------------------------
 void *frost_engine_new();
+// Creates a private-mode engine with an isolated in-memory Rust store and a
+// Rust-owned initial private window. It must never be used for a profile.
+void *frost_engine_new_private();
 void *frost_engine_new_with_store(const char *path);
 void frost_engine_free(void *handle);
 char *frost_engine_process_json(void *handle, const char *request_json);

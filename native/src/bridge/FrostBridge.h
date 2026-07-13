@@ -18,6 +18,12 @@ public:
     return handle_ != nullptr;
   }
 
+  // A bridge created without a store is an isolated in-memory FrostEngine.
+  // BrowserAppController uses one such runtime for each private window; this
+  // flag is deliberately immutable so a private runtime can never be routed
+  // back into the profile-backed engine by accident.
+  bool IsEphemeral() const { return ephemeral_; }
+
   // Returns the raw FrostEngine handle. Only used by FrostStore which
   // needs the raw handle for protocol delegation.
   void *RawHandle() const { return handle_; }
@@ -36,6 +42,7 @@ public:
 
 private:
   void *handle_ = nullptr;
+  bool ephemeral_ = false;
 };
 
 }  // namespace fubuki

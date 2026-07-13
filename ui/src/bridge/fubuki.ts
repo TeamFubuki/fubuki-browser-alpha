@@ -274,8 +274,8 @@ export type EventMap = {
   'setting.changed': { key: string; value: string };
   'permission.changed': void;
   'window.created': FrostWindowState | void;
-  'window.closed': void;
-  'window.focused': void;
+  'window.closed': { windowId: string };
+  'window.focused': { windowId: string };
   'app.stateChanged': void;
 };
 
@@ -285,6 +285,23 @@ type NativeQuery = {
   request: string;
   onSuccess: (response: string) => void;
   onFailure: (code: number, message: string) => void;
+};
+
+export class BridgeError extends Error {
+  readonly method: string;
+  readonly code?: number;
+
+  constructor(method: string, message: string, code?: number) {
+    super(message);
+    this.name = 'BridgeError';
+    this.method = method;
+    this.code = code;
+  }
+}
+
+export type BridgeFailure = {
+  method: string;
+  error: BridgeError;
 };
 
 declare global {
@@ -305,39 +322,67 @@ declare global {
 }
 
 const listeners = new Map<string, Set<(payload: unknown) => void>>();
+const failureListeners = new Set<(failure: BridgeFailure) => void>();
+
+function reportBridgeFailure(method: string, error: BridgeError) {
+  const failure = { method, error };
+  failureListeners.forEach((listener) => listener(failure));
+}
 
 function emit(eventName: string, payload: unknown) {
   listeners.get(eventName)?.forEach((listener) => listener(payload));
 }
 
-window.addEventListener('fubuki:event', (event) => {
-  const detail = (event as CustomEvent).detail as {
-    name?: string;
-    payload?: unknown;
-  };
-  if (detail?.name) {
-    emit(detail.name, detail.payload);
-  }
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('fubuki:event', (event) => {
+    const detail = (event as CustomEvent).detail as {
+      name?: string;
+      payload?: unknown;
+    };
+    if (detail?.name) {
+      emit(detail.name, detail.payload);
+    }
+  });
+}
 
 async function invoke<T = unknown>(
   method: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  if (!window.cefQuery) {
-    throw new Error('Fubuki native bridge is not available');
+  const cefQuery = window.cefQuery;
+  if (!cefQuery) {
+    const error = new BridgeError(
+      method,
+      'Fubuki native bridge is not available',
+    );
+    reportBridgeFailure(method, error);
+    throw error;
   }
 
   return new Promise<T>((resolve, reject) => {
-    window.cefQuery?.({
+    const rejectWithBridgeError = (message: string, code?: number) => {
+      const error = new BridgeError(method, message, code);
+      reportBridgeFailure(method, error);
+      reject(error);
+    };
+
+    cefQuery({
       request: JSON.stringify({
         version: 0,
         bridgeVersion: '1',
         method,
         params,
       }),
-      onSuccess: (response) => resolve(JSON.parse(response) as T),
-      onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
+      onSuccess: (response) => {
+        try {
+          resolve(JSON.parse(response) as T);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Invalid JSON response';
+          rejectWithBridgeError(`Invalid bridge response: ${message}`);
+        }
+      },
+      onFailure: (code, message) => rejectWithBridgeError(message, code),
     });
   });
 }
@@ -352,13 +397,48 @@ function on(
   return () => set.delete(listener);
 }
 
-window.fubuki = {
+const bridgeApi = {
   bridgeVersion: '1',
   invoke,
   on,
 };
 
-export const fubuki = window.fubuki;
+if (typeof window !== 'undefined') {
+  window.fubuki = bridgeApi;
+}
+
+export const fubuki = bridgeApi;
+
+export function onBridgeFailure(
+  listener: (failure: BridgeFailure) => void,
+): () => void {
+  failureListeners.add(listener);
+  return () => failureListeners.delete(listener);
+}
+
+export function requireBridgeSuccess<T>(result: T, method: string): T {
+  if (result === false) {
+    const error = new BridgeError(method, 'Operation was not completed');
+    reportBridgeFailure(method, error);
+    throw error;
+  }
+  if (
+    typeof result === 'object' &&
+    result !== null &&
+    'ok' in result &&
+    (result as { ok?: unknown }).ok === false
+  ) {
+    const message =
+      'error' in result &&
+      typeof (result as { error?: unknown }).error === 'string'
+        ? (result as { error: string }).error
+        : 'Operation was not completed';
+    const error = new BridgeError(method, message);
+    reportBridgeFailure(method, error);
+    throw error;
+  }
+  return result;
+}
 
 export function invokeBridge<K extends keyof BridgeMethodMap>(
   method: K,
@@ -546,20 +626,12 @@ export async function getBrowserState(): Promise<BrowserState> {
   if (!window.cefQuery) {
     return developmentState();
   }
-  try {
-    const snapshot = await invokeBridge('app.snapshot');
-    const state = normalizeAppState(snapshot);
-    if (isFrostAppState(snapshot)) {
-      // Fetch commands in parallel, not sequentially
-      const commandsPromise = invokeBridge('commands.list').catch(
-        () => [] as BrowserCommand[],
-      );
-      return { ...state, commands: await commandsPromise };
-    }
-    return state;
-  } catch {
-    return invokeBridge('app.getState');
+  const snapshot = await invokeBridge('app.snapshot');
+  const state = normalizeAppState(snapshot);
+  if (isFrostAppState(snapshot)) {
+    return { ...state, commands: await invokeBridge('commands.list') };
   }
+  return state;
 }
 
 export function onBridgeEvent<K extends keyof EventMap>(
@@ -573,31 +645,88 @@ export const commands = {
   execute: <T = unknown>(
     id: CommandId | string,
     args: Record<string, unknown> = {},
-  ) => invokeBridge('commands.execute', { id, args }) as Promise<T>,
+  ) =>
+    invokeBridge('commands.execute', { id, args }).then((result) => {
+      if (
+        result === false ||
+        (typeof result === 'object' &&
+          result !== null &&
+          'handled' in result &&
+          result.handled === false)
+      ) {
+        const error = new BridgeError(
+          'commands.execute',
+          `Command was not handled: ${id}`,
+        );
+        reportBridgeFailure('commands.execute', error);
+        throw error;
+      }
+      return result as T;
+    }),
   list: () => invokeBridge('commands.list'),
 };
 
 export const tabs = {
   create: (url = 'fubuki://newtab/') =>
-    invokeBridge('tabs.create', { url, active: true }),
+    invokeBridge('tabs.create', { url, active: true }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.create'),
+    ),
   navigate: (tabId: string, input: string) =>
-    invokeBridge('tabs.navigate', { tabId, input }),
-  activate: (tabId: string) => invokeBridge('tabs.activate', { tabId }),
-  close: (tabId: string) => invokeBridge('tabs.close', { tabId }),
-  reload: (tabId: string) => invokeBridge('tabs.reload', { tabId }),
-  stop: (tabId: string) => invokeBridge('tabs.stop', { tabId }),
-  goBack: (tabId: string) => invokeBridge('tabs.goBack', { tabId }),
-  goForward: (tabId: string) => invokeBridge('tabs.goForward', { tabId }),
+    invokeBridge('tabs.navigate', { tabId, input }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.navigate'),
+    ),
+  activate: (tabId: string) =>
+    invokeBridge('tabs.activate', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.activate'),
+    ),
+  close: (tabId: string) =>
+    invokeBridge('tabs.close', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.close'),
+    ),
+  reload: (tabId: string) =>
+    invokeBridge('tabs.reload', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.reload'),
+    ),
+  stop: (tabId: string) =>
+    invokeBridge('tabs.stop', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.stop'),
+    ),
+  goBack: (tabId: string) =>
+    invokeBridge('tabs.goBack', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.goBack'),
+    ),
+  goForward: (tabId: string) =>
+    invokeBridge('tabs.goForward', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.goForward'),
+    ),
   move: (tabId: string, toIndex: number) =>
-    invokeBridge('tabs.move', { tabId, toIndex }),
+    invokeBridge('tabs.move', { tabId, toIndex }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.move'),
+    ),
   pin: (tabId: string, pinned: boolean) =>
-    invokeBridge('tabs.pin', { tabId, pinned }),
-  duplicate: (tabId: string) => invokeBridge('tabs.duplicate', { tabId }),
-  reopenClosed: () => invokeBridge('tabs.reopenClosed'),
-  closeOther: (tabId: string) => invokeBridge('tabs.closeOther', { tabId }),
-  closeToRight: (tabId: string) => invokeBridge('tabs.closeToRight', { tabId }),
+    invokeBridge('tabs.pin', { tabId, pinned }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.pin'),
+    ),
+  duplicate: (tabId: string) =>
+    invokeBridge('tabs.duplicate', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.duplicate'),
+    ),
+  reopenClosed: () =>
+    invokeBridge('tabs.reopenClosed').then((result) =>
+      requireBridgeSuccess(result, 'tabs.reopenClosed'),
+    ),
+  closeOther: (tabId: string) =>
+    invokeBridge('tabs.closeOther', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.closeOther'),
+    ),
+  closeToRight: (tabId: string) =>
+    invokeBridge('tabs.closeToRight', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.closeToRight'),
+    ),
   moveToNewWindow: (tabId: string) =>
-    invokeBridge('tabs.moveToNewWindow', { tabId }),
+    invokeBridge('tabs.moveToNewWindow', { tabId }).then((result) =>
+      requireBridgeSuccess(result, 'tabs.moveToNewWindow'),
+    ),
 };
 
 export const page = {

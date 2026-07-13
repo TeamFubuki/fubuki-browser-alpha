@@ -3,7 +3,9 @@ import {
   fromFrostTab,
   invokeBridge,
   normalizeAppState,
+  onBridgeFailure,
   onBridgeEvent,
+  requireBridgeSuccess,
   type BookmarkRecord,
   type BrowserState,
   type FrostTabState,
@@ -11,7 +13,16 @@ import {
   type Tab,
 } from '../bridge/fubuki';
 
-const initialState: BrowserState & { status: string } = {
+export type BrowserError = {
+  message: string;
+  method?: string;
+  occurredAt: number;
+};
+
+const initialState: BrowserState & {
+  status: string;
+  error: BrowserError | null;
+} = {
   bridgeVersion: '1',
   windowId: '',
   isPrivate: false,
@@ -40,14 +51,51 @@ const initialState: BrowserState & { status: string } = {
   },
   profilePath: '',
   status: 'Starting',
+  error: null,
 };
 
 export const [browserState, setBrowserState] = createStore(initialState);
+const reportedErrors = new WeakSet<Error>();
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function reportBrowserError(error: unknown, method?: string): void {
+  if (error instanceof Error) {
+    if (reportedErrors.has(error)) return;
+    reportedErrors.add(error);
+  }
+  const message = errorMessage(error);
+  console.error(`[Fubuki] ${method ?? 'UI operation'} failed:`, error);
+  setBrowserState('error', {
+    message,
+    method,
+    occurredAt: Date.now(),
+  });
+  setBrowserState('status', 'Error');
+}
+
+export function clearBrowserError(): void {
+  setBrowserState('error', null);
+  if (browserState.status === 'Error') setBrowserState('status', 'Ready');
+}
+
+/** Handles user gestures without losing rejected bridge operations. */
+export function runBrowserAction(
+  promise: Promise<unknown>,
+  method?: string,
+): void {
+  void promise.catch((error) => reportBrowserError(error, method));
+}
+
+onBridgeFailure(({ method, error }) => reportBrowserError(error, method));
 
 // --- Lightweight targeted refresh (no full snapshot) ---
 
 let bookmarksPending = false;
 let historyPending = false;
+let downloadsPending = false;
 
 async function refreshBookmarks() {
   if (bookmarksPending) return;
@@ -55,8 +103,8 @@ async function refreshBookmarks() {
   try {
     const list = await invokeBridge('bookmarks.list');
     setBrowserState('bookmarks', list as BookmarkRecord[]);
-  } catch {
-    // ignore
+  } catch (error) {
+    reportBrowserError(error, 'bookmarks.list');
   } finally {
     bookmarksPending = false;
   }
@@ -68,29 +116,46 @@ async function refreshHistory() {
   try {
     const list = await invokeBridge('history.list');
     setBrowserState('history', list as HistoryRecord[]);
-  } catch {
-    // ignore
+  } catch (error) {
+    reportBrowserError(error, 'history.list');
   } finally {
     historyPending = false;
   }
 }
 
-// --- Full snapshot refresh (used only on startup and app.stateChanged) ---
+async function refreshDownloads() {
+  if (downloadsPending) return;
+  downloadsPending = true;
+  try {
+    const list = await invokeBridge('downloads.list');
+    setBrowserState('downloads', list as BrowserState['downloads']);
+  } catch (error) {
+    reportBrowserError(error, 'downloads.list');
+  } finally {
+    downloadsPending = false;
+  }
+}
+
+// --- Full snapshot refresh (startup and explicit failure recovery only) ---
 
 let pendingFullRefresh: Promise<void> | undefined;
 let fullRefreshCounter = 0;
 
 /**
- * Full snapshot refresh — only for startup and rare edge cases.
- * Calls app.snapshot (1 bridge call). Commands are cached separately.
+ * Full snapshot refresh. Event handlers patch individual state slices and must
+ * not call this as a routine synchronization mechanism.
  */
 export async function refreshFullState(status = 'Ready') {
   if (pendingFullRefresh) return pendingFullRefresh;
   const myCounter = ++fullRefreshCounter;
   pendingFullRefresh = (async () => {
     try {
-      const snapshot = await invokeBridge('app.snapshot');
+      const [snapshot, commandList] = await Promise.all([
+        invokeBridge('app.snapshot'),
+        invokeBridge('commands.list'),
+      ]);
       const state = normalizeAppState(snapshot);
+      state.commands = commandList;
       if (myCounter !== fullRefreshCounter) return;
 
       // Only update slices that actually changed
@@ -132,8 +197,8 @@ export async function refreshFullState(status = 'Ready') {
       }
       setBrowserState('status', status);
     } catch (error) {
-      console.error('[Fubuki] Full state refresh failed:', error);
-      setBrowserState('status', 'Error');
+      reportBrowserError(error, 'app.snapshot');
+      throw error;
     }
   })().finally(() => {
     pendingFullRefresh = undefined;
@@ -141,8 +206,11 @@ export async function refreshFullState(status = 'Ready') {
   return pendingFullRefresh;
 }
 
-// Keep backward-compatible alias
-export const refreshState = refreshFullState;
+/** Reconcile from Rust only after a user-visible bridge failure. */
+export async function recoverFromBridgeFailure(): Promise<void> {
+  await refreshFullState('Recovered');
+  clearBrowserError();
+}
 
 // --- Accessors ---
 
@@ -173,50 +241,53 @@ export async function toggleBookmark(): Promise<void> {
     tab.url.startsWith('data:')
   )
     return;
-  try {
-    if (isTabBookmarked(tab.url)) {
-      await invokeBridge('bookmarks.remove', { url: tab.url });
-    } else {
+  if (isTabBookmarked(tab.url)) {
+    requireBridgeSuccess(
+      await invokeBridge('bookmarks.remove', { url: tab.url }),
+      'bookmarks.remove',
+    );
+  } else {
+    requireBridgeSuccess(
       await invokeBridge('bookmarks.save', {
         title: tab.title || tab.url,
         url: tab.url,
         faviconUrl: tab.faviconUrl || '',
-      });
-    }
-    // Only refresh bookmarks, not the full state
-    await refreshBookmarks();
-  } catch (error) {
-    console.error('[Fubuki] Failed to toggle bookmark:', error);
+      }),
+      'bookmarks.save',
+    );
   }
+  // Only refresh bookmarks, not the full state.
+  await refreshBookmarks();
 }
 
-export function toggleSidebar(): void {
+export async function toggleSidebar(): Promise<void> {
   const next =
     browserState.settings.sidebarVisible === 'hide' ? 'show' : 'hide';
-  // Update optimistically — no bridge refresh needed for UI state
+  requireBridgeSuccess(
+    await invokeBridge('settings.set', {
+      key: 'sidebarVisible',
+      value: next,
+    }),
+    'settings.set',
+  );
+  // The Rust acknowledgement is authoritative. The setting.changed event
+  // normally performs this patch; this covers hosts that omit the echo event.
   setBrowserState('settings', 'sidebarVisible', next);
-  void invokeBridge('settings.set', {
-    key: 'sidebarVisible',
-    value: next,
-  }).catch((error) => {
-    console.error('[Fubuki] Failed to toggle sidebar:', error);
-    // Revert on failure
-    setBrowserState(
-      'settings',
-      'sidebarVisible',
-      next === 'show' ? 'hide' : 'show',
-    );
-  });
 }
 
-export function navigateInternal(url: string): void {
+export async function navigateInternal(url: string): Promise<void> {
   const tab = activeTab();
-  const promise = tab
-    ? invokeBridge('tabs.navigate', { tabId: tab.id, input: url })
-    : invokeBridge('tabs.create', { url, active: true });
-  void promise.catch((error) =>
-    console.error('[Fubuki] Failed to navigate:', error),
-  );
+  if (tab) {
+    requireBridgeSuccess(
+      await invokeBridge('tabs.navigate', { tabId: tab.id, input: url }),
+      'tabs.navigate',
+    );
+  } else {
+    requireBridgeSuccess(
+      await invokeBridge('tabs.create', { url, active: true }),
+      'tabs.create',
+    );
+  }
 }
 
 // --- Event binding ---
@@ -284,14 +355,14 @@ export function bindNativeEvents() {
       }
     }),
 
-    onBridgeEvent('window.closed', () => {
-      // Windows changed — need full refresh to reconcile tabs
-      void refreshFullState('window.closed');
+    onBridgeEvent('window.closed', ({ windowId }) => {
+      setBrowserState('windows', (windows) =>
+        windows.filter((windowState) => windowState.id !== windowId),
+      );
     }),
 
-    onBridgeEvent('window.focused', () => {
-      // Window focus changed — need full refresh to get active window/tabs
-      void refreshFullState('window.focused');
+    onBridgeEvent('window.focused', ({ windowId }) => {
+      setBrowserState('windowId', windowId);
     }),
 
     // --- Settings (direct patch) ---
@@ -307,11 +378,11 @@ export function bindNativeEvents() {
 
     // --- Bookmarks / History (targeted single-endpoint refresh) ---
     onBridgeEvent('bookmark.changed', () => {
-      void refreshBookmarks();
+      runBrowserAction(refreshBookmarks(), 'bookmarks.list');
     }),
 
     onBridgeEvent('history.changed', () => {
-      void refreshHistory();
+      runBrowserAction(refreshHistory(), 'history.list');
     }),
 
     onBridgeEvent('permission.changed', () => {
@@ -321,21 +392,23 @@ export function bindNativeEvents() {
 
     // --- Downloads (targeted refresh) ---
     onBridgeEvent('downloads.updated', () => {
-      void refreshFullState('downloads.updated');
+      runBrowserAction(refreshDownloads(), 'downloads.list');
     }),
 
     onBridgeEvent('download.changed', () => {
-      void refreshFullState('download.changed');
+      runBrowserAction(refreshDownloads(), 'downloads.list');
     }),
 
-    // --- Full app state changed (edge cases) ---
+    // app.stateChanged is a legacy compatibility notification. Correct Frost
+    // hosts emit individual differential events; snapshot is reserved for an
+    // explicit failure-recovery action.
     onBridgeEvent('app.stateChanged', () => {
-      void refreshFullState('app.stateChanged');
+      setBrowserState('status', 'Ready');
     }),
   ];
 
-  // Fire-and-forget initial state load
-  void refreshFullState('Ready');
+  // Startup is the sole automatic full snapshot.
+  runBrowserAction(refreshFullState('Ready'), 'app.snapshot');
 
   return () => disposers.forEach((dispose) => dispose());
 }

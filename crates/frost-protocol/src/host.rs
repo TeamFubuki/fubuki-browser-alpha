@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct HostCommandEnvelope {
     pub version: u16,
-    pub id: String,
+    /// Correlates a command with exactly one terminal host result.  Rust owns
+    /// this identifier; hosts must return it unchanged as `operationId`.
+    #[serde(alias = "id")]
+    pub operation_id: String,
     #[serde(flatten)]
     pub command: HostCommand,
 }
@@ -34,6 +37,11 @@ pub enum HostCommand {
     WindowCreate { window_id: String, is_private: bool },
     #[serde(rename = "window.close", rename_all = "camelCase")]
     WindowClose { window_id: String },
+    /// Requests creation of a separate in-memory private runtime.  It
+    /// deliberately carries no `windowId`: the persistent core must never
+    /// allocate or own private-window state.
+    #[serde(rename = "runtime.createPrivate")]
+    RuntimeCreatePrivate,
     #[serde(rename = "file.open", rename_all = "camelCase")]
     FileOpen { path: String },
     #[serde(rename = "file.reveal", rename_all = "camelCase")]
@@ -54,7 +62,10 @@ pub enum HostCommand {
 #[serde(rename_all = "camelCase")]
 pub struct HostCommandResultEnvelope {
     pub version: u16,
-    pub command_id: String,
+    /// Compatibility alias for hosts built before operation IDs were named
+    /// consistently. New hosts must emit `operationId`.
+    #[serde(alias = "commandId")]
+    pub operation_id: String,
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -95,6 +106,10 @@ pub enum HostEvent {
     },
     #[serde(rename = "page.loadFailed", rename_all = "camelCase")]
     PageLoadFailed { tab_id: String, error_text: String },
+    /// A CEF navigation completed. FrostEngine records history from its own
+    /// current tab state, keeping persistence out of the native host.
+    #[serde(rename = "page.navigationFinished", rename_all = "camelCase")]
+    PageNavigationFinished { tab_id: String },
     #[serde(rename = "download.updated", rename_all = "camelCase")]
     DownloadUpdated {
         url: String,
@@ -115,11 +130,31 @@ pub enum HostEvent {
 }
 
 impl HostCommandEnvelope {
-    pub fn new(id: impl Into<String>, command: HostCommand) -> Self {
+    pub fn new(operation_id: impl Into<String>, command: HostCommand) -> Self {
         Self {
             version: crate::PROTOCOL_VERSION,
-            id: id.into(),
+            operation_id: operation_id.into(),
             command,
+        }
+    }
+}
+
+impl HostCommandResultEnvelope {
+    pub fn success(operation_id: impl Into<String>) -> Self {
+        Self {
+            version: crate::PROTOCOL_VERSION,
+            operation_id: operation_id.into(),
+            ok: true,
+            error: None,
+        }
+    }
+
+    pub fn failure(operation_id: impl Into<String>, error: impl Into<String>) -> Self {
+        Self {
+            version: crate::PROTOCOL_VERSION,
+            operation_id: operation_id.into(),
+            ok: false,
+            error: Some(error.into()),
         }
     }
 }
@@ -150,9 +185,32 @@ mod tests {
         let json = serde_json::to_value(envelope).unwrap();
 
         assert_eq!(json["version"], 0);
-        assert_eq!(json["id"], "cmd-1");
+        assert_eq!(json["operationId"], "cmd-1");
         assert_eq!(json["command"], "page.navigate");
         assert_eq!(json["payload"]["tabId"], "tab-1");
         assert_eq!(json["payload"]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn accepts_legacy_host_result_command_id() {
+        let result: HostCommandResultEnvelope = serde_json::from_value(serde_json::json!({
+            "version": 0,
+            "commandId": "cmd-1",
+            "ok": false,
+            "error": "not implemented"
+        }))
+        .unwrap();
+        assert_eq!(result.operation_id, "cmd-1");
+    }
+
+    #[test]
+    fn private_runtime_command_has_no_persistent_window_identifier() {
+        let command =
+            HostCommandEnvelope::new("operation-private", HostCommand::RuntimeCreatePrivate);
+        let json = serde_json::to_value(command).unwrap();
+
+        assert_eq!(json["command"], "runtime.createPrivate");
+        assert!(json["payload"].is_null());
+        assert!(json.get("windowId").is_none());
     }
 }

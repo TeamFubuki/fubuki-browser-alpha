@@ -219,7 +219,7 @@ where
     fn route_external(&mut self, command: ExternalCommand) -> CoreResult<serde_json::Value> {
         match command {
             ExternalCommand::StateRead => {
-                let snapshot = self.snapshot();
+                let snapshot = self.snapshot()?;
                 Ok(
                     serde_json::to_value(snapshot)
                         .map_err(|e| CoreError::Message(e.to_string()))?,
@@ -230,6 +230,7 @@ where
                     frost_protocol::ProtocolRequest::new(frost_protocol::Request::TabsCreate {
                         url,
                         active,
+                        window_id: None,
                     });
                 Self::bool_response_or_error(self.process(request), "tab create failed")
             }
@@ -284,15 +285,25 @@ where
         }
     }
 
-    /// Maps a [`frost_protocol::ProtocolResponse`] to a JSON outcome, treating both a non-`Bool(true)`
-    /// response and an explicit `Error` response as a failure so callers get a
-    /// clear result rather than a silent `false`.
+    /// Maps a [`frost_protocol::ProtocolResponse`] to a JSON outcome.  A
+    /// queued host action is acknowledged as pending rather than incorrectly
+    /// reported as completed to an external caller.
     fn bool_response_or_error(
         response: frost_protocol::ProtocolResponse,
         label: &str,
     ) -> CoreResult<serde_json::Value> {
         match response.response {
             frost_protocol::Response::Bool(true) => Ok(serde_json::json!({ "ok": true })),
+            frost_protocol::Response::Operation(operation) => Ok(serde_json::json!({
+                "ok": true,
+                "pending": true,
+                "operation": operation,
+            })),
+            frost_protocol::Response::Operations(operations) => Ok(serde_json::json!({
+                "ok": true,
+                "pending": true,
+                "operations": operations,
+            })),
             frost_protocol::Response::Error(msg) => Err(CoreError::Message(msg)),
             _ => Err(CoreError::Message(label.into())),
         }

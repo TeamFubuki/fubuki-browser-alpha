@@ -43,9 +43,57 @@ pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
     unsafe { frost_engine_new_with_store(ptr::null()) }
 }
 
+/// Creates an isolated private-mode engine.
+///
+/// This constructor always uses `InMemoryStore` and marks its Rust-owned
+/// initial window private.  It intentionally accepts no profile path, so a
+/// private runtime cannot accidentally open or mutate normal-profile data.
+///
+/// # Safety
+///
+/// Returns a valid non-null handle on success.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_engine_new_private() -> *mut FrostEngineHandle {
+    let (request_tx, request_rx) = crossbeam_channel::unbounded();
+    let (response_tx, response_rx) = crossbeam_channel::unbounded();
+    let (event_tx, event_rx) = crossbeam_channel::unbounded();
+    let (host_command_tx, host_command_rx) = crossbeam_channel::unbounded();
+    let (host_event_tx, host_event_rx) = crossbeam_channel::unbounded();
+    let (host_result_tx, host_result_rx) = crossbeam_channel::unbounded();
+    let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
+
+    let join_handle = spawn_core(
+        BrowserCore::with_adapter_settings_and_initial_window(
+            HostCommandAdapter::new(host_command_tx),
+            frost_core::InMemoryStore::default(),
+            true,
+        ),
+        event_tx,
+        request_rx,
+        response_tx,
+        host_event_rx,
+        host_result_rx,
+    );
+
+    Box::into_raw(Box::new(FrostEngineHandle {
+        request_tx,
+        response_rx,
+        event_rx,
+        host_command_rx,
+        host_event_tx,
+        host_result_tx,
+        external_event_tx,
+        external_policy: std::sync::Mutex::new(ExternalPolicy::new()),
+        request_response_lock: std::sync::Mutex::new(()),
+        join_handle: Some(join_handle),
+    }))
+}
+
 /// Creates a new FrostEngine instance backed by a SQLite store at `path`.
 ///
-/// If `path` is null or empty, falls back to an in-memory store.
+/// A null path creates an explicitly ephemeral engine for tests/private mode.
+/// A non-null path must be opened successfully; failure returns null rather
+/// than silently losing persistence by substituting an in-memory database.
 ///
 /// # Safety
 ///
@@ -76,10 +124,17 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
             host_result_rx,
         )
     } else {
-        let path = unsafe { CStr::from_ptr(path) }
-            .to_str()
-            .unwrap_or_default()
-            .to_owned();
+        let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+            Ok(path) if !path.is_empty() => path.to_owned(),
+            Ok(_) => {
+                eprintln!("[frost-engine] persistent store path was empty");
+                return ptr::null_mut();
+            }
+            Err(error) => {
+                eprintln!("[frost-engine] persistent store path was not UTF-8: {error}");
+                return ptr::null_mut();
+            }
+        };
         match frost_store::SqliteStore::open(path) {
             Ok(store) => spawn_core(
                 BrowserCore::with_adapter_and_settings(
@@ -92,17 +147,10 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
                 host_event_rx.clone(),
                 host_result_rx.clone(),
             ),
-            Err(_) => spawn_core(
-                BrowserCore::with_adapter_and_settings(
-                    HostCommandAdapter::new(host_command_tx.clone()),
-                    frost_core::InMemoryStore::default(),
-                ),
-                event_tx.clone(),
-                request_rx.clone(),
-                response_tx.clone(),
-                host_event_rx.clone(),
-                host_result_rx.clone(),
-            ),
+            Err(error) => {
+                eprintln!("[frost-engine] failed to open persistent store: {error}");
+                return ptr::null_mut();
+            }
         }
     };
 
@@ -142,8 +190,20 @@ where
         + 'static,
 {
     core.set_event_sender(event_tx);
+    if let Err(error) = core.bootstrap_host() {
+        eprintln!("[frost-engine] failed to bootstrap initial host window: {error}");
+    }
     std::thread::spawn(move || {
         loop {
+            // Recreate the timer after every message so a newly queued host
+            // command can shorten the sleep to its exact deadline.  Unlike a
+            // request-driven expiry check, this fires while the bridge is
+            // completely idle.
+            let deadline_wait = core
+                .next_pending_deadline()
+                .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()))
+                .unwrap_or_else(BrowserCore::<A, S>::idle_tick_interval);
+            let deadline_rx = crossbeam_channel::after(deadline_wait);
             select! {
                 recv(request_rx) -> message => {
                     let Ok(request) = message else {
@@ -155,8 +215,9 @@ where
                     }
                 }
                 recv(host_event_rx) -> message => {
-                    if let Ok(event) = message {
-                        let _ = core.process_host_event(event);
+                    if let Ok(event) = message
+                        && let Err(error) = core.process_host_event(event) {
+                        eprintln!("[frost-engine] rejected host event: {error}");
                     }
                 }
                 recv(host_result_rx) -> message => {
@@ -165,6 +226,9 @@ where
                     {
                         eprintln!("[frost-engine] host command failed: {e}");
                     }
+                }
+                recv(deadline_rx) -> _ => {
+                    core.tick();
                 }
             }
         }
@@ -183,8 +247,10 @@ pub unsafe extern "C" fn frost_engine_free(handle: *mut FrostEngineHandle) {
     unsafe {
         let mut handle = Box::from_raw(handle);
         drop(handle.request_tx);
-        if let Some(join_handle) = handle.join_handle.take() {
-            let _ = join_handle.join();
+        if let Some(join_handle) = handle.join_handle.take()
+            && join_handle.join().is_err()
+        {
+            eprintln!("[frost-engine] core thread panicked while shutting down");
         }
     }
 }
@@ -254,7 +320,13 @@ pub unsafe extern "C" fn frost_engine_poll_event_json(
     unsafe {
         let handle = &*handle;
         match handle.event_rx.try_recv() {
-            Ok(event) => into_c_string(serde_json::to_string(&event).unwrap_or_default()),
+            Ok(event) => match serde_json::to_string(&event) {
+                Ok(json) => into_c_string(json),
+                Err(error) => {
+                    eprintln!("[frost-ffi] failed to serialize event: {error}");
+                    ptr::null_mut()
+                }
+            },
             Err(_) => ptr::null_mut(),
         }
     }
@@ -275,7 +347,13 @@ pub unsafe extern "C" fn frost_engine_poll_host_command_json(
     unsafe {
         let handle = &*handle;
         match handle.host_command_rx.try_recv() {
-            Ok(command) => into_c_string(serde_json::to_string(&command).unwrap_or_default()),
+            Ok(command) => match serde_json::to_string(&command) {
+                Ok(json) => into_c_string(json),
+                Err(error) => {
+                    eprintln!("[frost-ffi] failed to serialize host command: {error}");
+                    ptr::null_mut()
+                }
+            },
             Err(_) => ptr::null_mut(),
         }
     }
@@ -347,11 +425,45 @@ pub unsafe extern "C" fn frost_engine_string_free(value: *mut c_char) {
 }
 
 fn error_response(id: Option<String>, message: impl Into<String>) -> String {
-    serde_json::to_string(&ProtocolResponse::error(id, message.into())).unwrap_or_default()
+    match serde_json::to_string(&ProtocolResponse::error(id, message.into())) {
+        Ok(response) => response,
+        Err(error) => {
+            eprintln!("[frost-ffi] failed to serialize error response: {error}");
+            "{\"version\":0,\"ok\":false,\"kind\":\"error\",\"result\":\"internal serialization failure\"}".into()
+        }
+    }
 }
 
 fn into_c_string(value: String) -> *mut c_char {
-    CString::new(value).unwrap_or_default().into_raw()
+    match CString::new(value) {
+        Ok(value) => value.into_raw(),
+        Err(error) => {
+            eprintln!("[frost-ffi] attempted to return a string containing NUL: {error}");
+            ptr::null_mut()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_engine_bootstraps_an_isolated_private_window() {
+        let handle = unsafe { frost_engine_new_private() };
+        assert!(!handle.is_null());
+
+        let command = unsafe { frost_engine_poll_host_command_json(handle) };
+        assert!(!command.is_null());
+        let command = unsafe { CString::from_raw(command) }
+            .into_string()
+            .expect("host command must be UTF-8");
+        let command: serde_json::Value = serde_json::from_str(&command).unwrap();
+        assert_eq!(command["command"], "window.create");
+        assert_eq!(command["payload"]["isPrivate"], true);
+
+        unsafe { frost_engine_free(handle) };
+    }
 }
 
 /// Grants external capabilities to a caller origin.
@@ -468,39 +580,51 @@ fn route_external_to_core(
     // the capability declared inside the command envelope.
     if !policy.is_granted(&envelope.origin, &capability) {
         // Emit audit event for denied capability.
-        let _ = handle
-            .external_event_tx
-            .send(frost_protocol::ExternalEventEnvelope::new(
-                frost_protocol::ExternalEvent::Audit {
-                    command_id: envelope.id.clone(),
-                    capability,
-                    allowed: false,
-                    reason: Some("capability not granted".into()),
-                },
-            ));
+        if let Err(error) =
+            handle
+                .external_event_tx
+                .send(frost_protocol::ExternalEventEnvelope::new(
+                    frost_protocol::ExternalEvent::Audit {
+                        command_id: envelope.id.clone(),
+                        capability,
+                        allowed: false,
+                        reason: Some("capability not granted".into()),
+                    },
+                ))
+        {
+            eprintln!("[frost-engine] external audit receiver disconnected: {error}");
+        }
         return serde_json::json!({ "allowed": false, "error": "capability not granted" })
             .to_string();
     }
     if !policy.check_rate(&envelope.origin) {
         // Emit rate-limit and audit events.
-        let _ = handle
-            .external_event_tx
-            .send(frost_protocol::ExternalEventEnvelope::new(
-                frost_protocol::ExternalEvent::RateLimited {
-                    command_id: envelope.id.clone(),
-                    retry_after_ms: 60_000,
-                },
-            ));
-        let _ = handle
-            .external_event_tx
-            .send(frost_protocol::ExternalEventEnvelope::new(
-                frost_protocol::ExternalEvent::Audit {
-                    command_id: envelope.id.clone(),
-                    capability,
-                    allowed: false,
-                    reason: Some("rate limited".into()),
-                },
-            ));
+        if let Err(error) =
+            handle
+                .external_event_tx
+                .send(frost_protocol::ExternalEventEnvelope::new(
+                    frost_protocol::ExternalEvent::RateLimited {
+                        command_id: envelope.id.clone(),
+                        retry_after_ms: 60_000,
+                    },
+                ))
+        {
+            eprintln!("[frost-engine] external event receiver disconnected: {error}");
+        }
+        if let Err(error) =
+            handle
+                .external_event_tx
+                .send(frost_protocol::ExternalEventEnvelope::new(
+                    frost_protocol::ExternalEvent::Audit {
+                        command_id: envelope.id.clone(),
+                        capability,
+                        allowed: false,
+                        reason: Some("rate limited".into()),
+                    },
+                ))
+        {
+            eprintln!("[frost-engine] external audit receiver disconnected: {error}");
+        }
         return serde_json::json!({ "allowed": false, "error": "rate limited" }).to_string();
     }
 
@@ -510,6 +634,7 @@ fn route_external_to_core(
             Some(ProtocolRequest::new(Request::TabsCreate {
                 url: url.clone(),
                 active: *active,
+                window_id: None,
             }))
         }
         ExternalCommand::TabClose { tab_id } => Some(ProtocolRequest::new(Request::TabsClose {
@@ -554,16 +679,20 @@ fn route_external_to_core(
                 .unwrap_or_else(|e| e.into_inner());
             if handle.request_tx.send(req).is_err() {
                 // Emit audit for engine unavailable.
-                let _ = handle
-                    .external_event_tx
-                    .send(frost_protocol::ExternalEventEnvelope::new(
-                        frost_protocol::ExternalEvent::Audit {
-                            command_id: envelope.id.clone(),
-                            capability,
-                            allowed: false,
-                            reason: Some("engine unavailable".into()),
-                        },
-                    ));
+                if let Err(error) =
+                    handle
+                        .external_event_tx
+                        .send(frost_protocol::ExternalEventEnvelope::new(
+                            frost_protocol::ExternalEvent::Audit {
+                                command_id: envelope.id.clone(),
+                                capability,
+                                allowed: false,
+                                reason: Some("engine unavailable".into()),
+                            },
+                        ))
+                {
+                    eprintln!("[frost-engine] external audit receiver disconnected: {error}");
+                }
                 return serde_json::json!({ "allowed": false, "error": "engine unavailable" })
                     .to_string();
             }
@@ -573,7 +702,7 @@ fn route_external_to_core(
                     obj.insert("allowed".into(), serde_json::json!(resp.ok));
                     obj.insert("ok".into(), serde_json::json!(resp.ok));
                     // Emit audit for successful or failed routing.
-                    let _ =
+                    if let Err(error) =
                         handle
                             .external_event_tx
                             .send(frost_protocol::ExternalEventEnvelope::new(
@@ -587,7 +716,10 @@ fn route_external_to_core(
                                         Some("request failed".into())
                                     },
                                 },
-                            ));
+                            ))
+                    {
+                        eprintln!("[frost-engine] external audit receiver disconnected: {error}");
+                    }
                     // Surface the snapshot body for state reads instead of just
                     // an `ok` flag.
                     if let Response::AppSnapshot(state) = &resp.response {
@@ -600,7 +732,7 @@ fn route_external_to_core(
                 }
                 Err(_) => {
                     // Emit audit for no response.
-                    let _ =
+                    if let Err(error) =
                         handle
                             .external_event_tx
                             .send(frost_protocol::ExternalEventEnvelope::new(
@@ -610,7 +742,10 @@ fn route_external_to_core(
                                     allowed: false,
                                     reason: Some("no response".into()),
                                 },
-                            ));
+                            ))
+                    {
+                        eprintln!("[frost-engine] external audit receiver disconnected: {error}");
+                    }
                     serde_json::json!({ "allowed": false, "error": "no response" }).to_string()
                 }
             }
@@ -619,16 +754,20 @@ fn route_external_to_core(
             // DebugOpenDevTools (and any unsupported command) is a host/CEF
             // concern the engine must not perform; never report success.
             // Emit audit for unsupported command.
-            let _ = handle
-                .external_event_tx
-                .send(frost_protocol::ExternalEventEnvelope::new(
-                    frost_protocol::ExternalEvent::Audit {
-                        command_id: envelope.id.clone(),
-                        capability,
-                        allowed: false,
-                        reason: Some("command not supported via external router".into()),
-                    },
-                ));
+            if let Err(error) =
+                handle
+                    .external_event_tx
+                    .send(frost_protocol::ExternalEventEnvelope::new(
+                        frost_protocol::ExternalEvent::Audit {
+                            command_id: envelope.id.clone(),
+                            capability,
+                            allowed: false,
+                            reason: Some("command not supported via external router".into()),
+                        },
+                    ))
+            {
+                eprintln!("[frost-engine] external audit receiver disconnected: {error}");
+            }
             serde_json::json!({ "allowed": false, "error": "command not supported via external router" })
                 .to_string()
         }
@@ -650,22 +789,27 @@ pub struct FrostStoreHandle {
 /// - Returns a valid non-null handle on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn frost_store_open(path: *const c_char) -> *mut FrostStoreHandle {
-    let path = if path.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(path) }
-            .to_str()
-            .unwrap_or_default()
-            .to_owned()
+    if path.is_null() {
+        eprintln!("[frost-store] persistent store path was null");
+        return ptr::null_mut();
+    }
+    let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(path) if !path.is_empty() => path,
+        Ok(_) => {
+            eprintln!("[frost-store] persistent store path was empty");
+            return ptr::null_mut();
+        }
+        Err(error) => {
+            eprintln!("[frost-store] persistent store path was not UTF-8: {error}");
+            return ptr::null_mut();
+        }
     };
-    let store = if path.is_empty() {
-        SqliteStore::in_memory()
-    } else {
-        SqliteStore::open(path)
-    };
-    match store {
+    match SqliteStore::open(path) {
         Ok(store) => Box::into_raw(Box::new(FrostStoreHandle { store })),
-        Err(_) => ptr::null_mut(),
+        Err(error) => {
+            eprintln!("[frost-store] failed to open persistent store: {error}");
+            ptr::null_mut()
+        }
     }
 }
 

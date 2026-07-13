@@ -15,15 +15,26 @@ impl WindowService {
     }
 
     pub fn create_window(&mut self, is_private: bool) -> String {
-        let id = format!("window-{}", Uuid::new_v4());
-        self.windows.push(WindowState {
-            id: id.clone(),
+        let window = Self::new_window(is_private);
+        let id = window.id.clone();
+        self.commit_new_window(window);
+        id
+    }
+
+    /// Builds a Rust-owned window ID without exposing it before host creation
+    /// has completed.
+    pub fn new_window(is_private: bool) -> WindowState {
+        WindowState {
+            id: format!("window-{}", Uuid::new_v4()),
             active_tab_id: None,
             is_private,
             tab_ids: Vec::new(),
-        });
-        self.active_window_id = Some(id.clone());
-        id
+        }
+    }
+
+    pub fn commit_new_window(&mut self, window: WindowState) {
+        self.active_window_id = Some(window.id.clone());
+        self.windows.push(window);
     }
 
     pub fn close_window(&mut self, window_id: &str) -> bool {

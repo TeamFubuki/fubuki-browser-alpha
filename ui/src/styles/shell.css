@@ -39,3 +39,34 @@
   pointer-events: none;
   contain: layout style paint;
 }
+
+.bridge-error {
+  position: fixed;
+  z-index: 20;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  max-width: min(560px, calc(100vw - 32px));
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: color-mix(in srgb, #b42318 88%, var(--bg));
+  border: 1px solid color-mix(in srgb, #ffb4ab 75%, var(--line));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  pointer-events: auto;
+}
+
+.bridge-error span {
+  overflow-wrap: anywhere;
+}
+
+.bridge-error button {
+  flex: none;
+  padding: 3px 7px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentcolor;
+  border-radius: 4px;
+}

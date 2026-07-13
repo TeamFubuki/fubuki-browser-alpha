@@ -16,11 +16,13 @@ std::string TakeFrostString(char *value) {
 
 namespace fubuki {
 
-FrostBridge::FrostBridge() : handle_(frost_engine_new()) {}
+FrostBridge::FrostBridge()
+    : handle_(frost_engine_new_private()), ephemeral_(true) {}
 
 FrostBridge::FrostBridge(const std::string &profilePath)
-    : handle_(frost_engine_new_with_store(
-          profilePath.empty() ? nullptr : profilePath.c_str())) {}
+    : handle_(profilePath.empty() ? frost_engine_new_private()
+                                  : frost_engine_new_with_store(profilePath.c_str())),
+      ephemeral_(profilePath.empty()) {}
 
 FrostBridge::~FrostBridge() {
   if (handle_) {

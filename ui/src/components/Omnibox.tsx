@@ -1,7 +1,7 @@
 import { createEffect, createSignal } from 'solid-js';
 import { tabs } from '../bridge/fubuki';
 import { t } from '../i18n';
-import { browserState } from '../stores/browserStore';
+import { browserState, runBrowserAction } from '../stores/browserStore';
 import { normalizeOmniboxInput } from '../utils/navigation';
 
 function buildSearchUrl(query: string): string {
@@ -44,9 +44,9 @@ export default function Omnibox() {
 
     const tabId = browserState.activeTabId;
     if (tabId) {
-      void tabs.navigate(tabId, url);
+      runBrowserAction(tabs.navigate(tabId, url));
     } else {
-      void tabs.create(url);
+      runBrowserAction(tabs.create(url));
     }
   };
 

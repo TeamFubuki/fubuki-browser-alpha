@@ -35,6 +35,46 @@ impl TabService {
     }
 
     pub fn create_tab(&mut self, window_id: String, url: String, active: bool) -> TabState {
+        let tab = self.new_tab(window_id, url, active);
+        self.commit_new_tab(tab.clone());
+        tab
+    }
+
+    /// Builds a Rust-owned tab ID without making it observable in core state.
+    pub fn new_tab(&self, window_id: String, url: String, active: bool) -> TabState {
+        let has_tabs_in_window = self.tabs.iter().any(|tab| tab.window_id == window_id);
+        let resolved_window_id = if window_id.is_empty() {
+            self.default_window_id.clone()
+        } else {
+            window_id
+        };
+        TabState {
+            id: format!("tab-{}", Uuid::new_v4()),
+            window_id: resolved_window_id,
+            title: "New Tab".into(),
+            url,
+            favicon_url: String::new(),
+            error_text: String::new(),
+            zoom_level: 0.0,
+            is_loading: false,
+            can_go_back: false,
+            can_go_forward: false,
+            is_active: active || !has_tabs_in_window,
+            is_pinned: false,
+        }
+    }
+
+    pub fn commit_new_tab(&mut self, tab: TabState) {
+        if tab.is_active {
+            self.tabs
+                .iter_mut()
+                .filter(|existing| existing.window_id == tab.window_id)
+                .for_each(|existing| existing.is_active = false);
+        }
+        self.tabs.push(tab);
+    }
+
+    pub fn create_tab_legacy(&mut self, window_id: String, url: String, active: bool) -> TabState {
         if active || self.tabs.is_empty() {
             self.tabs
                 .iter_mut()

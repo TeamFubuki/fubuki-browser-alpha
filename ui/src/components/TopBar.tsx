@@ -5,6 +5,7 @@ import {
   activeTab,
   browserState,
   isTabBookmarked,
+  runBrowserAction,
   toggleBookmark,
 } from '../stores/browserStore';
 import Omnibox from './Omnibox';
@@ -27,7 +28,7 @@ export default function TopBar() {
 
   const submitFind = (forward = true) => {
     const query = findText().trim();
-    if (query) void page.find(query, forward);
+    if (query) runBrowserAction(page.find(query, forward));
   };
 
   const lang = () => browserState.settings.language;
@@ -42,7 +43,7 @@ export default function TopBar() {
         title={t('common.back', lang())}
         aria-label={t('common.back', lang())}
         disabled={!canGoBack()}
-        onClick={() => void tabs.goBack(browserState.activeTabId)}
+        onClick={() => runBrowserAction(tabs.goBack(browserState.activeTabId))}
       >
         <span aria-hidden="true">←</span>
       </button>
@@ -51,7 +52,9 @@ export default function TopBar() {
         title={t('common.forward', lang())}
         aria-label={t('common.forward', lang())}
         disabled={!canGoForward()}
-        onClick={() => void tabs.goForward(browserState.activeTabId)}
+        onClick={() =>
+          runBrowserAction(tabs.goForward(browserState.activeTabId))
+        }
       >
         <span aria-hidden="true">→</span>
       </button>
@@ -65,9 +68,11 @@ export default function TopBar() {
         }
         disabled={!currentTab()}
         onClick={() =>
-          void (isLoading()
-            ? tabs.stop(browserState.activeTabId)
-            : tabs.reload(browserState.activeTabId))
+          runBrowserAction(
+            isLoading()
+              ? tabs.stop(browserState.activeTabId)
+              : tabs.reload(browserState.activeTabId),
+          )
         }
       >
         <span aria-hidden="true">{isLoading() ? '×' : '↻'}</span>
@@ -89,7 +94,7 @@ export default function TopBar() {
             : t('action.addBookmark', lang())
         }
         disabled={!currentTab()}
-        onClick={() => void toggleBookmark()}
+        onClick={() => runBrowserAction(toggleBookmark())}
       >
         <span aria-hidden="true">{isBookmarked() ? '★' : '☆'}</span>
       </button>
@@ -127,7 +132,7 @@ export default function TopBar() {
             title={t('action.closeFind', lang())}
             onClick={() => {
               setFindOpen(false);
-              void page.stopFinding();
+              runBrowserAction(page.stopFinding());
             }}
           >
             ×

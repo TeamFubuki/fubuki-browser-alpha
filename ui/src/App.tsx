@@ -9,6 +9,7 @@ import {
   bindNativeEvents,
   browserState,
   navigateInternal,
+  runBrowserAction,
   toggleBookmark,
   toggleSidebar,
 } from './stores/browserStore';
@@ -35,22 +36,22 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (key === 'n' && event.shiftKey) {
-    void commands.execute('windows.createPrivate');
+    runBrowserAction(commands.execute('windows.createPrivate'));
     event.preventDefault();
     return;
   }
   if (key === 'n') {
-    void commands.execute('windows.create');
+    runBrowserAction(commands.execute('windows.create'));
     event.preventDefault();
     return;
   }
   if (key === 't' && event.shiftKey) {
-    void tabs.reopenClosed();
+    runBrowserAction(tabs.reopenClosed());
     event.preventDefault();
     return;
   }
   if (key === 't') {
-    void tabs.create();
+    runBrowserAction(tabs.create());
     event.preventDefault();
     return;
   }
@@ -60,50 +61,50 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (event.key === '+' || event.key === '=') {
-    void commands.execute('page.zoomIn');
+    runBrowserAction(commands.execute('page.zoomIn'));
     event.preventDefault();
     return;
   }
   if (event.key === '-') {
-    void commands.execute('page.zoomOut');
+    runBrowserAction(commands.execute('page.zoomOut'));
     event.preventDefault();
     return;
   }
   if (event.key === '0') {
-    void commands.execute('page.zoomReset');
+    runBrowserAction(commands.execute('page.zoomReset'));
     event.preventDefault();
     return;
   }
   if (key === 'b') {
-    toggleSidebar();
+    runBrowserAction(toggleSidebar());
     event.preventDefault();
     return;
   }
   if (event.key === ',') {
-    navigateInternal('fubuki://settings/');
+    runBrowserAction(navigateInternal('fubuki://settings/'));
     event.preventDefault();
     return;
   }
   if (key === 'd') {
-    void toggleBookmark();
+    runBrowserAction(toggleBookmark());
     event.preventDefault();
     return;
   }
   if (!tab) return;
   if (key === 'w' && event.shiftKey) {
-    void commands.execute('windows.close');
+    runBrowserAction(commands.execute('windows.close'));
     event.preventDefault();
   } else if (key === 'w') {
-    void tabs.close(tab.id);
+    runBrowserAction(tabs.close(tab.id));
     event.preventDefault();
   } else if (key === 'r') {
-    void tabs.reload(tab.id);
+    runBrowserAction(tabs.reload(tab.id));
     event.preventDefault();
   } else if (event.key === '[') {
-    void tabs.goBack(tab.id);
+    runBrowserAction(tabs.goBack(tab.id));
     event.preventDefault();
   } else if (event.key === ']') {
-    void tabs.goForward(tab.id);
+    runBrowserAction(tabs.goForward(tab.id));
     event.preventDefault();
   }
 }
@@ -150,8 +151,8 @@ export default function App() {
     const disposeNativeEvents = bindNativeEvents();
 
     const onOpenPalette = () => setPaletteOpen(true);
-    const onToggleSidebar = () => toggleSidebar();
-    const onToggleActiveBookmark = () => void toggleBookmark();
+    const onToggleSidebar = () => runBrowserAction(toggleSidebar());
+    const onToggleActiveBookmark = () => runBrowserAction(toggleBookmark());
 
     window.addEventListener('fubuki:open-palette', onOpenPalette);
     window.addEventListener('fubuki:toggle-sidebar', onToggleSidebar);

@@ -19,12 +19,21 @@ CefRefPtr<CefValue> BoolValue(bool value) {
   return result;
 }
 
+std::string PendingProtocolError(const std::string &detail) {
+  return "FrostEngine returned an invalid pending operation: " + detail;
+}
+
 }  // namespace
 
-NativeBridge::NativeBridge(BrowserWindow &window)
-    : window_(window),
-      frostBridge_(window.Store().ProfilePath() + "/frost-engine.sqlite3") {
+NativeBridge::NativeBridge(BrowserWindow &window) : window_(window) {
   RegisterMethods();
+}
+
+NativeBridge::~NativeBridge() {
+  // BrowserWindow owns its bridge on the CEF UI thread. Resolve outstanding
+  // renderer promises before dropping their callbacks rather than leaving a
+  // query alive across BrowserWindow teardown.
+  FailPendingQueriesForShutdown();
 }
 
 void NativeBridge::RegisterMethods() {
@@ -40,25 +49,25 @@ void NativeBridge::RegisterMethods() {
     const std::string url =
         params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
     const bool active = !params->HasKey("active") || params->GetBool("active");
-    return HostBackedFrostInvoke("tabs.create", params, [this, url, active] {
+    return DispatchFrostRequest("tabs.create", params, [this, url, active] {
       return window_.CreateTab(url, active);
     });
   };
 
   methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.activate", params, [this, params] {
+    return DispatchFrostRequest("tabs.activate", params, [this, params] {
       return window_.ActivateTab(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.close", params, [this, params] {
+    return DispatchFrostRequest("tabs.close", params, [this, params] {
       return window_.CloseTab(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.pin", params, [this, params] {
+    return DispatchFrostRequest("tabs.pin", params, [this, params] {
       return window_.PinTab(params->GetString("tabId"),
                             params->HasKey("pinned") &&
                                 params->GetBool("pinned"));
@@ -66,31 +75,31 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.duplicate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.duplicate", params, [this, params] {
+    return DispatchFrostRequest("tabs.duplicate", params, [this, params] {
       return window_.DuplicateTab(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.reopenClosed", params,
+    return DispatchFrostRequest("tabs.reopenClosed", params,
                                  [this] { return window_.ReopenClosedTab(); });
   };
 
   methods_["tabs.closeOther"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.closeOther", params, [this, params] {
+    return DispatchFrostRequest("tabs.closeOther", params, [this, params] {
       return window_.CloseOtherTabs(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.closeToRight"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.closeToRight", params, [this, params] {
+    return DispatchFrostRequest("tabs.closeToRight", params, [this, params] {
       return window_.CloseTabsToRight(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.move"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.move", params, [this, params] {
+    return DispatchFrostRequest("tabs.move", params, [this, params] {
       return window_.MoveTab(params->GetString("tabId"),
                              params->GetInt("toIndex"));
     });
@@ -98,7 +107,7 @@ void NativeBridge::RegisterMethods() {
 
   methods_["tabs.moveToNewWindow"] = [this](
                                          CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.moveToNewWindow", params,
+    return DispatchFrostRequest("tabs.moveToNewWindow", params,
                                  [this, params] {
                                    return window_.MoveTabToNewWindow(
                                        params->GetString("tabId"));
@@ -106,45 +115,45 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.navigate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.navigate", params, [this, params] {
+    return DispatchFrostRequest("tabs.navigate", params, [this, params] {
       return window_.Navigate(params->GetString("tabId"),
                               params->GetString("input"));
     });
   };
 
   methods_["tabs.reload"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.reload", params, [this, params] {
+    return DispatchFrostRequest("tabs.reload", params, [this, params] {
       return window_.Reload(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.stop"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.stop", params, [this, params] {
+    return DispatchFrostRequest("tabs.stop", params, [this, params] {
       return window_.Stop(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.goBack"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goBack", params, [this, params] {
+    return DispatchFrostRequest("tabs.goBack", params, [this, params] {
       return window_.GoBack(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.goForward"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goForward", params, [this, params] {
+    return DispatchFrostRequest("tabs.goForward", params, [this, params] {
       return window_.GoForward(params->GetString("tabId"));
     });
   };
 
   methods_["tabs.home"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.home", params,
+    return DispatchFrostRequest("tabs.home", params,
                                  [this] { return window_.GoHome(); });
   };
 
   methods_["windows.create"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.create", params, [this] {
+    return DispatchFrostRequest("windows.create", params, [this] {
       return window_.App().RequestNewWindow(false, nullptr);
     });
   };
@@ -155,7 +164,7 @@ void NativeBridge::RegisterMethods() {
 
   methods_["windows.createPrivate"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.createPrivate", params, [this] {
+    return DispatchFrostRequest("windows.createPrivate", params, [this] {
       return window_.App().RequestNewPrivateWindow();
     });
   };
@@ -163,13 +172,13 @@ void NativeBridge::RegisterMethods() {
   methods_["windows.close"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
     params->SetString("windowId", window_.WindowId());
-    return HostBackedFrostInvoke("windows.close", params,
+    return DispatchFrostRequest("windows.close", params,
                                  [this] { return window_.CloseWindow(); });
   };
 
   methods_["windows.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.reopenClosed", params, [this] {
+    return DispatchFrostRequest("windows.reopenClosed", params, [this] {
       return window_.App().ReopenClosedWindow();
     });
   };
@@ -214,7 +223,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.save"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("bookmarks.save", params, [this, params] {
+    return DispatchFrostRequest("bookmarks.save", params, [this, params] {
       return window_.SaveBookmark(params->GetString("title"),
                                   params->GetString("url"),
                                   params->GetString("faviconUrl"));
@@ -222,13 +231,13 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("bookmarks.remove", params, [this, params] {
+    return DispatchFrostRequest("bookmarks.remove", params, [this, params] {
       return window_.RemoveBookmark(params->GetString("url"));
     });
   };
 
   methods_["history.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("history.remove", params, [this, params] {
+    return DispatchFrostRequest("history.remove", params, [this, params] {
       return window_.RemoveHistory(params->GetString("url"));
     });
   };
@@ -239,7 +248,7 @@ void NativeBridge::RegisterMethods() {
 
   methods_["history.clearRange"] =
       [this](CefRefPtr<CefDictionaryValue> params) {
-        return HostBackedFrostInvoke("history.clearRange", params,
+        return DispatchFrostRequest("history.clearRange", params,
                                      [this, params] {
                                        return window_.ClearHistoryRange(
                                            params->GetString("range"));
@@ -251,7 +260,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("downloads.remove", params, [this, params] {
+    return DispatchFrostRequest("downloads.remove", params, [this, params] {
       return window_.RemoveDownload(params->GetString("url"),
                                     params->GetString("path"));
     });
@@ -266,7 +275,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["data.clear"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("data.clear", params, [this, params] {
+    return DispatchFrostRequest("data.clear", params, [this, params] {
       return window_.ClearBrowsingData(params->GetString("target"));
     });
   };
@@ -276,27 +285,27 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["settings.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("settings.set", params, [this, params] {
+    return DispatchFrostRequest("settings.set", params, [this, params] {
       return window_.SetSetting(params->GetString("key"),
                                 params->GetString("value"));
     });
   };
 
   methods_["settings.reset"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("settings.reset", params, [this, params] {
+    return DispatchFrostRequest("settings.reset", params, [this, params] {
       return window_.ResetSetting(params->GetString("key"));
     });
   };
 
   methods_["ui.setSidebarWidth"] = [this](
                                        CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("ui.setSidebarWidth", params, [this, params] {
+    return DispatchFrostRequest("ui.setSidebarWidth", params, [this, params] {
       return window_.SetLiveSidebarWidth(params->GetDouble("width"));
     });
   };
 
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("permissions.set", params, [this, params] {
+    return DispatchFrostRequest("permissions.set", params, [this, params] {
       return window_.SetPermission(params->GetString("origin"),
                                    params->GetString("permission"),
                                    params->GetString("value"));
@@ -309,7 +318,7 @@ void NativeBridge::RegisterMethods() {
         params->HasKey("width") ? params->GetDouble("width") : 392.0;
     const double overlayHeight =
         params->HasKey("height") ? params->GetDouble("height") : 560.0;
-    return HostBackedFrostInvoke("ui.setOverlayActive", params,
+    return DispatchFrostRequest("ui.setOverlayActive", params,
                                  [this, params, overlayWidth, overlayHeight] {
                                    return window_.SetUiOverlayActive(
                                        params->HasKey("active") &&
@@ -323,14 +332,9 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["commands.execute"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const std::string id = params->GetString("id");
-    CefRefPtr<CefDictionaryValue> args = CefDictionaryValue::Create();
-    if (params->HasKey("args") && params->GetType("args") == VTYPE_DICTIONARY) {
-      args = params->GetDictionary("args");
-    }
-    auto result = window_.Commands().Execute(id, args);
-    (void)FrostInvoke("commands.execute", params);
-    return result;
+    // Menu, shortcuts and UI commands share the Rust protocol path.  The
+    // HostCommand pump is the sole place CEF/NSWindow work is performed.
+    return FrostInvoke("commands.execute", params);
   };
 
   methods_["commands.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -338,8 +342,9 @@ void NativeBridge::RegisterMethods() {
   };
 }
 
-bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
-                           int64_t, const CefString &request, bool,
+bool NativeBridge::OnQuery(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame, int64_t queryId,
+                           const CefString &request, bool,
                            CefRefPtr<Callback> callback) {
   CEF_REQUIRE_UI_THREAD();
   if (!IsAllowedUiFrame(frame)) {
@@ -366,12 +371,166 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
   }
 
   auto response = Invoke(method, params);
+  if (StorePendingQuery(response, queryId, browser, frame, callback)) {
+    // A host command was queued. Its terminal result will complete this CEF
+    // callback through CompletePendingOperation; replying now would falsely
+    // resolve the renderer Promise before the host operation has succeeded.
+    return true;
+  }
+
+  std::string error;
+  if (IsBridgeError(response, error)) {
+    callback->Failure(500, error);
+    return true;
+  }
   callback->Success(WriteValue(response));
   return true;
 }
 
-void NativeBridge::OnQueryCanceled(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                                   int64_t) {}
+void NativeBridge::OnQueryCanceled(CefRefPtr<CefBrowser> browser,
+                                   CefRefPtr<CefFrame> frame,
+                                   int64_t queryId) {
+  CEF_REQUIRE_UI_THREAD();
+  const int browserId = browser ? browser->GetIdentifier() : 0;
+  const std::string frameId =
+      frame ? frame->GetIdentifier().ToString() : std::string();
+  for (auto it = pendingQueries_.begin(); it != pendingQueries_.end(); ++it) {
+    const PendingQuery &pending = it->second;
+    if (pending.queryId == queryId && pending.browserId == browserId &&
+        pending.frameId == frameId) {
+      pendingQueries_.erase(it);
+      return;
+    }
+  }
+}
+
+bool NativeBridge::CompletePendingOperation(
+    const std::string &operationId, bool ok,
+    const std::string &successResponseJson, const std::string &error,
+    int errorCode) {
+  CEF_REQUIRE_UI_THREAD();
+  auto it = pendingQueries_.find(operationId);
+  if (it == pendingQueries_.end()) {
+    return false;
+  }
+
+  // Erase before invoking renderer code. Completion can synchronously cause a
+  // new bridge request, and a terminal HostCommandResult must be one-shot.
+  PendingQuery pending = std::move(it->second);
+  pendingQueries_.erase(it);
+
+  if (!ok) {
+    const std::string message = error.empty() ? "Host operation failed" : error;
+    pending.callback->Failure(errorCode, message);
+    return true;
+  }
+
+  if (!successResponseJson.empty()) {
+    CefRefPtr<CefValue> result =
+        CefParseJSON(successResponseJson, JSON_PARSER_RFC);
+    if (!result) {
+      pending.callback->Failure(
+          500, "Host operation completed with an invalid terminal response");
+      return true;
+    }
+    pending.callback->Success(WriteValue(result));
+    return true;
+  }
+
+  pending.callback->Success(WriteValue(pending.logicalSuccessValue));
+  return true;
+}
+
+bool NativeBridge::StorePendingQuery(CefRefPtr<CefValue> response,
+                                     int64_t queryId,
+                                     CefRefPtr<CefBrowser> browser,
+                                     CefRefPtr<CefFrame> frame,
+                                     CefRefPtr<Callback> callback) {
+  if (!response || response->GetType() != VTYPE_DICTIONARY) {
+    return false;
+  }
+
+  CefRefPtr<CefDictionaryValue> pendingValue = response->GetDictionary();
+  if (!pendingValue->HasKey("pending") ||
+      pendingValue->GetType("pending") != VTYPE_BOOL ||
+      !pendingValue->GetBool("pending")) {
+    return false;
+  }
+  if (!pendingValue->HasKey("operationId") ||
+      pendingValue->GetType("operationId") != VTYPE_STRING) {
+    callback->Failure(500, PendingProtocolError("missing operationId"));
+    return true;
+  }
+
+  const std::string operationId = pendingValue->GetString("operationId");
+  if (operationId.empty()) {
+    callback->Failure(500, PendingProtocolError("empty operationId"));
+    return true;
+  }
+
+  // The operation acknowledgement itself is not a result exposed to the UI.
+  // Rust may include a logical result for operations that return data; absent
+  // one, a completed host command has the same public result as the legacy
+  // bool-returning bridge methods.
+  CefRefPtr<CefValue> logicalSuccessValue = BoolValue(true);
+  if (pendingValue->HasKey("result")) {
+    CefRefPtr<CefValue> result = pendingValue->GetValue("result");
+    if (!result) {
+      callback->Failure(500, PendingProtocolError("invalid logical result"));
+      return true;
+    }
+    logicalSuccessValue = result->Copy();
+  }
+
+  PendingQuery pending{
+      queryId,
+      browser ? browser->GetIdentifier() : 0,
+      frame ? frame->GetIdentifier().ToString() : std::string(),
+      callback,
+      logicalSuccessValue,
+  };
+  const auto [_, inserted] =
+      pendingQueries_.emplace(operationId, std::move(pending));
+  if (!inserted) {
+    callback->Failure(409,
+                      PendingProtocolError("duplicate operationId " + operationId));
+  }
+  return true;
+}
+
+bool NativeBridge::IsBridgeError(CefRefPtr<CefValue> response,
+                                 std::string &error) const {
+  if (!response || response->GetType() != VTYPE_DICTIONARY) {
+    return false;
+  }
+  CefRefPtr<CefDictionaryValue> dictionary = response->GetDictionary();
+  if (!dictionary->HasKey("ok") || dictionary->GetType("ok") != VTYPE_BOOL ||
+      dictionary->GetBool("ok")) {
+    return false;
+  }
+  error = dictionary->HasKey("error") &&
+                  dictionary->GetType("error") == VTYPE_STRING
+              ? dictionary->GetString("error")
+              : "FrostEngine request failed";
+  return true;
+}
+
+void NativeBridge::FailPendingQueriesForShutdown() {
+  if (pendingQueries_.empty()) {
+    return;
+  }
+  // The bridge is owned and destroyed by BrowserWindow on CEF's UI thread.
+  // Keep the assertion here rather than silently calling a CEF callback from
+  // an arbitrary shutdown thread.
+  CEF_REQUIRE_UI_THREAD();
+  auto pendingQueries = std::move(pendingQueries_);
+  pendingQueries_.clear();
+  for (auto &[operationId, pending] : pendingQueries) {
+    pending.callback->Failure(
+        499, "Browser window closed before host operation " + operationId +
+                 " completed");
+  }
+}
 
 CefRefPtr<CefValue> NativeBridge::Invoke(const std::string &method,
                                          CefRefPtr<CefDictionaryValue> params) {
@@ -418,17 +577,17 @@ NativeBridge::FrostInvoke(const std::string &method,
                                 : CefDictionaryValue::Create());
   auto value = CefValue::Create();
   value->SetDictionary(request);
-  return FrostResultValue(frostBridge_.ProcessJson(WriteValue(value)));
+  return FrostResultValue(
+      window_.App().EngineForWindow(&window_).ProcessJson(WriteValue(value)));
 }
 
-CefRefPtr<CefValue> NativeBridge::HostBackedFrostInvoke(
+CefRefPtr<CefValue> NativeBridge::DispatchFrostRequest(
     const std::string &method, CefRefPtr<CefDictionaryValue> params,
-    const std::function<bool()> &hostOperation) {
-  const bool ok = hostOperation();
-  if (ok) {
-    (void)FrostInvoke(method, params);
-  }
-  return BoolValue(ok);
+    const std::function<bool()> &) {
+  // FrostEngine owns the operation and emits a HostCommand.  Executing the
+  // C++ callback here used to perform the same mutation twice and could make
+  // the UI report success before CEF had completed the host operation.
+  return FrostInvoke(method, params);
 }
 
 void NativeBridge::EmitToUi(const std::string &eventName,
@@ -491,18 +650,6 @@ NativeBridge::WindowToFrostDictionary(const BrowserWindow &window) const {
 
 std::string NativeBridge::WriteValue(CefRefPtr<CefValue> value) const {
   return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
-}
-
-bool NativeBridge::PollHostCommandJson(std::string &commandJson) {
-  return frostBridge_.PollHostCommandJson(commandJson);
-}
-
-bool NativeBridge::PushHostCommandResultJson(const std::string &resultJson) {
-  return frostBridge_.PushHostCommandResultJson(resultJson);
-}
-
-bool NativeBridge::PushHostEventJson(const std::string &eventJson) {
-  return frostBridge_.PushHostEventJson(eventJson);
 }
 
 }  // namespace fubuki

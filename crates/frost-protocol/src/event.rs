@@ -35,11 +35,20 @@ pub enum Event {
     DownloadChanged {
         url: Option<String>,
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        percent: Option<i64>,
     },
     #[serde(rename = "permission.changed")]
     PermissionChanged { origin: String, permission: String },
     #[serde(rename = "host.synced")]
     HostSynced,
+    /// The one and only terminal record for a host operation.  In particular,
+    /// a timeout is terminal: a late host result is rejected and cannot emit a
+    /// second completion event for the same operation ID.
+    #[serde(rename = "host.operationCompleted")]
+    HostOperationCompleted(OperationCompleted),
     #[serde(rename = "external.audit")]
     ExternalAudit {
         command_id: String,
@@ -53,6 +62,49 @@ pub enum Event {
         command_id: String,
         retry_after_ms: u64,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationCompleted {
+    pub operation_id: String,
+    pub status: OperationCompletionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationCompletionStatus {
+    Succeeded,
+    Failed,
+    TimedOut,
+}
+
+impl OperationCompleted {
+    pub fn succeeded(operation_id: impl Into<String>) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            status: OperationCompletionStatus::Succeeded,
+            error: None,
+        }
+    }
+
+    pub fn failed(operation_id: impl Into<String>, error: impl Into<String>) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            status: OperationCompletionStatus::Failed,
+            error: Some(error.into()),
+        }
+    }
+
+    pub fn timed_out(operation_id: impl Into<String>) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            status: OperationCompletionStatus::TimedOut,
+            error: Some("host operation timed out".into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

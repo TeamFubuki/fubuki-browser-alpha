@@ -1,43 +1,19 @@
 #include "browser/TabManager.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace fubuki {
 
 TabManager::TabManager(EventBus &eventBus) : eventBus_(eventBus) {}
 
-Tab &TabManager::CreateTab(const std::string &url, bool active) {
-  if (tabs_.empty()) {
-    active = true;
-  }
-  if (active) {
-    for (auto &tab : tabs_) {
-      tab.isActive = false;
-    }
-  }
-
-  Tab tab;
-  tab.id = NextId();
-  tab.title = "New Tab";
-  tab.url = url;
-  tab.isActive = active;
-  tabs_.push_back(tab);
-
-  if (active) {
-    activeTabId_ = tabs_.back().id;
-  }
-
-  eventBus_.Publish({EventType::TabCreated, "tabs.created", tabs_.back(), "",
-                     tabs_.back().id, ""});
-  if (active) {
-    eventBus_.Publish({EventType::TabActivated, "tabs.activated", tabs_.back(),
-                       "", tabs_.back().id, ""});
-  }
-  return tabs_.back();
-}
-
 Tab &TabManager::CreateTab(const std::string &url, bool active,
                            const std::string &tabId) {
+  // Callers receive tabId from FrostEngine's HostCommand.  Rejecting an empty
+  // ID here protects against an accidental revival of host-owned identity.
+  if (tabId.empty()) {
+    throw std::invalid_argument("TabManager requires a Rust-owned tab ID");
+  }
   if (tabs_.empty()) {
     active = true;
   }
@@ -48,7 +24,7 @@ Tab &TabManager::CreateTab(const std::string &url, bool active,
   }
 
   Tab tab;
-  tab.id = tabId.empty() ? NextId() : tabId;
+  tab.id = tabId;
   tab.title = "New Tab";
   tab.url = url;
   tab.isActive = active;
@@ -83,7 +59,7 @@ bool TabManager::CloseTab(const std::string &tabId) {
       {EventType::TabClosed, "tabs.closed", closed, "", tabId, ""});
 
   if (tabs_.empty()) {
-    CreateTab("fubuki://newtab/", true);
+    activeTabId_.clear();
     return true;
   }
 
@@ -207,10 +183,6 @@ void TabManager::SetBrowser(const std::string &tabId,
   if (auto *tab = GetTab(tabId)) {
     tab->browser = browser;
   }
-}
-
-std::string TabManager::NextId() {
-  return "tab-" + std::to_string(nextId_++);
 }
 
 void TabManager::EnsureActiveTab() {

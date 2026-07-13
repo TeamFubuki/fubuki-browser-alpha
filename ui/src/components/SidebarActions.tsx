@@ -1,5 +1,9 @@
 import { t } from '../i18n';
-import { currentLanguage, navigateInternal } from '../stores/browserStore';
+import {
+  currentLanguage,
+  navigateInternal,
+  runBrowserAction,
+} from '../stores/browserStore';
 
 export default function SidebarActions() {
   const lang = () => currentLanguage();
@@ -9,28 +13,32 @@ export default function SidebarActions() {
       <button
         title={t('common.bookmarks', lang())}
         aria-label={t('common.bookmarks', lang())}
-        onClick={() => navigateInternal('fubuki://bookmarks/')}
+        onClick={() =>
+          runBrowserAction(navigateInternal('fubuki://bookmarks/'))
+        }
       >
         <span aria-hidden="true">★</span>
       </button>
       <button
         title={t('common.history', lang())}
         aria-label={t('common.history', lang())}
-        onClick={() => navigateInternal('fubuki://history/')}
+        onClick={() => runBrowserAction(navigateInternal('fubuki://history/'))}
       >
         <span aria-hidden="true">◷</span>
       </button>
       <button
         title={t('common.downloads', lang())}
         aria-label={t('common.downloads', lang())}
-        onClick={() => navigateInternal('fubuki://downloads/')}
+        onClick={() =>
+          runBrowserAction(navigateInternal('fubuki://downloads/'))
+        }
       >
         <span aria-hidden="true">↓</span>
       </button>
       <button
         title={t('common.settings', lang())}
         aria-label={t('common.settings', lang())}
-        onClick={() => navigateInternal('fubuki://settings/')}
+        onClick={() => runBrowserAction(navigateInternal('fubuki://settings/'))}
       >
         <span aria-hidden="true">⚙</span>
       </button>

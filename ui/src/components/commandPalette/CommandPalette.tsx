@@ -13,7 +13,7 @@ import {
   activeTabId,
   browserState,
   currentLanguage,
-  refreshState,
+  runBrowserAction,
 } from '../../stores/browserStore';
 import { filterCommands, type PaletteCommand } from './commands';
 
@@ -91,7 +91,6 @@ export default function CommandPalette(props: Props) {
             return;
           }
           await commands.execute(command.id);
-          await refreshState(command.id);
         },
       }));
 
@@ -124,11 +123,13 @@ export default function CommandPalette(props: Props) {
     }
   });
 
-  const runSelected = async () => {
+  const runSelected = () => {
     const command = filtered()[selectedIndex()];
     if (!command) return;
-    await command.run();
-    props.onClose();
+    runBrowserAction(
+      Promise.resolve(command.run()).then(() => props.onClose()),
+      command.id,
+    );
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -150,7 +151,7 @@ export default function CommandPalette(props: Props) {
     }
     if (event.key === 'Enter') {
       event.preventDefault();
-      void runSelected();
+      runSelected();
     }
   };
 
@@ -202,7 +203,7 @@ export default function CommandPalette(props: Props) {
                     role="option"
                     aria-selected={index() === selectedIndex()}
                     onMouseEnter={() => setSelectedIndex(index())}
-                    onClick={() => void runSelected()}
+                    onClick={runSelected}
                   >
                     <span>
                       <span class="command-palette-title">{command.title}</span>
