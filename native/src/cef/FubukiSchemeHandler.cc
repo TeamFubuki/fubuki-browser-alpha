@@ -1,7 +1,5 @@
 #include "cef/FubukiSchemeHandler.h"
 
-#include <sqlite3.h>
-
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -30,13 +28,10 @@ struct Record {
 };
 
 std::filesystem::path ProfilePath() {
-  const char* home = std::getenv("HOME");
-  return home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
-              : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
-}
-
-std::filesystem::path DatabasePath() {
-  return ProfilePath() / "fubuki.sqlite3";
+  if (BrowserAppController* app = GetBrowserAppController()) {
+    return app->Store().ProfilePath();
+  }
+  return {};
 }
 
 std::string MimeForPath(const std::string& path) {
@@ -85,72 +80,11 @@ std::string HtmlEscape(const std::string& value) {
   return out;
 }
 
-void Execute(sqlite3* db, const std::string& sql) {
-  sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
-}
-
-std::string ColumnText(sqlite3_stmt* statement, int column) {
-  const unsigned char* text = sqlite3_column_text(statement, column);
-  return text ? reinterpret_cast<const char*>(text) : "";
-}
-
-sqlite3* OpenDatabase() {
-  // Cache a single process-lifetime connection. Opening the database (and
-  // running the DDL) on every Setting()/QueryRecords() call was a major source
-  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
-  // The connection is now opened once and reused for the process lifetime.
-  static sqlite3* cached = nullptr;
-  static bool initialized = false;
-  if (initialized) {
-    return cached;
-  }
-  std::filesystem::create_directories(ProfilePath());
-  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
-    cached = nullptr;
-    return nullptr;
-  }
-  // Only mark as initialized after a successful open so retries are possible.
-  initialized = true;
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL "
-          "UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
-          "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  // Migration for existing databases that lack download_id column.
-  // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
-  Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT "
-          "NULL,permission TEXT NOT NULL,value TEXT NOT NULL,updated_at "
-          "TEXT NOT NULL,PRIMARY KEY(origin,permission))");
-  return cached;
-}
-
 std::string Setting(const std::string& key, const std::string& fallback = "") {
-  sqlite3* db = OpenDatabase();
-  if (!db)
+  BrowserAppController* app = GetBrowserAppController();
+  if (!app)
     return fallback;
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &statement, nullptr);
-  sqlite3_bind_text(statement, 1, key.c_str(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
-  std::string value = fallback;
-  if (sqlite3_step(statement) == SQLITE_ROW) {
-    value = ColumnText(statement, 0);
-  }
-  sqlite3_finalize(statement);
+  const std::string value = app->Store().GetSetting(key);
   return value.empty() ? fallback : value;
 }
 
@@ -277,39 +211,54 @@ std::string DownloadStatusText(const std::string& state, int percent) {
 }
 
 std::vector<Record> QueryRecords(const std::string& table, int limit) {
-  sqlite3* db = OpenDatabase();
-  if (!db)
+  BrowserAppController* app = GetBrowserAppController();
+  if (!app || limit <= 0)
     return {};
 
-  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at "
-                                                 "FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history" ? "SELECT title,url,'','','',0,created_at FROM "
-                                                 "history ORDER BY id DESC LIMIT ?"
-                          : table == "logs"
-                              ? "SELECT message,'','',level,'',0,created_at FROM logs ORDER BY id "
-                                "DESC LIMIT ?"
-                              : "SELECT "
-                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at) FROM "
-                                "downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC "
-                                "LIMIT ?";
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
-  sqlite3_bind_int(statement, 1, limit);
+  std::string responseJson;
+  if (table == "logs") {
+    responseJson = app->Store().GetLogs(static_cast<size_t>(limit));
+  } else {
+    const std::string method = table == "bookmarks" ? "bookmarks.list"
+                               : table == "history" ? "history.list"
+                                                    : "downloads.list";
+    responseJson = app->Engine().ProcessJson(
+        "{\"version\":0,\"method\":\"" + method + "\",\"params\":{}}");
+  }
+  CefRefPtr<CefValue> parsed = CefParseJSON(responseJson, JSON_PARSER_RFC);
+  if (!parsed)
+    return {};
+  CefRefPtr<CefListValue> rows;
+  if (table == "logs" && parsed->GetType() == VTYPE_LIST) {
+    rows = parsed->GetList();
+  } else if (parsed->GetType() == VTYPE_DICTIONARY) {
+    CefRefPtr<CefDictionaryValue> response = parsed->GetDictionary();
+    if (!response->GetBool("ok") || response->GetType("result") != VTYPE_LIST)
+      return {};
+    rows = response->GetList("result");
+  }
+  if (!rows)
+    return {};
 
   std::vector<Record> records;
-  while (sqlite3_step(statement) == SQLITE_ROW) {
+  const size_t count = std::min(rows->GetSize(), static_cast<size_t>(limit));
+  records.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    if (rows->GetType(index) != VTYPE_DICTIONARY)
+      continue;
+    CefRefPtr<CefDictionaryValue> row = rows->GetDictionary(index);
     Record record;
-    record.title = ColumnText(statement, 0);
-    record.url = ColumnText(statement, 1);
-    record.faviconUrl = ColumnText(statement, 2);
-    record.path = ColumnText(statement, 3);
-    record.state = ColumnText(statement, 4);
-    record.percent = sqlite3_column_int(statement, 5);
-    record.createdAt = ColumnText(statement, 6);
+    record.title = table == "logs" ? row->GetString("message").ToString()
+                                   : row->GetString("title").ToString();
+    record.url = row->GetString("url").ToString();
+    record.faviconUrl = row->GetString("faviconUrl").ToString();
+    record.path = table == "logs" ? row->GetString("level").ToString()
+                                  : row->GetString("path").ToString();
+    record.state = row->GetString("state").ToString();
+    record.percent = row->GetInt("percent");
+    record.createdAt = row->GetString("createdAt").ToString();
     records.push_back(record);
   }
-
-  sqlite3_finalize(statement);
   return records;
 }
 
@@ -807,7 +756,7 @@ FubukiSchemeHandler::FubukiSchemeHandler(std::string uiDistPath)
 bool FubukiSchemeHandler::Open(CefRefPtr<CefRequest> request, bool& handle_request,
                                CefRefPtr<CefCallback>) {
   handle_request = true;
-  return LoadRequest(request->GetURL().ToString());
+  return LoadRequest(request);
 }
 
 void FubukiSchemeHandler::GetResponseHeaders(CefRefPtr<CefResponse> response,
@@ -818,6 +767,13 @@ void FubukiSchemeHandler::GetResponseHeaders(CefRefPtr<CefResponse> response,
   headers.insert(
       {"Content-Type", mimeType_ + (mimeType_.rfind("text/", 0) == 0 ? "; charset=utf-8" : "")});
   headers.insert({"Cache-Control", "no-store, max-age=0"});
+  headers.insert({"X-Content-Type-Options", "nosniff"});
+  headers.insert({"Referrer-Policy", "no-referrer"});
+  headers.insert({"Content-Security-Policy",
+                  "default-src 'self'; img-src 'self' data: https:; style-src "
+                  "'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+                  "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+                  "form-action 'self'"});
   response->SetHeaderMap(headers);
   response_length = static_cast<int64_t>(data_.size());
 }
@@ -881,8 +837,17 @@ std::string SearchRedirectUrl(const std::string& query) {
   return "https://www.google.com/search?q=" + encoded;
 }
 
-bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
+bool FubukiSchemeHandler::LoadRequest(CefRefPtr<CefRequest> request) {
   offset_ = 0;
+  if (!request) {
+    LoadText("Bad request", "text/plain", 400);
+    return true;
+  }
+  const std::string url = request->GetURL().ToString();
+  if (request->GetMethod().ToString() != "GET") {
+    LoadText("Method not allowed", "text/plain", 405);
+    return true;
+  }
   auto& cache = PageCache::Instance();
 
   // Destructive internal-page actions must never execute from a URL GET.
@@ -906,7 +871,8 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (!redirect.empty()) {
       // Use meta refresh for safe redirect (avoids JS injection)
       const std::string html =
-          "<!doctype html><meta http-equiv=\"refresh\" content=\"0;url=" + redirect + "\">";
+          "<!doctype html><meta http-equiv=\"refresh\" content=\"0;url=" +
+          HtmlEscape(redirect) + "\">";
       LoadText(html, "text/html", 200);
       return true;
     }
@@ -1007,10 +973,32 @@ std::string FubukiSchemeHandler::ResolveAppPath(const std::string& url) const {
   if (query != std::string::npos) {
     path = path.substr(0, query);
   }
-  if (path.empty() || path == "/" || path.find("..") != std::string::npos) {
+  path = CefURIDecode(path, false,
+                      static_cast<cef_uri_unescape_rule_t>(
+                          UU_SPACES | UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS))
+             .ToString();
+  if (path.empty() || path == "/") {
     path = "index.html";
   }
-  return uiDistPath_ + "/" + path;
+  const std::filesystem::path relative(path);
+  if (relative.is_absolute() ||
+      std::any_of(relative.begin(), relative.end(), [](const auto& component) {
+        return component == "..";
+      })) {
+    return "";
+  }
+  std::error_code error;
+  const std::filesystem::path root =
+      std::filesystem::canonical(uiDistPath_, error);
+  if (error) {
+    return "";
+  }
+  const std::filesystem::path resolved =
+      std::filesystem::weakly_canonical(root / relative, error);
+  if (error || !std::equal(root.begin(), root.end(), resolved.begin(), resolved.end())) {
+    return "";
+  }
+  return resolved.string();
 }
 
 FubukiSchemeHandlerFactory::FubukiSchemeHandlerFactory(std::string uiDistPath)

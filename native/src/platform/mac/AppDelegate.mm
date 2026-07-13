@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 #import "include/cef_application_mac.h"
+#include "browser/BrowserAppController.h"
 #include "include/wrapper/cef_helpers.h"
 
 #include <string>
@@ -62,6 +63,13 @@ void InitializeMacApplication() {
 }  // namespace fubuki
 
 @implementation FubukiAppDelegate
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+  if (auto* controller = fubuki::GetBrowserAppController()) {
+    controller->BeginShutdown();
+  }
+  return NSTerminateNow;
+}
+
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
   return NO;
 }

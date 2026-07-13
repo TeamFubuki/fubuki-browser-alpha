@@ -38,8 +38,17 @@ pub enum Event {
     },
     #[serde(rename = "permission.changed")]
     PermissionChanged { origin: String, permission: String },
-    #[serde(rename = "host.synced")]
-    HostSynced,
+    #[serde(rename = "host.commandFailed")]
+    HostCommandFailed { command_id: String, error: String },
+    #[serde(rename = "host.stateMismatch")]
+    HostStateMismatch {
+        missing_window_ids: Vec<String>,
+        extra_window_ids: Vec<String>,
+        missing_tab_ids: Vec<String>,
+        extra_tab_ids: Vec<String>,
+    },
+    #[serde(rename = "engine.error")]
+    EngineError { context: String, error: String },
     #[serde(rename = "external.audit")]
     ExternalAudit {
         command_id: String,

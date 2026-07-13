@@ -55,8 +55,9 @@ async function refreshBookmarks() {
   try {
     const list = await invokeBridge('bookmarks.list');
     setBrowserState('bookmarks', list as BookmarkRecord[]);
-  } catch {
-    // ignore
+  } catch (error) {
+    console.error('[Fubuki] Bookmark refresh failed:', error);
+    setBrowserState('status', 'Error');
   } finally {
     bookmarksPending = false;
   }
@@ -68,8 +69,9 @@ async function refreshHistory() {
   try {
     const list = await invokeBridge('history.list');
     setBrowserState('history', list as HistoryRecord[]);
-  } catch {
-    // ignore
+  } catch (error) {
+    console.error('[Fubuki] History refresh failed:', error);
+    setBrowserState('status', 'Error');
   } finally {
     historyPending = false;
   }

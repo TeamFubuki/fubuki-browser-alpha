@@ -1,5 +1,4 @@
 export type FubukiBridgeMethod =
-  | "app.getState"
   | "tabs.create"
   | "tabs.activate"
   | "tabs.close"

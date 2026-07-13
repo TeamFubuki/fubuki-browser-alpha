@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CEF_ROOT="${CEF_ROOT:-"$ROOT_DIR/third_party/cef"}"
-CEF_CHANNEL="${CEF_CHANNEL:-stable}"
+CEF_VERSION_PIN="${CEF_VERSION_PIN:-150.0.11+gb887805+chromium-150.0.7871.115}"
 CEF_PLATFORM="${CEF_PLATFORM:-}"
 FORCE="${FORCE:-0}"
 CACHE_DIR="${CACHE_DIR:-"$ROOT_DIR/.cache/cef"}"
@@ -18,7 +18,9 @@ if [[ -z "$CEF_PLATFORM" ]]; then
   esac
 fi
 
-if [[ "$FORCE" != "1" && -f "$CEF_ROOT/cmake/cef_variables.cmake" ]]; then
+if [[ "$FORCE" != "1" && -f "$CEF_ROOT/cmake/cef_variables.cmake" &&
+      -f "$CEF_ROOT/.fubuki-cef-version" &&
+      "$(<"$CEF_ROOT/.fubuki-cef-version")" == "$CEF_VERSION_PIN" ]]; then
   echo "CEF already exists at $CEF_ROOT"
   echo "Set FORCE=1 to download and replace it."
   exit 0
@@ -32,7 +34,7 @@ mkdir -p "$CACHE_DIR"
 
 selection_file="$(mktemp "$CACHE_DIR/selection.XXXXXX.json")"
 
-CEF_PLATFORM="$CEF_PLATFORM" CEF_CHANNEL="$CEF_CHANNEL" INDEX_URL="$INDEX_URL" python3 - <<'PY' > "$selection_file"
+CEF_PLATFORM="$CEF_PLATFORM" CEF_VERSION_PIN="$CEF_VERSION_PIN" INDEX_URL="$INDEX_URL" python3 - <<'PY' > "$selection_file"
 import json
 import os
 import re
@@ -40,7 +42,7 @@ import sys
 import urllib.request
 
 platform = os.environ["CEF_PLATFORM"]
-channel = os.environ["CEF_CHANNEL"]
+version_pin = os.environ["CEF_VERSION_PIN"]
 index_url = os.environ["INDEX_URL"]
 archive_pattern = re.compile(rf"cef_binary_[A-Za-z0-9.+_-]+_{re.escape(platform)}\.tar\.bz2")
 
@@ -71,14 +73,14 @@ def standard_archive(files):
 
 candidates = []
 for version in index[platform].get("versions", []):
-    if version.get("channel") != channel:
+    if version.get("cef_version") != version_pin:
         continue
     name = standard_archive(version.get("files", []))
     if name:
         candidates.append((version_key(version), version, name))
 
 if not candidates:
-    raise SystemExit(f"No standard CEF archive found for {platform} channel={channel}")
+    raise SystemExit(f"Pinned CEF archive not found: {version_pin} ({platform})")
 
 _, version, name = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
 # Resolve the archive entry to read its checksum from the index.
@@ -159,5 +161,6 @@ fi
 mkdir -p "$(dirname "$CEF_ROOT")"
 rm -rf "$CEF_ROOT"
 mv "$extracted" "$CEF_ROOT"
+printf '%s' "$CEF_VERSION_PIN" > "$CEF_ROOT/.fubuki-cef-version"
 
 echo "CEF installed to $CEF_ROOT"

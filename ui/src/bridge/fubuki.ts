@@ -1,3 +1,5 @@
+import { parseBridgeResponse } from './response';
+
 export type Tab = {
   id: string;
   title: string;
@@ -183,7 +185,6 @@ export type CommandId =
   | 'bookmarks.remove';
 
 export type BridgeMethodMap = {
-  'app.getState': { params: Record<string, never>; result: BrowserState };
   'app.snapshot': {
     params: Record<string, never>;
     result: FrostAppState | BrowserState;
@@ -336,7 +337,17 @@ async function invoke<T = unknown>(
         method,
         params,
       }),
-      onSuccess: (response) => resolve(JSON.parse(response) as T),
+      onSuccess: (response) => {
+        try {
+          resolve(parseBridgeResponse<T>(response));
+        } catch (error) {
+          reject(
+            error instanceof Error
+              ? error
+              : new Error('Native bridge returned invalid JSON'),
+          );
+        }
+      },
       onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });
   });
@@ -546,20 +557,15 @@ export async function getBrowserState(): Promise<BrowserState> {
   if (!window.cefQuery) {
     return developmentState();
   }
-  try {
-    const snapshot = await invokeBridge('app.snapshot');
-    const state = normalizeAppState(snapshot);
-    if (isFrostAppState(snapshot)) {
-      // Fetch commands in parallel, not sequentially
-      const commandsPromise = invokeBridge('commands.list').catch(
-        () => [] as BrowserCommand[],
-      );
-      return { ...state, commands: await commandsPromise };
-    }
-    return state;
-  } catch {
-    return invokeBridge('app.getState');
+  const snapshot = await invokeBridge('app.snapshot');
+  const state = normalizeAppState(snapshot);
+  if (isFrostAppState(snapshot)) {
+    const commandsPromise = invokeBridge('commands.list').catch(
+      () => [] as BrowserCommand[],
+    );
+    return { ...state, commands: await commandsPromise };
   }
+  return state;
 }
 
 export function onBridgeEvent<K extends keyof EventMap>(

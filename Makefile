@@ -7,6 +7,7 @@ BUILD_TYPE ?= release
 LLVM_PREFIX ?= $(shell brew --prefix llvm 2>/dev/null || echo "/opt/homebrew/opt/llvm")
 CLANG_FORMAT := $(LLVM_PREFIX)/bin/clang-format
 CLANG_TIDY := $(LLVM_PREFIX)/bin/clang-tidy
+MACOS_SDK := $(shell xcrun --show-sdk-path)
 
 .PHONY: help all bootstrap cef ui rust configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all audit audit-deny clean distclean
 
@@ -102,7 +103,7 @@ format:
 	@cd ui && pnpm format
 
 format-check:
-	@cd ui && pnpm run format --check 2>/dev/null || echo "format-check: no format:check script"
+	@cd ui && pnpm run format:check
 
 lint-rust:
 	@cargo clippy --workspace -- -D warnings
@@ -113,9 +114,9 @@ format-rust:
 lint-native:
 	@echo "Running Clang-Tidy on native source..."
 	@if [ ! -d native/build ]; then echo "Run 'make configure' first." >&2; exit 1; fi
-	@find native/src -name '*.cc' -o -name '*.cpp' -o -name '*.h' | xargs $(CLANG_TIDY) -p native/build --quiet 2>/dev/null || true
+	@find native/src \( -name '*.cc' -o -name '*.cpp' -o -name '*.mm' \) -print0 | xargs -0 $(CLANG_TIDY) -p native/build --extra-arg=-isysroot --extra-arg="$(MACOS_SDK)" --quiet
 	@echo "Running cppcheck on native source..."
-	@find native/src -name '*.cc' -o -name '*.cpp' -o -name '*.h' | xargs cppcheck --enable=all --suppress=missingIncludeSystem --std=c++20 --quiet 2>/dev/null || true
+	@find native/src \( -name '*.cc' -o -name '*.cpp' -o -name '*.h' \) -print0 | xargs -0 cppcheck --language=c++ --enable=warning,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --suppress='syntaxError:third_party/cef/*' --suppress='preprocessorErrorDirective:third_party/cef/*' --std=c++20 -Inative/src -Ithird_party/cef --quiet
 
 format-native:
 	@echo "Running Clang-Format on native source..."

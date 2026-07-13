@@ -4,18 +4,9 @@ import type {
   CommandId,
   EventMap,
   Settings,
-  Tab,
 } from '../bridge/fubuki';
 
 describe('BridgeMethodMap types', () => {
-  it('has correct param/result types for app.getState', () => {
-    type Params = BridgeMethodMap['app.getState']['params'];
-    type Result = BridgeMethodMap['app.getState']['result'];
-
-    expectTypeOf<Params>().toEqualTypeOf<Record<string, never>>();
-    expectTypeOf<Result>().toMatchTypeOf<{ windowId: string; tabs: Tab[] }>();
-  });
-
   it('has correct param/result types for tabs.create', () => {
     type Params = BridgeMethodMap['tabs.create']['params'];
     type Result = BridgeMethodMap['tabs.create']['result'];

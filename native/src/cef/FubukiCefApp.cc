@@ -36,7 +36,8 @@ void InstallWebAuthnGuard(CefRefPtr<CefFrame> frame) {
     if (nativeGet) {
       Object.defineProperty(credentials, "get", { configurable: true, value: (options) => options && options.publicKey ? rejectPasskey() : nativeGet(options) });
     }
-  } catch {
+  } catch (error) {
+    console.error("[Fubuki] Failed to install WebAuthn guard", error);
   }
 })();
 )JS",
@@ -74,11 +75,20 @@ void FubukiCefApp::OnContextInitialized() {
                                   new FubukiSchemeHandlerFactory(uiDistPath_));
 
   const char *home = std::getenv("HOME");
-  const auto profilePath =
+  const auto requestedProfilePath =
       home ? std::filesystem::path(home) /
                  "Library/Application Support/Fubuki Browser Alpha"
            : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
-  browserApp_ = std::make_unique<BrowserAppController>(profilePath);
+  std::filesystem::create_directories(requestedProfilePath);
+  std::error_code profileError;
+  const auto profilePath =
+      std::filesystem::canonical(requestedProfilePath, profileError);
+  if (profileError) {
+    LOG(FATAL) << "Failed to canonicalize the browser profile path";
+    return;
+  }
+  browserApp_ =
+      std::make_unique<BrowserAppController>(profilePath, uiDistPath_);
   SetBrowserAppController(browserApp_.get());
   browserApp_->Start();
 }

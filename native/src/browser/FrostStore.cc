@@ -3,18 +3,20 @@
 #include <stdexcept>
 
 #include "frost_ffi.h"
+#include "include/cef_parser.h"
+#include "include/cef_values.h"
 #include "utils/JsonUtils.h"
 
 namespace fubuki {
 
 namespace {
 
-std::string CStrOrEmpty(char *value) {
+std::string TakeEngineString(char *value) {
   if (!value) {
     return "";
   }
   std::string result(value);
-  frost_store_string_free(value);
+  frost_engine_string_free(value);
   return result;
 }
 
@@ -22,84 +24,73 @@ std::string CStrOrEmpty(char *value) {
 
 FrostStore::FrostStore(std::filesystem::path profilePath, void *engineHandle)
     : profilePath_(std::move(profilePath)), engine_(engineHandle) {
-  // Ensure the profile directory exists before opening the database.
-  std::error_code ec;
-  std::filesystem::create_directories(profilePath_, ec);
-  const std::filesystem::path dbPath = profilePath_ / "frost-engine.sqlite3";
-  handle_ = frost_store_open(dbPath.string().c_str());
-  if (!handle_) {
-    throw std::runtime_error("Failed to open engine store at " +
-                             dbPath.string());
-  }
-}
-
-FrostStore::~FrostStore() {
-  if (handle_) {
-    frost_store_free(handle_);
-    handle_ = nullptr;
+  if (!engine_) {
+    throw std::runtime_error("FrostEngine store is unavailable");
   }
 }
 
 std::string FrostStore::GetSetting(const std::string &key) const {
-  if (!handle_) {
-    return "";
-  }
-  return CStrOrEmpty(frost_store_get_setting(handle_, key.c_str()));
+  CefRefPtr<CefValue> value = CefParseJSON(
+      ExecRequestResult("settings.get", "{\"key\":" + JsonEscape(key) + "}"),
+      JSON_PARSER_RFC);
+  return value && value->GetType() == VTYPE_STRING
+             ? value->GetString().ToString()
+             : "";
 }
 
 bool FrostStore::SetSetting(const std::string &key, const std::string &value) {
-  if (!handle_) {
-    return false;
-  }
-  return frost_store_set_setting(handle_, key.c_str(), value.c_str());
+  return ExecRequest("settings.set", "{\"key\":" + JsonEscape(key) +
+                                         ",\"value\":" + JsonEscape(value) + "}");
 }
 
 std::string FrostStore::GetAllSettings() const {
-  if (!handle_) {
+  const std::string snapshot = ExecRequestResult("app.snapshot", "{}");
+  CefRefPtr<CefValue> parsed = CefParseJSON(snapshot, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY ||
+      parsed->GetDictionary()->GetType("settings") != VTYPE_DICTIONARY) {
     return "{}";
   }
-  return CStrOrEmpty(frost_store_get_all_settings(handle_));
+  auto value = CefValue::Create();
+  value->SetDictionary(parsed->GetDictionary()->GetDictionary("settings"));
+  return CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString();
 }
 
 bool FrostStore::AddLog(const std::string &level, const std::string &message) {
-  if (!handle_) {
-    return false;
-  }
-  return frost_store_add_log(handle_, level.c_str(), message.c_str());
+  return ExecRequest("logs.add", "{\"level\":" + JsonEscape(level) +
+                                    ",\"message\":" + JsonEscape(message) + "}");
 }
 
 std::string FrostStore::GetLogs(size_t limit) const {
-  if (!handle_) {
-    return "[]";
-  }
-  return CStrOrEmpty(frost_store_get_logs(handle_, limit));
+  return ExecRequestResult("logs.list",
+                           "{\"limit\":" + std::to_string(limit) + "}");
 }
 
 bool FrostStore::ClearLogs() {
-  if (!handle_) {
-    return false;
-  }
-  return frost_store_clear_logs(handle_);
+  return ExecRequest("logs.clear", "{}");
 }
 
 bool FrostStore::ExecRequest(const std::string &method,
                              const std::string &paramsJson) {
-  if (!engine_) {
-    return false;
-  }
+  const std::string result = ExecRequestResult(method, paramsJson);
+  return result == "true";
+}
+
+std::string FrostStore::ExecRequestResult(const std::string &method,
+                                          const std::string &paramsJson) const {
   std::string request = "{\"version\":0,\"method\":\"" + method +
                         "\",\"params\":" + paramsJson + "}";
   std::string response =
-      CStrOrEmpty(frost_engine_process_json(engine_, request.c_str()));
-  if (response.empty()) {
-    return false;
+      TakeEngineString(frost_engine_process_json(engine_, request.c_str()));
+  CefRefPtr<CefValue> parsed = CefParseJSON(response, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+    return "";
   }
-  // Response is {"version":0,"ok":bool,"kind":...,"result":...}
-  size_t okPos = response.find("\"ok\":");
-  if (okPos == std::string::npos) {
-    return false;
+  CefRefPtr<CefDictionaryValue> envelope = parsed->GetDictionary();
+  if (!envelope->GetBool("ok") || !envelope->HasKey("result")) {
+    return "";
   }
-  return response.substr(okPos + 5, 4) == "true";
+  CefRefPtr<CefValue> result = envelope->GetValue("result");
+  return result ? CefWriteJSON(result, JSON_WRITER_DEFAULT).ToString() : "";
 }
 
 bool FrostStore::AddBookmark(const std::string &title, const std::string &url,
@@ -115,32 +106,9 @@ bool FrostStore::RemoveBookmark(const std::string &url) {
   return ExecRequest("bookmarks.remove", params);
 }
 
-bool FrostStore::AddHistory(const std::string &title, const std::string &url,
-                            const std::string &faviconUrl) {
-  if (!handle_) {
-    return false;
-  }
-  return frost_store_add_history(handle_, title.c_str(), url.c_str(),
-                                 faviconUrl.c_str());
-}
-
 bool FrostStore::RemoveHistory(const std::string &url) {
   std::string params = "{\"url\":" + JsonEscape(url) + "}";
   return ExecRequest("history.remove", params);
-}
-
-bool FrostStore::AddDownload(const std::string &url, const std::string &path,
-                             const std::string &state) {
-  return UpdateDownload(url, path, state, 0);
-}
-
-bool FrostStore::UpdateDownload(const std::string &url, const std::string &path,
-                                const std::string &state, int percent) {
-  if (!handle_) {
-    return false;
-  }
-  return frost_store_upsert_download(handle_, url.c_str(), path.c_str(),
-                                     state.c_str(), percent);
 }
 
 bool FrostStore::RemoveDownload(const std::string &url,
@@ -150,9 +118,32 @@ bool FrostStore::RemoveDownload(const std::string &url,
 }
 
 bool FrostStore::HasDownloadPath(const std::string &path) const {
-  // The host no longer owns download metadata; treat any non-empty path as
-  // valid so file-open/reveal still works for completed downloads.
-  return !path.empty();
+  if (path.empty()) {
+    return false;
+  }
+  CefRefPtr<CefValue> parsed =
+      CefParseJSON(ExecRequestResult("downloads.list", "{}"), JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_LIST) {
+    return false;
+  }
+  CefRefPtr<CefListValue> downloads = parsed->GetList();
+  std::error_code error;
+  const std::filesystem::path requested = std::filesystem::canonical(path, error);
+  if (error) {
+    return false;
+  }
+  for (size_t index = 0; index < downloads->GetSize(); ++index) {
+    CefRefPtr<CefDictionaryValue> download = downloads->GetDictionary(index);
+    if (!download || download->GetString("state") != "completed") {
+      continue;
+    }
+    const std::filesystem::path registered = std::filesystem::canonical(
+        download->GetString("path").ToString(), error);
+    if (!error && registered == requested) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool FrostStore::SetPermission(const std::string &origin,
@@ -181,49 +172,8 @@ bool FrostStore::ClearHistoryRange(const std::string &range) {
   return ExecRequest("history.clearRange", params);
 }
 
-namespace {
-
-// Mirrors the engine's default-setting table so that a reset restores the
-// documented default rather than clearing the key.
-std::string DefaultSetting(const std::string &key) {
-  if (key == "homepage") return "https://example.com";
-  if (key == "searchEngine") return "google";
-  if (key == "customSearchUrl") return "https://www.google.com/search?q={query}";
-  if (key == "startupBehavior") return "newTab";
-  if (key == "sessionJson") return "";
-  if (key == "downloadDirectory") {
-    const char *home = std::getenv("HOME");
-    return home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
-  }
-  if (key == "theme") return "light";
-  if (key == "appearance") return "system";
-  if (key == "toolbarDensity") return "compact";
-  if (key == "sidebarVisible") return "show";
-  if (key == "sidebarWidth") return "196";
-  if (key == "defaultBookmarkDisplay") return "sidebar";
-  if (key == "openBookmarkIn") return "current";
-  if (key == "showBookmarkFavicons") return "on";
-  if (key == "newTabPage") return "blank";
-  if (key == "homeUrl") return "https://example.com";
-  if (key == "askBeforeDownload") return "off";
-  if (key == "defaultZoomLevel") return "0";
-  if (key == "closeWindowWithLastTab") return "off";
-  if (key == "privateSearchEngine") return "default";
-  if (key == "language") return "system";
-  if (key == "newTabBackgroundMode") return "unsplash";
-  if (key == "newTabBackgroundColor") return "#f8fafd";
-  if (key == "newTabBackgroundUrl") return "";
-  return "";
-}
-
-}  // namespace
-
 bool FrostStore::ResetSetting(const std::string &key) {
-  const std::string value = DefaultSetting(key);
-  if (value.empty() && key != "sessionJson") {
-    return false;
-  }
-  return SetSetting(key, value);
+  return ExecRequest("settings.reset", "{\"key\":" + JsonEscape(key) + "}");
 }
 
 }  // namespace fubuki

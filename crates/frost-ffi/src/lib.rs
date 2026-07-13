@@ -45,7 +45,9 @@ pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
 
 /// Creates a new FrostEngine instance backed by a SQLite store at `path`.
 ///
-/// If `path` is null or empty, falls back to an in-memory store.
+/// If `path` is null, creates an explicitly requested in-memory store. A
+/// persistent store open failure returns null; it never silently changes the
+/// persistence contract.
 ///
 /// # Safety
 ///
@@ -64,11 +66,18 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
     let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
 
     let join_handle = if path.is_null() {
+        let core = match BrowserCore::try_with_adapter_and_settings(
+            HostCommandAdapter::new(host_command_tx),
+            frost_core::InMemoryStore::default(),
+        ) {
+            Ok(core) => core,
+            Err(error) => {
+                eprintln!("[frost-ffi] failed to initialize in-memory engine: {error}");
+                return ptr::null_mut();
+            }
+        };
         spawn_core(
-            BrowserCore::with_adapter_and_settings(
-                HostCommandAdapter::new(host_command_tx),
-                frost_core::InMemoryStore::default(),
-            ),
+            core,
             event_tx.clone(),
             request_rx.clone(),
             response_tx.clone(),
@@ -81,28 +90,30 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
             .unwrap_or_default()
             .to_owned();
         match frost_store::SqliteStore::open(path) {
-            Ok(store) => spawn_core(
-                BrowserCore::with_adapter_and_settings(
+            Ok(store) => {
+                let core = match BrowserCore::try_with_adapter_and_settings(
                     HostCommandAdapter::new(host_command_tx.clone()),
                     store,
-                ),
-                event_tx.clone(),
-                request_rx.clone(),
-                response_tx.clone(),
-                host_event_rx.clone(),
-                host_result_rx.clone(),
-            ),
-            Err(_) => spawn_core(
-                BrowserCore::with_adapter_and_settings(
-                    HostCommandAdapter::new(host_command_tx.clone()),
-                    frost_core::InMemoryStore::default(),
-                ),
-                event_tx.clone(),
-                request_rx.clone(),
-                response_tx.clone(),
-                host_event_rx.clone(),
-                host_result_rx.clone(),
-            ),
+                ) {
+                    Ok(core) => core,
+                    Err(error) => {
+                        eprintln!("[frost-ffi] failed to initialize persistent engine: {error}");
+                        return ptr::null_mut();
+                    }
+                };
+                spawn_core(
+                    core,
+                    event_tx.clone(),
+                    request_rx.clone(),
+                    response_tx.clone(),
+                    host_event_rx.clone(),
+                    host_result_rx.clone(),
+                )
+            }
+            Err(error) => {
+                eprintln!("[frost-ffi] failed to open persistent store: {error}");
+                return ptr::null_mut();
+            }
         }
     };
 
@@ -141,8 +152,9 @@ where
         + Send
         + 'static,
 {
-    core.set_event_sender(event_tx);
+    core.set_event_sender(event_tx.clone());
     std::thread::spawn(move || {
+        let timeout_tick = crossbeam_channel::tick(std::time::Duration::from_millis(250));
         loop {
             select! {
                 recv(request_rx) -> message => {
@@ -155,8 +167,18 @@ where
                     }
                 }
                 recv(host_event_rx) -> message => {
-                    if let Ok(event) = message {
-                        let _ = core.process_host_event(event);
+                    let Ok(event) = message else {
+                        continue;
+                    };
+                    if let Err(error) = core.process_host_event(event)
+                        && let Err(send_error) = event_tx.send(EventEnvelope::new(
+                            frost_protocol::Event::EngineError {
+                                context: "host event".into(),
+                                error: error.to_string(),
+                            },
+                        ))
+                    {
+                        eprintln!("[frost-engine] failed to publish engine error: {send_error}");
                     }
                 }
                 recv(host_result_rx) -> message => {
@@ -164,6 +186,11 @@ where
                         && let Err(e) = core.process_host_command_result(result)
                     {
                         eprintln!("[frost-engine] host command failed: {e}");
+                    }
+                }
+                recv(timeout_tick) -> _ => {
+                    for command_id in core.expire_host_commands(std::time::Instant::now()) {
+                        eprintln!("[frost-engine] host command timed out: {command_id}");
                     }
                 }
             }
@@ -211,6 +238,17 @@ pub unsafe extern "C" fn frost_engine_process_json(
             Ok(request) => request,
             Err(error) => return into_c_string(error_response(None, error.to_string())),
         };
+
+        if request.version != frost_protocol::PROTOCOL_VERSION {
+            return into_c_string(error_response(
+                request.id.clone(),
+                format!(
+                    "protocol version mismatch: expected {}, got {}",
+                    frost_protocol::PROTOCOL_VERSION,
+                    request.version
+                ),
+            ));
+        }
 
         let id = request.id.clone();
         let handle = &*handle;

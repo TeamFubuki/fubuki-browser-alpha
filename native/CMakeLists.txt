@@ -2,10 +2,19 @@ cmake_minimum_required(VERSION 3.21)
 
 project(FubukiBrowserAlpha LANGUAGES CXX OBJCXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
-set(USE_SANDBOX OFF CACHE BOOL "Disable CEF sandbox for the MVP app bundle")
+option(FUBUKI_DEVELOPMENT_NO_SANDBOX
+       "Disable the CEF sandbox for explicit local development only" OFF)
+if(FUBUKI_DEVELOPMENT_NO_SANDBOX)
+  set(USE_SANDBOX OFF CACHE BOOL "CEF sandbox" FORCE)
+  message(WARNING "Building with the CEF sandbox disabled (development mode)")
+else()
+  set(USE_SANDBOX ON CACHE BOOL "CEF sandbox" FORCE)
+endif()
 
 set(CEF_ROOT "" CACHE PATH "Path to CEF binary distribution")
 if(NOT CEF_ROOT AND DEFINED ENV{CEF_ROOT})
@@ -88,9 +97,6 @@ target_include_directories(FubukiBrowserAlpha PRIVATE
   "${CEF_ROOT}"
 )
 target_compile_definitions(FubukiBrowserAlpha PRIVATE ${CEF_COMPILER_DEFINES})
-target_compile_definitions(FubukiBrowserAlpha PRIVATE
-  FUBUKI_UI_DIST="${CMAKE_CURRENT_SOURCE_DIR}/../ui/dist"
-)
 target_compile_options(FubukiBrowserAlpha PRIVATE
   ${FUBUKI_CEF_COMPILER_FLAGS}
   -Wall
@@ -99,7 +105,7 @@ target_compile_options(FubukiBrowserAlpha PRIVATE
   -Wno-gnu-zero-variadic-macro-arguments
 )
 target_link_options(FubukiBrowserAlpha PRIVATE ${CEF_LINKER_FLAGS})
-target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper frost_ffi_static ${CEF_STANDARD_LIBS} sqlite3 "-framework QuartzCore")
+target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper frost_ffi_static ${CEF_STANDARD_LIBS} "-framework QuartzCore")
 
 set(FUBUKI_APP_BUNDLE "$<TARGET_BUNDLE_DIR:FubukiBrowserAlpha>")
 COPY_MAC_FRAMEWORK(FubukiBrowserAlpha "${CEF_BINARY_DIR}" "${FUBUKI_APP_BUNDLE}")
@@ -148,3 +154,15 @@ foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
     VERBATIM
   )
 endforeach()
+
+add_custom_command(
+  TARGET FubukiBrowserAlpha
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ui/dist"
+    "${FUBUKI_APP_BUNDLE}/Contents/Resources/ui"
+  COMMAND ${CMAKE_COMMAND}
+    -DAPP_BUNDLE=${FUBUKI_APP_BUNDLE}
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_bundle.cmake"
+  VERBATIM
+)

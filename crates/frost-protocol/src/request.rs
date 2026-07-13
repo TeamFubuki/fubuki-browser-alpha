@@ -64,6 +64,7 @@ fn should_drop_empty_params(value: &Value) -> bool {
                 | "bookmarks.list"
                 | "history.list"
                 | "downloads.list"
+                | "logs.clear"
                 | "commands.list"
                 | "tabs.reopenClosed"
                 | "tabs.home"
@@ -145,6 +146,12 @@ pub enum Request {
     HistoryRemove { url: String },
     #[serde(rename = "history.clearRange", rename_all = "camelCase")]
     HistoryClearRange { range: String },
+    #[serde(rename = "logs.list", rename_all = "camelCase")]
+    LogsList { limit: usize },
+    #[serde(rename = "logs.add", rename_all = "camelCase")]
+    LogsAdd { level: String, message: String },
+    #[serde(rename = "logs.clear")]
+    LogsClear,
     #[serde(rename = "downloads.list")]
     DownloadsList,
     #[serde(rename = "downloads.remove", rename_all = "camelCase")]
@@ -152,6 +159,10 @@ pub enum Request {
         url: Option<String>,
         path: Option<String>,
     },
+    #[serde(rename = "downloads.open", rename_all = "camelCase")]
+    DownloadsOpen { path: String },
+    #[serde(rename = "downloads.reveal", rename_all = "camelCase")]
+    DownloadsReveal { path: String },
     #[serde(rename = "data.clear", rename_all = "camelCase")]
     DataClear { target: Option<String> },
     #[serde(rename = "permissions.set", rename_all = "camelCase")]
@@ -175,8 +186,6 @@ pub enum Request {
         width: Option<f64>,
         height: Option<f64>,
     },
-    #[serde(rename = "host.syncSnapshot", rename_all = "camelCase")]
-    HostSyncSnapshot { state: crate::AppState },
 }
 
 impl ProtocolRequest {

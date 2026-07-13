@@ -30,9 +30,6 @@ public:
   void EmitToUi(const std::string &eventName,
                 CefRefPtr<CefDictionaryValue> payload);
   CefRefPtr<CefDictionaryValue> TabToDictionary(const Tab &tab) const;
-  // Host command channel fed by FrostEngine. Returns true and fills
-  // |commandJson| when a pending host command is available.
-  bool PollHostCommandJson(std::string &commandJson);
   // Pushes a host command result envelope back to FrostEngine.
   bool PushHostCommandResultJson(const std::string &resultJson);
   // Pushes a host event envelope back to FrostEngine.
@@ -55,7 +52,9 @@ private:
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
   BrowserWindow &window_;
-  FrostBridge frostBridge_;
+  // The application controller is the sole owner of FrostEngine. A bridge is
+  // window-scoped only because CEF message-router handlers are window-scoped.
+  FrostBridge &frostBridge_;
   std::unordered_map<std::string, MethodHandler> methods_;
 };
 

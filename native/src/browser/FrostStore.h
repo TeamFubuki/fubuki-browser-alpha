@@ -18,7 +18,7 @@ public:
   // mutations (bookmarks, history, downloads, permissions) through the
   // protocol layer. May be null if the engine is unavailable.
   FrostStore(std::filesystem::path profilePath, void *engineHandle);
-  ~FrostStore();
+  ~FrostStore() = default;
 
   FrostStore(const FrostStore &) = delete;
   FrostStore &operator=(const FrostStore &) = delete;
@@ -40,13 +40,7 @@ public:
   bool AddBookmark(const std::string &title, const std::string &url,
                    const std::string &faviconUrl);
   bool RemoveBookmark(const std::string &url);
-  bool AddHistory(const std::string &title, const std::string &url,
-                  const std::string &faviconUrl);
   bool RemoveHistory(const std::string &url);
-  bool AddDownload(const std::string &url, const std::string &path,
-                   const std::string &state);
-  bool UpdateDownload(const std::string &url, const std::string &path,
-                      const std::string &state, int percent);
   bool RemoveDownload(const std::string &url, const std::string &path);
   bool HasDownloadPath(const std::string &path) const;
   bool SetPermission(const std::string &origin, const std::string &permission,
@@ -63,9 +57,10 @@ private:
   // Issues a Frost Protocol request through the engine and returns the
   // "ok" boolean from the response.
   bool ExecRequest(const std::string &method, const std::string &paramsJson);
+  std::string ExecRequestResult(const std::string &method,
+                                const std::string &paramsJson) const;
 
   std::filesystem::path profilePath_;
-  void *handle_ = nullptr;
   void *engine_ = nullptr;
 };
 

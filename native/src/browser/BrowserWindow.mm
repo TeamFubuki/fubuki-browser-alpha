@@ -204,10 +204,7 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 }
 
 - (void)windowDidMove:(NSNotification*)notification {
-  NSWindow* window = (NSWindow*)[notification object];
-  if (auto* browserWindow = fubuki::GetBrowserWindowForNativeWindow(window)) {
-    browserWindow->App().PersistSession();
-  }
+  (void)notification;
 }
 
 - (void)windowWillClose:(NSNotification*)notification {
@@ -337,14 +334,15 @@ std::string QueryParam(const std::string& url, const std::string& key) {
   return "";
 }
 
-void RegisterFubukiSchemeHandlers(CefRefPtr<CefRequestContext> context) {
+void RegisterFubukiSchemeHandlers(CefRefPtr<CefRequestContext> context,
+                                  const std::string& uiResourcesPath) {
   if (!context) {
     return;
   }
   for (const char* host :
        {"app", "newtab", "settings", "bookmarks", "downloads", "history", "debug"}) {
     context->RegisterSchemeHandlerFactory("fubuki", host,
-                                          new FubukiSchemeHandlerFactory(FUBUKI_UI_DIST));
+                                          new FubukiSchemeHandlerFactory(uiResourcesPath));
   }
 }
 
@@ -378,7 +376,8 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
   if (privateWindow_) {
     CefRequestContextSettings settings;
     privateRequestContext_ = CefRequestContext::CreateContext(settings, nullptr);
-    RegisterFubukiSchemeHandlers(privateRequestContext_);
+    RegisterFubukiSchemeHandlers(privateRequestContext_,
+                                 app_.UiResourcesPath().string());
   }
   RegisterCommands();
   WireEvents();
@@ -419,7 +418,9 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
       }
     }
   }
-  if (!restored) {
+  const bool engineOwnedRestore =
+      restoreState && restoreState->GetBool("engineOwned");
+  if (!restored && !engineOwnedRestore) {
     const std::string startupBehavior = Store().GetSetting("startupBehavior");
     const std::string homeUrl = Store().GetSetting("homeUrl").empty()
                                     ? Store().GetSetting("homepage")
@@ -449,9 +450,6 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
-  if (!privateWindow_) {
-    app_.PersistSession();
-  }
   return true;
 }
 
@@ -464,9 +462,6 @@ bool BrowserWindow::CreateTabWithId(const std::string& input,
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
-  if (!privateWindow_) {
-    app_.PersistSession();
-  }
   return true;
 }
 
@@ -476,18 +471,12 @@ std::string BrowserWindow::CreatePendingPopupTab(const std::string& url, bool ac
   tabManager_.UpdateTab(tab.id, tab);
   ResizeViews();
   SetActiveContentView();
-  if (!privateWindow_) {
-    app_.PersistSession();
-  }
   return tab.id;
 }
 
 bool BrowserWindow::ActivateTab(const std::string& tabId) {
   const bool ok = tabManager_.ActivateTab(tabId);
   SetActiveContentView();
-  if (ok && !privateWindow_) {
-    app_.PersistSession();
-  }
   return ok;
 }
 
@@ -515,17 +504,11 @@ bool BrowserWindow::CloseTab(const std::string& tabId) {
   }
   ResizeViews();
   SetActiveContentView();
-  if (!privateWindow_) {
-    app_.PersistSession();
-  }
   return ok;
 }
 
 bool BrowserWindow::PinTab(const std::string& tabId, bool pinned) {
   const bool ok = tabManager_.SetPinned(tabId, pinned);
-  if (ok && !privateWindow_) {
-    app_.PersistSession();
-  }
   return ok;
 }
 
@@ -584,9 +567,6 @@ bool BrowserWindow::CloseTabsToRight(const std::string& tabId) {
 
 bool BrowserWindow::MoveTab(const std::string& tabId, int toIndex) {
   const bool ok = tabManager_.MoveTab(tabId, static_cast<size_t>(std::max(0, toIndex)));
-  if (ok && !privateWindow_) {
-    app_.PersistSession();
-  }
   return ok;
 }
 
@@ -884,18 +864,38 @@ bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& pa
 }
 
 bool BrowserWindow::OpenDownloadedFile(const std::string& path) {
-  if (path.empty() || !Store().HasDownloadPath(path) || !std::filesystem::exists(path)) {
+  std::error_code error;
+  const std::filesystem::path canonicalPath = std::filesystem::canonical(path, error);
+  if (error || !std::filesystem::is_regular_file(canonicalPath, error) ||
+      !Store().HasDownloadPath(canonicalPath.string())) {
     return false;
   }
-  NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
+  const std::filesystem::path downloadRoot = std::filesystem::weakly_canonical(
+      std::filesystem::path(DownloadPathFor(".")).parent_path(), error);
+  if (error || !std::equal(downloadRoot.begin(), downloadRoot.end(),
+                           canonicalPath.begin(), canonicalPath.end())) {
+    return false;
+  }
+  NSURL* url = [NSURL fileURLWithPath:[NSString
+                                         stringWithUTF8String:canonicalPath.string().c_str()]];
   return [[NSWorkspace sharedWorkspace] openURL:url];
 }
 
 bool BrowserWindow::RevealDownloadedFile(const std::string& path) {
-  if (path.empty() || !Store().HasDownloadPath(path) || !std::filesystem::exists(path)) {
+  std::error_code error;
+  const std::filesystem::path canonicalPath = std::filesystem::canonical(path, error);
+  if (error || !std::filesystem::is_regular_file(canonicalPath, error) ||
+      !Store().HasDownloadPath(canonicalPath.string())) {
     return false;
   }
-  NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
+  const std::filesystem::path downloadRoot = std::filesystem::weakly_canonical(
+      std::filesystem::path(DownloadPathFor(".")).parent_path(), error);
+  if (error || !std::equal(downloadRoot.begin(), downloadRoot.end(),
+                           canonicalPath.begin(), canonicalPath.end())) {
+    return false;
+  }
+  NSURL* url = [NSURL fileURLWithPath:[NSString
+                                         stringWithUTF8String:canonicalPath.string().c_str()]];
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ url ]];
   return true;
 }
@@ -956,28 +956,9 @@ bool BrowserWindow::ClearHistoryRange(const std::string& range) {
 }
 
 bool BrowserWindow::SetSetting(const std::string& key, const std::string& value) {
-  if (key != "homepage" && key != "downloadDirectory" && key != "searchEngine" &&
-      key != "startupBehavior" && key != "theme" && key != "language" &&
-      key != "newTabBackgroundMode" && key != "newTabBackgroundColor" &&
-      key != "newTabBackgroundUrl" && key != "customSearchUrl" && key != "appearance" &&
-      key != "toolbarDensity" && key != "sidebarVisible" && key != "sidebarWidth" &&
-      key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
-      key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload" &&
-      key != "defaultZoomLevel" && key != "closeWindowWithLastTab" &&
-      key != "privateSearchEngine") {
+  if (!Store().SetSetting(key, value)) {
     return false;
   }
-  std::string savedValue = value;
-  if (key == "sidebarWidth") {
-    try {
-      savedValue = std::to_string(
-          static_cast<int>(std::clamp(std::stod(value), static_cast<double>(kMinSidebarWidth),
-                                      static_cast<double>(kMaxSidebarWidth))));
-    } catch (...) {
-      savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
-    }
-  }
-  Store().SetSetting(key, savedValue);
   if (key == "sidebarWidth") {
     liveSidebarWidth_ = 0.0;
   }
@@ -988,9 +969,6 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     Store().AddLog("info", "Setting updated: " + key);
   }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
-  if (!privateWindow_) {
-    app_.PersistSession();
-  }
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://settings");
   return true;
@@ -1187,7 +1165,8 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
     ok = !tabId.empty() &&
-         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId,
+                         JsonBool(payload, "active"));
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
                                       {{ "tabId", JsonStringValue(tabId) },
@@ -1200,6 +1179,21 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     ok = CloseTab(JsonString(payload, "tabId"));
     if (!ok) {
       error = "unknown tab";
+    }
+  } else if (command == "page.activate") {
+    ok = ActivateTab(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.setPinned") {
+    ok = PinTab(JsonString(payload, "tabId"), JsonBool(payload, "pinned"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.move") {
+    ok = MoveTab(JsonString(payload, "tabId"), payload->GetInt("toIndex"));
+    if (!ok) {
+      error = "unknown tab or invalid index";
     }
   } else if (command == "page.navigate") {
     ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
@@ -1225,6 +1219,16 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     ok = GoForward(JsonString(payload, "tabId"));
     if (!ok) {
       error = "unknown tab";
+    }
+  } else if (command == "file.open") {
+    ok = OpenDownloadedFile(JsonString(payload, "path"));
+    if (!ok) {
+      error = "download path was rejected";
+    }
+  } else if (command == "file.reveal") {
+    ok = RevealDownloadedFile(JsonString(payload, "path"));
+    if (!ok) {
+      error = "download path was rejected";
     }
   } else if (command == "window.create") {
     // Window creation is owned by the app controller; acknowledge only.
@@ -1255,25 +1259,11 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
       error = "failed to set permission";
     }
   } else {
-    // file.open / file.reveal / browsingData.clear are not yet routed to host
-    // I/O in this build; acknowledge to avoid stale commands.
-    ok = true;
+    error = "unsupported host command";
   }
 
   return bridge_->PushHostCommandResultJson(
       HostCommandResultJson(commandId, ok, error));
-}
-
-void BrowserWindow::PollAndExecuteHostCommands() {
-  if (!bridge_) {
-    return;
-  }
-  std::string commandJson;
-  while (bridge_->PollHostCommandJson(commandJson)) {
-    if (!commandJson.empty()) {
-      ExecuteHostCommand(commandJson);
-    }
-  }
 }
 
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
@@ -1360,8 +1350,11 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      Store().AddHistory(tab->title, tab->url, tab->faviconUrl);
-      app_.PersistSession();
+      PushHostEventJson(HostEventJson(
+          "history.visited",
+          {{ "title", JsonStringValue(tab->title) },
+           { "url", JsonStringValue(tab->url) },
+           { "faviconUrl", JsonStringValue(tab->faviconUrl) }}));
     }
     eventBus_.Publish(
         {EventType::NavigationFinished, "navigation.finished", *tab, windowId_, tabId, ""});
@@ -1376,7 +1369,6 @@ void BrowserWindow::OnNavigationFailed(const std::string& tabId, const std::stri
     PushHostEventJson(HostEventJson("page.loadFailed", {{ "tabId", JsonStringValue(tabId) }, { "errorText", JsonStringValue(message) }}));
     if (!privateWindow_) {
       Store().AddLog("error", "Navigation failed: " + tab->url + " - " + message);
-      app_.PersistSession();
     }
     eventBus_.Publish(
         {EventType::NavigationFailed, "navigation.failed", *tab, windowId_, tabId, message});
@@ -1400,7 +1392,11 @@ void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  Store().AddDownload(url, path, "started");
+  PushHostEventJson(HostEventJson("download.updated",
+                                  {{ "url", JsonStringValue(url) },
+                                   { "path", JsonStringValue(path) },
+                                   { "state", JsonStringValue("started") },
+                                   { "percent", JsonIntValue(0) }}));
   Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
@@ -1414,7 +1410,6 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  Store().UpdateDownload(url, path, state, percent);
   if (state != "in_progress") {
     Store().AddLog("info", "Download " + state + ": " + path);
   }

@@ -25,7 +25,7 @@ public:
   void Cancel() override;
 
 private:
-  bool LoadRequest(const std::string &url);
+  bool LoadRequest(CefRefPtr<CefRequest> request);
   bool LoadFile(const std::string &path, const std::string &mimeType);
   void LoadText(std::string body, std::string mimeType, int status);
   std::string ResolveAppPath(const std::string &url) const;

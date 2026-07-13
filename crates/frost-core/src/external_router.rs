@@ -219,7 +219,7 @@ where
     fn route_external(&mut self, command: ExternalCommand) -> CoreResult<serde_json::Value> {
         match command {
             ExternalCommand::StateRead => {
-                let snapshot = self.snapshot();
+                let snapshot = self.snapshot()?;
                 Ok(
                     serde_json::to_value(snapshot)
                         .map_err(|e| CoreError::Message(e.to_string()))?,

@@ -11,6 +11,10 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("invalid setting key: {0}")]
     InvalidKey(String),
+    #[error("invalid value for setting {key}: {value}")]
+    InvalidValue { key: String, value: String },
+    #[error("unsupported database schema version: {0}")]
+    UnsupportedSchema(i64),
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -74,7 +78,7 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open(path)?,
         };
         store.migrate()?;
@@ -82,16 +86,24 @@ impl SqliteStore {
     }
 
     pub fn in_memory() -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open_in_memory()?,
         };
         store.migrate()?;
         Ok(store)
     }
 
-    fn migrate(&self) -> StoreResult<()> {
-        self.conn.execute_batch(
-            "
+    fn migrate(&mut self) -> StoreResult<()> {
+        const SCHEMA_VERSION: i64 = 1;
+        let transaction = self.conn.transaction()?;
+        let current_version: i64 =
+            transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if current_version > SCHEMA_VERSION {
+            return Err(StoreError::UnsupportedSchema(current_version));
+        }
+        if current_version == 0 {
+            transaction.execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS settings (
               key TEXT PRIMARY KEY NOT NULL,
               value TEXT NOT NULL,
@@ -139,7 +151,10 @@ impl SqliteStore {
               snapshot TEXT NOT NULL
             );
             ",
-        )?;
+            )?;
+            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 }
@@ -461,6 +476,17 @@ fn now_text() -> String {
 mod tests {
     use super::*;
 
+    fn temporary_db(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fubuki-{name}-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
     #[test]
     fn stores_settings() {
         let store = SqliteStore::in_memory().unwrap();
@@ -510,5 +536,38 @@ mod tests {
         store.add_history("A", "https://a.com", "").unwrap();
         assert!(!store.clear_history_range("unknown").unwrap());
         assert_eq!(store.list_history().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn migration_sets_schema_version() {
+        let path = temporary_db("migration-version");
+        let store = SqliteStore::open(&path).unwrap();
+        let version: i64 = store
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn refuses_newer_schema_without_modifying_it() {
+        let path = temporary_db("newer-schema");
+        let connection = Connection::open(&path).unwrap();
+        connection.pragma_update(None, "user_version", 2).unwrap();
+        drop(connection);
+
+        assert!(matches!(
+            SqliteStore::open(&path),
+            Err(StoreError::UnsupportedSchema(2))
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        drop(connection);
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -17,7 +18,8 @@ class BrowserWindow;
 
 class BrowserAppController {
 public:
-  explicit BrowserAppController(std::filesystem::path profilePath);
+  BrowserAppController(std::filesystem::path profilePath,
+                       std::filesystem::path uiResourcesPath);
   ~BrowserAppController();
 
   // The engine bridge is owned by the controller and shared with windows so
@@ -28,7 +30,8 @@ public:
   void Start();
   BrowserWindow *
   NewWindow(bool privateWindow = false,
-            CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+            CefRefPtr<CefDictionaryValue> restoreState = nullptr,
+            std::string engineWindowId = {});
   bool NewPrivateWindow();
   bool RequestNewWindow(bool privateWindow = false,
                         CefRefPtr<CefDictionaryValue> restoreState = nullptr);
@@ -39,11 +42,15 @@ public:
   // commands are handled here; page/overlay commands are delegated to the
   // owning BrowserWindow.
   void DispatchHostCommands();
+  // Drains Engine-owned differential events and broadcasts them to each UI
+  // browser. This is the only Engine -> UI state notification path.
+  void DispatchEngineEvents();
+  void ReportHostState();
   // Starts the self-rescheduling host command poller on the CEF UI thread.
   void StartHostCommandPoller();
   void NotifyWindowFocused(BrowserWindow *window);
   void NotifyWindowClosed(BrowserWindow *window);
-  void PersistSession();
+  void BeginShutdown() { shuttingDown_ = true; }
 
   BrowserWindow *ActiveWindow() const;
   std::vector<BrowserWindow *> Windows() const;
@@ -59,6 +66,9 @@ public:
   const EventBus &Events() const {
     return eventBus_;
   }
+  const std::filesystem::path &UiResourcesPath() const {
+    return uiResourcesPath_;
+  }
 
 private:
   struct WindowContext {
@@ -67,17 +77,18 @@ private:
   };
 
   std::string NextWindowId();
-  CefRefPtr<CefListValue> RestoredWindows() const;
 
   std::filesystem::path profilePath_;
+  std::filesystem::path uiResourcesPath_;
   FrostBridge engine_;
   FrostStore store_;
   EventBus eventBus_;
   std::vector<std::unique_ptr<WindowContext>> windows_;
-  std::vector<CefRefPtr<CefDictionaryValue>> closedWindows_;
   BrowserWindow *activeWindow_ = nullptr;
   int nextWindowId_ = 1;
   bool restoring_ = false;
+  bool shuttingDown_ = false;
+  std::chrono::steady_clock::time_point nextStateReport_{};
 };
 
 BrowserAppController *GetBrowserAppController();

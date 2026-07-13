@@ -17,9 +17,16 @@ pub enum HostCommand {
         tab_id: String,
         window_id: String,
         url: String,
+        active: bool,
     },
     #[serde(rename = "page.close", rename_all = "camelCase")]
     PageClose { tab_id: String },
+    #[serde(rename = "page.activate", rename_all = "camelCase")]
+    PageActivate { tab_id: String },
+    #[serde(rename = "page.setPinned", rename_all = "camelCase")]
+    PageSetPinned { tab_id: String, pinned: bool },
+    #[serde(rename = "page.move", rename_all = "camelCase")]
+    PageMove { tab_id: String, to_index: usize },
     #[serde(rename = "page.navigate", rename_all = "camelCase")]
     PageNavigate { tab_id: String, url: String },
     #[serde(rename = "page.reload", rename_all = "camelCase")]
@@ -102,6 +109,12 @@ pub enum HostEvent {
         state: String,
         percent: i64,
     },
+    #[serde(rename = "history.visited", rename_all = "camelCase")]
+    HistoryVisited {
+        title: String,
+        url: String,
+        favicon_url: String,
+    },
     #[serde(rename = "permission.changed", rename_all = "camelCase")]
     PermissionChanged {
         origin: String,
@@ -112,6 +125,11 @@ pub enum HostEvent {
     WindowFocused { window_id: String },
     #[serde(rename = "window.closed", rename_all = "camelCase")]
     WindowClosed { window_id: String },
+    #[serde(rename = "host.stateObserved", rename_all = "camelCase")]
+    StateObserved {
+        window_ids: Vec<String>,
+        tab_ids: Vec<String>,
+    },
 }
 
 impl HostCommandEnvelope {

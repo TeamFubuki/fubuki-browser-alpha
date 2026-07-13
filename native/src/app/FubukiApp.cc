@@ -18,7 +18,18 @@ int RunFubukiApplication(int argc, char *argv[]) {
   }
 
   CefMainArgs mainArgs(argc, argv);
-  CefRefPtr<FubukiCefApp> app = new FubukiCefApp(FUBUKI_UI_DIST);
+  std::error_code pathError;
+  const std::filesystem::path executablePath =
+      std::filesystem::canonical(argv[0], pathError);
+  if (pathError) {
+    return 1;
+  }
+  const std::filesystem::path uiResources =
+      executablePath.parent_path().parent_path() / "Resources/ui";
+  if (!std::filesystem::is_regular_file(uiResources / "index.html")) {
+    return 1;
+  }
+  CefRefPtr<FubukiCefApp> app = new FubukiCefApp(uiResources.string());
 
   const int exitCode = CefExecuteProcess(mainArgs, app, nullptr);
   if (exitCode >= 0) {
@@ -26,15 +37,23 @@ int RunFubukiApplication(int argc, char *argv[]) {
   }
 
   CefSettings settings;
+#if !defined(CEF_USE_SANDBOX)
   settings.no_sandbox = true;
+#endif
   settings.persist_session_cookies = true;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   const char *home = std::getenv("HOME");
-  const auto basePath =
+  const auto requestedBasePath =
       home ? std::filesystem::path(home) /
                  "Library/Application Support/Fubuki Browser Alpha"
            : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
-  std::filesystem::create_directories(basePath);
+  std::filesystem::create_directories(requestedBasePath);
+  std::error_code profileError;
+  const auto basePath =
+      std::filesystem::canonical(requestedBasePath, profileError);
+  if (profileError) {
+    return 1;
+  }
   const auto cachePath = basePath / "CEFProfile";
   const auto logPath = basePath / "cef.log";
   CefString(&settings.root_cache_path).FromString(basePath.string());
