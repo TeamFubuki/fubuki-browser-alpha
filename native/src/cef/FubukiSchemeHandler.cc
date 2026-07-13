@@ -995,7 +995,13 @@ std::string FubukiSchemeHandler::ResolveAppPath(const std::string& url) const {
   }
   const std::filesystem::path resolved =
       std::filesystem::weakly_canonical(root / relative, error);
-  if (error || !std::equal(root.begin(), root.end(), resolved.begin(), resolved.end())) {
+  // std::equal(first, last, first2, last2) also requires both ranges to have
+  // the same length. A valid file below the UI root necessarily has more path
+  // components than the root, so compare the root as a prefix instead.
+  const auto rootLength = std::distance(root.begin(), root.end());
+  const auto resolvedLength = std::distance(resolved.begin(), resolved.end());
+  if (error || resolvedLength < rootLength ||
+      !std::equal(root.begin(), root.end(), resolved.begin())) {
     return "";
   }
   return resolved.string();
