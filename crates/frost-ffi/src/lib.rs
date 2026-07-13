@@ -444,28 +444,6 @@ fn into_c_string(value: String) -> *mut c_char {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn private_engine_bootstraps_an_isolated_private_window() {
-        let handle = unsafe { frost_engine_new_private() };
-        assert!(!handle.is_null());
-
-        let command = unsafe { frost_engine_poll_host_command_json(handle) };
-        assert!(!command.is_null());
-        let command = unsafe { CString::from_raw(command) }
-            .into_string()
-            .expect("host command must be UTF-8");
-        let command: serde_json::Value = serde_json::from_str(&command).unwrap();
-        assert_eq!(command["command"], "window.create");
-        assert_eq!(command["payload"]["isPrivate"], true);
-
-        unsafe { frost_engine_free(handle) };
-    }
-}
-
 /// Grants external capabilities to a caller origin.
 ///
 /// # Safety
@@ -1060,5 +1038,27 @@ pub unsafe extern "C" fn frost_store_upsert_download(
 pub unsafe extern "C" fn frost_store_string_free(value: *mut c_char) {
     unsafe {
         frost_engine_string_free(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_engine_bootstraps_an_isolated_private_window() {
+        let handle = unsafe { frost_engine_new_private() };
+        assert!(!handle.is_null());
+
+        let command = unsafe { frost_engine_poll_host_command_json(handle) };
+        assert!(!command.is_null());
+        let command = unsafe { CString::from_raw(command) }
+            .into_string()
+            .expect("host command must be UTF-8");
+        let command: serde_json::Value = serde_json::from_str(&command).unwrap();
+        assert_eq!(command["command"], "window.create");
+        assert_eq!(command["payload"]["isPrivate"], true);
+
+        unsafe { frost_engine_free(handle) };
     }
 }
