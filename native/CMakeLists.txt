@@ -40,6 +40,7 @@ set(FUBUKI_SOURCES
   src/bridge/NativeBridge.cc
   src/commands/CommandRegistry.cc
   src/events/EventBus.cc
+  src/utils/DownloadUtils.cc
   src/utils/UrlUtils.cc
   src/platform/mac/AppDelegate.mm
   src/platform/mac/MacMenu.mm
