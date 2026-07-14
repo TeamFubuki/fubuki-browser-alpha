@@ -13,6 +13,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (originalWindow) {
     Object.defineProperty(globalThis, 'window', originalWindow);
   } else {
@@ -59,6 +60,44 @@ describe('Frost bridge failures', () => {
     await expect(invokeBridge('tabs.list')).rejects.toThrow(
       'Invalid bridge response',
     );
+  });
+
+  it('rejects native error envelopes even when delivered through onSuccess', async () => {
+    installNativeBridge((query) =>
+      query.onSuccess(
+        JSON.stringify({ ok: false, error: 'FrostEngine rejected request' }),
+      ),
+    );
+    const { invokeBridge } = await import('../bridge/fubuki');
+
+    await expect(invokeBridge('app.snapshot')).rejects.toEqual(
+      expect.objectContaining({
+        name: 'BridgeError',
+        method: 'app.snapshot',
+        message: 'FrostEngine rejected request',
+      }),
+    );
+  });
+
+  it('settles a failed request even when a failure listener throws', async () => {
+    installNativeBridge((query) =>
+      queueMicrotask(() => query.onFailure(500, 'Native operation failed')),
+    );
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const { invokeBridge, onBridgeFailure } = await import('../bridge/fubuki');
+    const survivingListener = vi.fn();
+    onBridgeFailure(() => {
+      throw new Error('Listener failed');
+    });
+    onBridgeFailure(survivingListener);
+
+    await expect(invokeBridge('tabs.list')).rejects.toThrow(
+      'Native operation failed',
+    );
+    expect(survivingListener).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledOnce();
   });
 
   it('rejects an explicitly unhandled command', async () => {

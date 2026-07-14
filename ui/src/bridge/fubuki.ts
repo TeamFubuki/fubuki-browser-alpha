@@ -326,7 +326,15 @@ const failureListeners = new Set<(failure: BridgeFailure) => void>();
 
 function reportBridgeFailure(method: string, error: BridgeError) {
   const failure = { method, error };
-  failureListeners.forEach((listener) => listener(failure));
+  failureListeners.forEach((listener) => {
+    try {
+      listener(failure);
+    } catch (listenerError) {
+      // Diagnostics must never prevent the originating bridge Promise from
+      // reaching its terminal state.
+      console.error('[Fubuki] Bridge failure listener failed:', listenerError);
+    }
+  });
 }
 
 function emit(eventName: string, payload: unknown) {
@@ -362,8 +370,8 @@ async function invoke<T = unknown>(
   return new Promise<T>((resolve, reject) => {
     const rejectWithBridgeError = (message: string, code?: number) => {
       const error = new BridgeError(method, message, code);
-      reportBridgeFailure(method, error);
       reject(error);
+      reportBridgeFailure(method, error);
     };
 
     cefQuery({
@@ -374,17 +382,45 @@ async function invoke<T = unknown>(
         params,
       }),
       onSuccess: (response) => {
+        let result: unknown;
         try {
-          resolve(JSON.parse(response) as T);
+          result = JSON.parse(response) as unknown;
         } catch (error) {
           const message =
             error instanceof Error ? error.message : 'Invalid JSON response';
           rejectWithBridgeError(`Invalid bridge response: ${message}`);
+          return;
         }
+
+        const failure = bridgeResponseFailure(result);
+        if (failure) {
+          rejectWithBridgeError(failure);
+          return;
+        }
+        resolve(result as T);
       },
       onFailure: (code, message) => rejectWithBridgeError(message, code),
     });
   });
+}
+
+function bridgeResponseFailure(result: unknown): string | undefined {
+  if (
+    typeof result !== 'object' ||
+    result === null ||
+    !('ok' in result) ||
+    result.ok !== false
+  ) {
+    return undefined;
+  }
+
+  const message =
+    'error' in result && typeof result.error === 'string'
+      ? result.error
+      : 'result' in result && typeof result.result === 'string'
+        ? result.result
+        : undefined;
+  return message || 'Operation was not completed';
 }
 
 function on(
@@ -422,17 +458,8 @@ export function requireBridgeSuccess<T>(result: T, method: string): T {
     reportBridgeFailure(method, error);
     throw error;
   }
-  if (
-    typeof result === 'object' &&
-    result !== null &&
-    'ok' in result &&
-    (result as { ok?: unknown }).ok === false
-  ) {
-    const message =
-      'error' in result &&
-      typeof (result as { error?: unknown }).error === 'string'
-        ? (result as { error: string }).error
-        : 'Operation was not completed';
+  const message = bridgeResponseFailure(result);
+  if (message) {
     const error = new BridgeError(method, message);
     reportBridgeFailure(method, error);
     throw error;
