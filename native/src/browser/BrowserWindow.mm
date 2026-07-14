@@ -914,7 +914,12 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return Reload(tabId);
   }
   if (commandDown && character == 't') {
-    return CreateTab("fubuki://newtab/", true);
+    if (!bridge_) {
+      return false;
+    }
+    CefRefPtr<CefValue> result =
+        bridge_->Invoke("tabs.create", CefDictionaryValue::Create());
+    return result && result->GetType() == VTYPE_BOOL && result->GetBool();
   }
   if (commandDown && (character == 'w' || character == 'W')) {
     return CloseTab(tabId);
