@@ -9,7 +9,13 @@ pub enum EngineError {
 pub type EngineResult<T> = Result<T, EngineError>;
 
 pub trait EngineAdapter {
-    fn create_page(&mut self, tab_id: &str, window_id: &str, url: &str) -> EngineResult<()>;
+    fn create_page(
+        &mut self,
+        tab_id: &str,
+        window_id: &str,
+        url: &str,
+        active: bool,
+    ) -> EngineResult<()>;
     fn close_page(&mut self, tab_id: &str) -> EngineResult<()>;
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()>;
     fn reload(&mut self, tab_id: &str) -> EngineResult<()>;
@@ -41,7 +47,7 @@ pub trait WindowHost {
 pub struct NoopEngineAdapter;
 
 impl EngineAdapter for NoopEngineAdapter {
-    fn create_page(&mut self, _: &str, _: &str, _: &str) -> EngineResult<()> {
+    fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
         Ok(())
     }
 

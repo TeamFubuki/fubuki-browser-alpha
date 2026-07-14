@@ -35,7 +35,13 @@ impl TabService {
     }
 
     pub fn create_tab(&mut self, window_id: String, url: String, active: bool) -> TabState {
-        if active || self.tabs.is_empty() {
+        let window_id = if window_id.is_empty() {
+            self.default_window_id.clone()
+        } else {
+            window_id
+        };
+        let make_active = active || !self.tabs.iter().any(|tab| tab.window_id == window_id);
+        if make_active {
             self.tabs
                 .iter_mut()
                 .filter(|t| t.window_id == window_id)
@@ -44,11 +50,7 @@ impl TabService {
 
         let tab = TabState {
             id: format!("tab-{}", Uuid::new_v4()),
-            window_id: if window_id.is_empty() {
-                self.default_window_id.clone()
-            } else {
-                window_id
-            },
+            window_id,
             title: "New Tab".into(),
             url,
             favicon_url: String::new(),
@@ -57,7 +59,7 @@ impl TabService {
             is_loading: false,
             can_go_back: false,
             can_go_forward: false,
-            is_active: active || self.tabs.is_empty(),
+            is_active: make_active,
             is_pinned: false,
         };
         self.tabs.push(tab.clone());

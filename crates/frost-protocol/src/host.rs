@@ -17,6 +17,8 @@ pub enum HostCommand {
         tab_id: String,
         window_id: String,
         url: String,
+        #[serde(default)]
+        active: bool,
     },
     #[serde(rename = "page.close", rename_all = "camelCase")]
     PageClose { tab_id: String },
@@ -154,5 +156,17 @@ mod tests {
         assert_eq!(json["command"], "page.navigate");
         assert_eq!(json["payload"]["tabId"], "tab-1");
         assert_eq!(json["payload"]["url"], "https://example.com");
+
+        let create = HostCommandEnvelope::new(
+            "cmd-2",
+            HostCommand::PageCreate {
+                tab_id: "tab-2".into(),
+                window_id: "window-1".into(),
+                url: "https://background.example".into(),
+                active: false,
+            },
+        );
+        let json = serde_json::to_value(create).unwrap();
+        assert_eq!(json["payload"]["active"], false);
     }
 }
