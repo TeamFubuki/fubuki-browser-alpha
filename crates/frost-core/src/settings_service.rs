@@ -16,6 +16,18 @@ impl SettingsService {
         "homeUrl",
         "language",
         "defaultZoomLevel",
+        "downloadDirectory",
+        "startupBehavior",
+        "newTabBackgroundMode",
+        "newTabBackgroundColor",
+        "newTabBackgroundUrl",
+        "toolbarDensity",
+        "defaultBookmarkDisplay",
+        "openBookmarkIn",
+        "showBookmarkFavicons",
+        "askBeforeDownload",
+        "closeWindowWithLastTab",
+        "privateSearchEngine",
     ];
 
     /// Returns the default value for a given setting key.
@@ -31,6 +43,18 @@ impl SettingsService {
             "newTabPage" => "blank",
             "language" => "system",
             "defaultZoomLevel" => "0",
+            "downloadDirectory" => "",
+            "startupBehavior" => "newTab",
+            "newTabBackgroundMode" => "unsplash",
+            "newTabBackgroundColor" => "#f8fafd",
+            "newTabBackgroundUrl" => "",
+            "toolbarDensity" => "compact",
+            "defaultBookmarkDisplay" => "sidebar",
+            "openBookmarkIn" => "current",
+            "showBookmarkFavicons" => "on",
+            "askBeforeDownload" => "off",
+            "closeWindowWithLastTab" => "off",
+            "privateSearchEngine" => "default",
             _ => "",
         }
     }

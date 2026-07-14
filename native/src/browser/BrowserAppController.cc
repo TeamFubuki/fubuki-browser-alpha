@@ -194,6 +194,23 @@ void BrowserAppController::DispatchEngineEvents() {
                 envelope->GetType("payload") == VTYPE_DICTIONARY
             ? envelope->GetDictionary("payload")
             : CefDictionaryValue::Create();
+
+    // Handle tab.activated: switch the CEF browser view on the host side.
+    if (eventName == "tab.activated") {
+      const std::string tabId =
+          payload->HasKey("tabId") ? payload->GetString("tabId").ToString() : "";
+      if (!tabId.empty()) {
+        for (const auto &context : windows_) {
+          if (context->window && context->tabManager) {
+            if (context->tabManager->GetTab(tabId)) {
+              context->window->ActivateTab(tabId);
+              break;
+            }
+          }
+        }
+      }
+    }
+
     // Each app page owns an isolated JS store. Broadcasting is safe for
     // differential events: foreign tab ids are ignored by that page, while
     // window events are reconciled by its own snapshot recovery path.
