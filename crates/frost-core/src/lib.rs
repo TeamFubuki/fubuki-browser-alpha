@@ -356,10 +356,8 @@ where
             }
             Request::TabsMove { tab_id, to_index } => {
                 let ok = self.tabs.move_tab(&tab_id, to_index);
-                if ok {
-                    if let Some(tab) = self.tabs.get_tab(&tab_id) {
-                        self.emit_tab_order(&tab.window_id);
-                    }
+                if ok && let Some(tab) = self.tabs.get_tab(&tab_id) {
+                    self.emit_tab_order(&tab.window_id);
                 }
                 Ok(Response::Bool(ok))
             }

@@ -34,7 +34,9 @@ export function useSidebarResize() {
   const saveWidth = (width: number) =>
     fubuki
       .invoke('settings.set', { key: 'sidebarWidth', value: String(width) })
-      .catch((error) => console.error('[Fubuki] Failed to save sidebar width:', error));
+      .catch((error) =>
+        console.error('[Fubuki] Failed to save sidebar width:', error),
+      );
 
   const flushLiveWidth = () => {
     animationFrame = 0;
