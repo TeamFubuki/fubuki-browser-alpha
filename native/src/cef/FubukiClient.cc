@@ -1,5 +1,7 @@
 #include "cef/FubukiClient.h"
 
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 
 #include "browser/BrowserAppController.h"
@@ -58,6 +60,21 @@ bool IsBlankPopupUrl(const std::string& url) {
 
 bool IsFubukiInternalUrl(const std::string& url) {
   return StartsWith(url, "fubuki://");
+}
+
+bool IsKrunkerUrl(const std::string& url) {
+  CefURLParts parts;
+  if (!CefParseURL(url, parts)) {
+    return false;
+  }
+  std::string scheme = CefString(&parts.scheme).ToString();
+  std::string host = CefString(&parts.host).ToString();
+  std::transform(scheme.begin(), scheme.end(), scheme.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  std::transform(host.begin(), host.end(), host.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return (scheme == "https" || scheme == "http") &&
+         (host == "krunker.io" || host.ends_with(".krunker.io"));
 }
 
 std::string DecodeFormValue(const std::string &value) {
@@ -390,13 +407,17 @@ void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
                              download_item->GetFullPath().ToString(), state, percent);
 }
 
-bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle,
-                                 bool* is_keyboard_shortcut) {
+bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event,
+                                 CefEventHandle, bool* is_keyboard_shortcut) {
   if (!window_ || event.type != KEYEVENT_RAWKEYDOWN) {
     return false;
   }
   const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0;
   const bool altDown = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
+  if (commandDown && browser &&
+      browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
+    return false;
+  }
   const char character = static_cast<char>(event.unmodified_character);
   const bool handled =
       window_->HandleShortcut(commandDown, altDown, event.windows_key_code, character);
@@ -406,7 +427,7 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   return handled;
 }
 
-bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request, bool user_gesture,
                                   bool is_redirect) {
   if (!window_ || isUi_ || !frame || !frame->IsMain() || !request) {
@@ -437,6 +458,27 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     window_->HandleNewTabSearchUrl(tabId_, url);
     return true;
   }
+  if (browser && IsKrunkerUrl(url) &&
+      browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
+    const std::string windowId = window_->WindowId();
+    CefPostTask(TID_UI,
+                base::BindOnce(
+                    [](std::string windowId, std::string tabId,
+                       std::string url) {
+                      BrowserAppController* app = GetBrowserAppController();
+                      if (!app) {
+                        return;
+                      }
+                      for (auto* window : app->Windows()) {
+                        if (window && window->WindowId() == windowId) {
+                          window->UpgradeTabToChromeRuntime(tabId, url);
+                          return;
+                        }
+                      }
+                    },
+                    windowId, tabId_, url));
+    return true;
+  }
   return false;
 }
 
@@ -455,11 +497,19 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
     return false;
   }
 
+  const std::string origin = requesting_origin.ToString();
+  const bool allowPointerLock =
+      !isUi_ && IsKrunkerUrl(origin) &&
+      requested_permissions == static_cast<uint32_t>(CEF_PERMISSION_TYPE_POINTER_LOCK);
+  const auto result =
+      allowPointerLock ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY;
+
   if (window_ && !window_->IsPrivate()) {
-    window_->Store().AddLog("info", "Permission denied for " + requesting_origin.ToString() + " (" +
-                                     std::to_string(requested_permissions) + ")");
+    window_->Store().AddLog(
+        "info", std::string("Permission ") + (allowPointerLock ? "granted" : "denied") +
+                    " for " + origin + " (" + std::to_string(requested_permissions) + ")");
   }
-  callback->Continue(CEF_PERMISSION_RESULT_DENY);
+  callback->Continue(result);
   return true;
 }
 
