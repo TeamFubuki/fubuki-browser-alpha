@@ -36,7 +36,9 @@ std::filesystem::path ProfilePath() {
 }
 
 std::filesystem::path DatabasePath() {
-  return ProfilePath() / "fubuki.sqlite3";
+  // Internal pages are read-only views over the engine-owned store. Reading
+  // the removed legacy database made persisted data appear empty or stale.
+  return ProfilePath() / "frost-engine.sqlite3";
 }
 
 std::string MimeForPath(const std::string& path) {
@@ -105,7 +107,13 @@ sqlite3* OpenDatabase() {
     return cached;
   }
   std::filesystem::create_directories(ProfilePath());
-  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
+  if (sqlite3_open_v2(DatabasePath().string().c_str(), &cached,
+                      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+                          SQLITE_OPEN_FULLMUTEX,
+                      nullptr) != SQLITE_OK) {
+    if (cached) {
+      sqlite3_close(cached);
+    }
     cached = nullptr;
     return nullptr;
   }
@@ -139,7 +147,13 @@ sqlite3* OpenDatabase() {
   return cached;
 }
 
+std::mutex& DatabaseMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
 std::string Setting(const std::string& key, const std::string& fallback = "") {
+  const std::lock_guard lock(DatabaseMutex());
   sqlite3* db = OpenDatabase();
   if (!db)
     return fallback;
@@ -277,6 +291,7 @@ std::string DownloadStatusText(const std::string& state, int percent) {
 }
 
 std::vector<Record> QueryRecords(const std::string& table, int limit) {
+  const std::lock_guard lock(DatabaseMutex());
   sqlite3* db = OpenDatabase();
   if (!db)
     return {};

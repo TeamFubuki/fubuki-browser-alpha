@@ -28,7 +28,8 @@ public:
   void Start();
   BrowserWindow *
   NewWindow(bool privateWindow = false,
-            CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+            CefRefPtr<CefDictionaryValue> restoreState = nullptr,
+            const std::string &windowId = {});
   bool NewPrivateWindow();
   bool RequestNewWindow(bool privateWindow = false,
                         CefRefPtr<CefDictionaryValue> restoreState = nullptr);
@@ -67,6 +68,7 @@ private:
   };
 
   std::string NextWindowId();
+  std::string EngineWindowId();
   CefRefPtr<CefListValue> RestoredWindows() const;
 
   std::filesystem::path profilePath_;

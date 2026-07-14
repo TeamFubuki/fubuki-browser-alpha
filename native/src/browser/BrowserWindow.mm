@@ -385,6 +385,25 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
 }
 
 BrowserWindow::~BrowserWindow() {
+  // CEF browsers close asynchronously and may outlive their NSWindow. Detach
+  // every client before releasing bridge_/TabManager state, then request a
+  // terminal close. Late callbacks see null instead of a dangling pointer.
+  for (const auto &client : clients_) {
+    if (client) {
+      client->DetachWindow();
+    }
+  }
+  if (uiBrowser_) {
+    uiBrowser_->GetHost()->CloseBrowser(true);
+    uiBrowser_ = nullptr;
+  }
+  for (const auto &tab : tabManager_.GetTabs()) {
+    if (tab.browser) {
+      tab.browser->GetHost()->CloseBrowser(true);
+      tabManager_.SetBrowser(tab.id, nullptr);
+    }
+  }
+  clients_.clear();
   for (const auto& [type, token] : eventSubscriptions_) {
     eventBus_.Unsubscribe(type, token);
   }
@@ -428,7 +447,7 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
     if (startupBehavior == "homePage") {
       startUrl = homeUrl;
     }
-    CreateTab(startUrl, true);
+    RequestTabCreate(startUrl, true);
   }
   [window_ makeKeyAndOrderFront:nil];
 }
@@ -442,17 +461,7 @@ bool BrowserWindow::CloseWindow() {
 }
 
 bool BrowserWindow::CreateTab(const std::string& input, bool active) {
-  const std::string url = NormalizeNavigationInput(input,
-                                                   Store().GetSetting("searchEngine"),
-                                                   Store().GetSetting("customSearchUrl"));
-  Tab& tab = tabManager_.CreateTab(url, active);
-  CreateTabBrowser(tab);
-  ResizeViews();
-  SetActiveContentView();
-  if (!privateWindow_) {
-    app_.PersistSession();
-  }
-  return true;
+  return RequestTabCreate(input, active);
 }
 
 bool BrowserWindow::CreateTabWithId(const std::string& input,
@@ -1186,8 +1195,11 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   if (command == "page.create") {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
+    const bool active =
+        !payload->HasKey("active") || payload->GetBool("active");
     ok = !tabId.empty() &&
-         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId,
+                         active);
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
                                       {{ "tabId", JsonStringValue(tabId) },
@@ -1531,16 +1543,53 @@ void BrowserWindow::CreateNativeWindow() {
 void BrowserWindow::CreateUiBrowser() {
   CefBrowserSettings settings;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
-  CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_), new FubukiClient(this, "", true),
-                                "fubuki://app/index.html?v=5", settings, nullptr, nullptr);
+  CefRefPtr<FubukiClient> client = new FubukiClient(this, "", true);
+  RetainClient(client);
+  if (!CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_), client,
+                                     "fubuki://app/index.html?v=5", settings,
+                                     nullptr, nullptr)) {
+    client->DetachWindow();
+    ReleaseClient(client.get());
+  }
 }
 
 void BrowserWindow::CreateTabBrowser(const Tab& tab) {
   CefBrowserSettings settings;
   settings.background_color = CefColorSetARGB(255, 255, 255, 255);
-  CefBrowserHost::CreateBrowser(ChildWindowInfo(contentHostView_),
-                                new FubukiClient(this, tab.id, false), tab.url, settings, nullptr,
-                                privateWindow_ ? privateRequestContext_ : nullptr);
+  CefRefPtr<FubukiClient> client = new FubukiClient(this, tab.id, false);
+  RetainClient(client);
+  if (!CefBrowserHost::CreateBrowser(
+          ChildWindowInfo(contentHostView_), client, tab.url, settings, nullptr,
+          privateWindow_ ? privateRequestContext_ : nullptr)) {
+    client->DetachWindow();
+    ReleaseClient(client.get());
+  }
+}
+
+bool BrowserWindow::RequestTabCreate(const std::string& input, bool active) {
+  const std::string url = NormalizeNavigationInput(
+      input, Store().GetSetting("searchEngine"),
+      Store().GetSetting("customSearchUrl"));
+  auto params = CefDictionaryValue::Create();
+  params->SetString("url", url);
+  params->SetBool("active", active);
+  CefRefPtr<CefValue> result = bridge_->Invoke("tabs.create", params);
+  return result && result->GetType() == VTYPE_BOOL && result->GetBool();
+}
+
+void BrowserWindow::RetainClient(CefRefPtr<FubukiClient> client) {
+  if (client) {
+    clients_.push_back(std::move(client));
+  }
+}
+
+void BrowserWindow::ReleaseClient(FubukiClient *client) {
+  clients_.erase(
+      std::remove_if(clients_.begin(), clients_.end(),
+                     [client](const CefRefPtr<FubukiClient> &candidate) {
+                       return candidate.get() == client;
+                     }),
+      clients_.end());
 }
 
 bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bool active) {
@@ -1549,33 +1598,22 @@ bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bo
   }
   const std::string url =
       tabState->HasKey("url") ? tabState->GetString("url").ToString() : "fubuki://newtab/";
-  const bool ok = CreateTab(url.empty() ? "fubuki://newtab/" : url, active);
-  if (ok) {
-    if (Tab* tab = active ? tabManager_.GetActiveTab() : nullptr) {
-      const std::string restoredTitle = tabState->GetString("title").ToString();
-      tab->title = restoredTitle.empty() ? tab->title : restoredTitle;
-      tab->faviconUrl = tabState->GetString("faviconUrl").ToString();
-      tab->isPinned = tabState->HasKey("pinned") && tabState->GetBool("pinned");
-    } else {
-      auto tabs = tabManager_.GetTabs();
-      if (!tabs.empty()) {
-        Tab* created = tabManager_.GetTab(tabs.back().id);
-        if (created) {
-          const std::string restoredTitle = tabState->GetString("title").ToString();
-          created->title = restoredTitle.empty() ? created->title : restoredTitle;
-          created->faviconUrl = tabState->GetString("faviconUrl").ToString();
-          created->isPinned = tabState->HasKey("pinned") && tabState->GetBool("pinned");
-        }
-      }
-    }
-  }
-  return ok;
+  return RequestTabCreate(url.empty() ? "fubuki://newtab/" : url, active);
 }
 
 void BrowserWindow::RegisterCommands() {
   auto tabIdArg = [this](CefRefPtr<CefDictionaryValue> args) -> std::string {
-    return args->HasKey("tabId") ? args->GetString("tabId").ToString()
-                                 : tabManager_.GetActiveTabId();
+    return args && args->HasKey("tabId")
+               ? args->GetString("tabId").ToString()
+               : tabManager_.GetActiveTabId();
+  };
+  auto invokeTab = [this, tabIdArg](const std::string& method,
+                                    CefRefPtr<CefDictionaryValue> args) {
+    auto params = args ? args->Copy(false) : CefDictionaryValue::Create();
+    if (!params->HasKey("tabId")) {
+      params->SetString("tabId", tabIdArg(args));
+    }
+    return bridge_->Invoke(method, params);
   };
   commands_.Register(
       "tabs.create", "New Tab", "Tabs", "Cmd+T", [this](CefRefPtr<CefDictionaryValue> args) {
@@ -1586,22 +1624,17 @@ void BrowserWindow::RegisterCommands() {
         return value;
       });
   commands_.Register("tabs.close", "Close Tab", "Tabs", "Cmd+W",
-                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-                       auto value = CefValue::Create();
-                       value->SetBool(CloseTab(tabIdArg(args)));
-                       return value;
+                     [invokeTab](CefRefPtr<CefDictionaryValue> args) {
+                       return invokeTab("tabs.close", args);
                      });
   commands_.Register("tabs.reopenClosed", "Reopen Closed Tab", "Tabs", "Cmd+Shift+T",
                      [this](CefRefPtr<CefDictionaryValue>) {
-                       auto value = CefValue::Create();
-                       value->SetBool(ReopenClosedTab());
-                       return value;
+                       return bridge_->Invoke("tabs.reopenClosed",
+                                              CefDictionaryValue::Create());
                      });
   commands_.Register("tabs.duplicate", "Duplicate Tab", "Tabs", "",
-                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-                       auto value = CefValue::Create();
-                       value->SetBool(DuplicateTab(tabIdArg(args)));
-                       return value;
+                     [invokeTab](CefRefPtr<CefDictionaryValue> args) {
+                       return invokeTab("tabs.duplicate", args);
                      });
   commands_.Register("tabs.pin", "Pin Tab", "Tabs", "",
                      [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
@@ -1634,33 +1667,23 @@ void BrowserWindow::RegisterCommands() {
                        return value;
                      });
   commands_.Register("tabs.reload", "Reload", "Navigation", "Cmd+R",
-                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-                       auto value = CefValue::Create();
-                       value->SetBool(Reload(tabIdArg(args)));
-                       return value;
+                     [invokeTab](CefRefPtr<CefDictionaryValue> args) {
+                       return invokeTab("tabs.reload", args);
                      });
   commands_.Register("tabs.stop", "Stop", "Navigation", "Esc",
-                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-                       auto value = CefValue::Create();
-                       value->SetBool(Stop(tabIdArg(args)));
-                       return value;
+                     [invokeTab](CefRefPtr<CefDictionaryValue> args) {
+                       return invokeTab("tabs.stop", args);
                      });
   commands_.Register("tabs.goBack", "Back", "Navigation", "Cmd+[",
-                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-                       auto value = CefValue::Create();
-                       value->SetBool(GoBack(tabIdArg(args)));
-                       return value;
+                     [invokeTab](CefRefPtr<CefDictionaryValue> args) {
+                       return invokeTab("tabs.goBack", args);
                      });
   commands_.Register("tabs.goForward", "Forward", "Navigation", "Cmd+]",
-                     [this, tabIdArg](CefRefPtr<CefDictionaryValue> args) {
-                       auto value = CefValue::Create();
-                       value->SetBool(GoForward(tabIdArg(args)));
-                       return value;
+                     [invokeTab](CefRefPtr<CefDictionaryValue> args) {
+                       return invokeTab("tabs.goForward", args);
                      });
   commands_.Register("tabs.home", "Home", "Navigation", "", [this](CefRefPtr<CefDictionaryValue>) {
-    auto value = CefValue::Create();
-    value->SetBool(GoHome());
-    return value;
+    return bridge_->Invoke("tabs.home", CefDictionaryValue::Create());
   });
   commands_.Register("tabs.activateNext", "Next Tab", "Tabs", "", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();
@@ -1685,9 +1708,9 @@ void BrowserWindow::RegisterCommands() {
     return value;
   });
   commands_.Register("windows.close", "Close Window", "Windows", "Cmd+Shift+W", [this](CefRefPtr<CefDictionaryValue>) {
-    auto value = CefValue::Create();
-    value->SetBool(CloseWindow());
-    return value;
+    auto params = CefDictionaryValue::Create();
+    params->SetString("windowId", windowId_);
+    return bridge_->Invoke("windows.close", params);
   });
   commands_.Register("windows.reopenClosed", "Reopen Closed Window", "Windows", "", [this](CefRefPtr<CefDictionaryValue>) {
     auto value = CefValue::Create();

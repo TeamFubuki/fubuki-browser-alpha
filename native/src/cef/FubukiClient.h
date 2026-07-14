@@ -23,6 +23,10 @@ class FubukiClient : public CefClient,
 public:
   FubukiClient(BrowserWindow *window, std::string tabId, bool isUi);
 
+  // Clear the raw BrowserWindow back-pointer before its independent native
+  // lifetime ends, so late CEF callbacks cannot access freed window state.
+  void DetachWindow();
+
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override {
     return this;
   }

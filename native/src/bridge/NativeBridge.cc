@@ -22,8 +22,7 @@ CefRefPtr<CefValue> BoolValue(bool value) {
 }  // namespace
 
 NativeBridge::NativeBridge(BrowserWindow &window)
-    : window_(window),
-      frostBridge_(window.Store().ProfilePath() + "/frost-engine.sqlite3") {
+    : window_(window), frostBridge_(window.App().Engine()) {
   RegisterMethods();
 }
 
@@ -37,12 +36,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const std::string url =
-        params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
-    const bool active = !params->HasKey("active") || params->GetBool("active");
-    return HostBackedFrostInvoke("tabs.create", params, [this, url, active] {
-      return window_.CreateTab(url, active);
-    });
+    return FrostInvoke("tabs.create", params);
   };
 
   methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -52,9 +46,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.close", params, [this, params] {
-      return window_.CloseTab(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.close", params);
   };
 
   methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -66,15 +58,12 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.duplicate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.duplicate", params, [this, params] {
-      return window_.DuplicateTab(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.duplicate", params);
   };
 
   methods_["tabs.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.reopenClosed", params,
-                                 [this] { return window_.ReopenClosedTab(); });
+    return FrostInvoke("tabs.reopenClosed", params);
   };
 
   methods_["tabs.closeOther"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -106,47 +95,33 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.navigate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.navigate", params, [this, params] {
-      return window_.Navigate(params->GetString("tabId"),
-                              params->GetString("input"));
-    });
+    return FrostInvoke("tabs.navigate", params);
   };
 
   methods_["tabs.reload"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.reload", params, [this, params] {
-      return window_.Reload(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.reload", params);
   };
 
   methods_["tabs.stop"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.stop", params, [this, params] {
-      return window_.Stop(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.stop", params);
   };
 
   methods_["tabs.goBack"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goBack", params, [this, params] {
-      return window_.GoBack(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.goBack", params);
   };
 
   methods_["tabs.goForward"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goForward", params, [this, params] {
-      return window_.GoForward(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.goForward", params);
   };
 
   methods_["tabs.home"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.home", params,
-                                 [this] { return window_.GoHome(); });
+    return FrostInvoke("tabs.home", params);
   };
 
   methods_["windows.create"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.create", params, [this] {
-      return window_.App().RequestNewWindow(false, nullptr);
-    });
+    return FrostInvoke("windows.create", params);
   };
 
   methods_["windows.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -155,16 +130,13 @@ void NativeBridge::RegisterMethods() {
 
   methods_["windows.createPrivate"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.createPrivate", params, [this] {
-      return window_.App().RequestNewPrivateWindow();
-    });
+    return FrostInvoke("windows.createPrivate", params);
   };
 
   methods_["windows.close"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
     params->SetString("windowId", window_.WindowId());
-    return HostBackedFrostInvoke("windows.close", params,
-                                 [this] { return window_.CloseWindow(); });
+    return FrostInvoke("windows.close", params);
   };
 
   methods_["windows.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {

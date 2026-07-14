@@ -152,6 +152,14 @@ FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
   }
 }
 
+void FubukiClient::DetachWindow() {
+  CEF_REQUIRE_UI_THREAD();
+  if (messageRouter_ && window_) {
+    messageRouter_->RemoveHandler(window_->Bridge());
+  }
+  window_ = nullptr;
+}
+
 bool FubukiClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                             CefRefPtr<CefFrame> frame, CefProcessId source_process,
                                             CefRefPtr<CefProcessMessage> message) {
@@ -166,6 +174,7 @@ bool FubukiClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 void FubukiClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   if (!window_) {
+    browser->GetHost()->CloseBrowser(true);
     return;
   }
   if (isUi_) {
@@ -203,7 +212,10 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
       window_->Store().AddLog("info", "Opened blank popup as pending tab: " + popupTabId);
     }
     windowInfo = window_->PopupWindowInfo();
-    client = new FubukiClient(window_, popupTabId, false);
+    CefRefPtr<FubukiClient> popupClient =
+        new FubukiClient(window_, popupTabId, false);
+    window_->RetainClient(popupClient);
+    client = popupClient;
     settings.background_color = CefColorSetARGB(255, 255, 255, 255);
     if (no_javascript_access) {
       *no_javascript_access = false;
@@ -252,7 +264,17 @@ bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
   return false;
 }
 
-void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {}
+void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  BrowserWindow *window = window_;
+  if (messageRouter_) {
+    messageRouter_->OnBeforeClose(browser);
+  }
+  DetachWindow();
+  if (window) {
+    window->ReleaseClient(this);
+  }
+}
 
 void FubukiClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack,
                                         bool canGoForward) {

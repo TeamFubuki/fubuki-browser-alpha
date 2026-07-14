@@ -55,7 +55,9 @@ private:
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
   BrowserWindow &window_;
-  FrostBridge frostBridge_;
+  // BrowserAppController owns the single profile FrostEngine. Every window
+  // must address that same runtime so logical state cannot split per window.
+  FrostBridge &frostBridge_;
   std::unordered_map<std::string, MethodHandler> methods_;
 };
 

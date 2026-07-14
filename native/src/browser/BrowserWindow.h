@@ -25,6 +25,7 @@ class NSView;
 namespace fubuki {
 
 class BrowserAppController;
+class FubukiClient;
 
 class BrowserWindow {
  public:
@@ -112,6 +113,8 @@ class BrowserWindow {
   void OnDownloadUpdated(const std::string& downloadId, const std::string& url,
                          const std::string& path, const std::string& state, int percent);
   void OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions);
+  void RetainClient(CefRefPtr<FubukiClient> client);
+  void ReleaseClient(FubukiClient *client);
 
   NativeBridge* Bridge() {
     return bridge_.get();
@@ -156,6 +159,7 @@ class BrowserWindow {
   void CreateNativeWindow();
   void CreateUiBrowser();
   void CreateTabBrowser(const Tab& tab);
+  bool RequestTabCreate(const std::string& input, bool active);
   bool CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bool active);
   void RegisterCommands();
   void WireEvents();
@@ -176,6 +180,7 @@ class BrowserWindow {
   std::vector<ClosedTab> closedTabs_;
   double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
+  std::vector<CefRefPtr<FubukiClient>> clients_;
   std::string windowId_;
   NSWindow* window_ = nullptr;
   NSView* uiHostView_ = nullptr;
