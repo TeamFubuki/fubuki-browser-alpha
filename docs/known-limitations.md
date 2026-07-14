@@ -9,3 +9,4 @@
 - Cache/site-data clearing is conservative and depends on CEF request-context support.
 - Bookmark folders and browser-compatible import/export need more complete UX and persistence work.
 - macOS Apple Silicon is the primary target; Intel compatibility depends on the CEF build used.
+- CEF sandbox is enabled by default (`USE_SANDBOX=ON`). Codesign/notarization with sandbox entitlements has not been validated for distribution builds.

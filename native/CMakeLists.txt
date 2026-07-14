@@ -5,7 +5,13 @@ project(FubukiBrowserAlpha LANGUAGES CXX OBJCXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
-set(USE_SANDBOX OFF CACHE BOOL "Disable CEF sandbox for the MVP app bundle")
+set(USE_SANDBOX ON CACHE BOOL "Enable the CEF sandbox for browser processes")
+
+if(USE_SANDBOX)
+  set(FUBUKI_SANDBOX_DEFINES CEF_USE_SANDBOX)
+else()
+  set(FUBUKI_SANDBOX_DEFINES)
+endif()
 
 set(CEF_ROOT "" CACHE PATH "Path to CEF binary distribution")
 if(NOT CEF_ROOT AND DEFINED ENV{CEF_ROOT})
@@ -88,7 +94,10 @@ target_include_directories(FubukiBrowserAlpha PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   "${CEF_ROOT}"
 )
-target_compile_definitions(FubukiBrowserAlpha PRIVATE ${CEF_COMPILER_DEFINES})
+target_compile_definitions(FubukiBrowserAlpha PRIVATE
+  ${CEF_COMPILER_DEFINES}
+  ${FUBUKI_SANDBOX_DEFINES}
+)
 target_compile_definitions(FubukiBrowserAlpha PRIVATE
   FUBUKI_UI_DIST="${CMAKE_CURRENT_SOURCE_DIR}/../ui/dist"
 )
@@ -127,7 +136,10 @@ foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CEF_ROOT}"
   )
-  target_compile_definitions(${_helper_target} PRIVATE ${CEF_COMPILER_DEFINES})
+  target_compile_definitions(${_helper_target} PRIVATE
+    ${CEF_COMPILER_DEFINES}
+    ${FUBUKI_SANDBOX_DEFINES}
+  )
   target_compile_options(${_helper_target} PRIVATE
     ${FUBUKI_CEF_COMPILER_FLAGS}
     -Wno-gnu-zero-variadic-macro-arguments

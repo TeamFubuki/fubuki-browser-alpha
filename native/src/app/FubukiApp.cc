@@ -26,7 +26,9 @@ int RunFubukiApplication(int argc, char *argv[]) {
   }
 
   CefSettings settings;
+#ifndef CEF_USE_SANDBOX
   settings.no_sandbox = true;
+#endif
   settings.persist_session_cookies = true;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   const char *home = std::getenv("HOME");
