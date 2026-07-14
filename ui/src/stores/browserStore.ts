@@ -37,6 +37,7 @@ const initialState: BrowserState & { status: string } = {
     homeUrl: 'https://example.com',
     language: 'system',
     defaultZoomLevel: '0',
+    experimentalChromeRuntime: 'off',
   },
   profilePath: '',
   status: 'Starting',

@@ -866,6 +866,7 @@ where
             "homeUrl",
             "language",
             "defaultZoomLevel",
+            "experimentalChromeRuntime",
         ];
         let mut map = serde_json::Map::new();
         for key in keys {
@@ -1316,6 +1317,17 @@ mod tests {
             key: "theme".into(),
         }));
         assert_eq!(get.response, Response::Setting(Some("dark".into())));
+
+        let set = core.process(ProtocolRequest::new(Request::SettingsSet {
+            key: "experimentalChromeRuntime".into(),
+            value: "on".into(),
+        }));
+        assert_eq!(set.response, Response::Bool(true));
+
+        let get = core.process(ProtocolRequest::new(Request::SettingsGet {
+            key: "experimentalChromeRuntime".into(),
+        }));
+        assert_eq!(get.response, Response::Setting(Some("on".into())));
     }
 
     #[test]

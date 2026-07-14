@@ -1074,7 +1074,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
       key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload" &&
       key != "defaultZoomLevel" && key != "closeWindowWithLastTab" &&
-      key != "privateSearchEngine") {
+      key != "privateSearchEngine" && key != "experimentalChromeRuntime") {
     return false;
   }
   std::string savedValue = value;

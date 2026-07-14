@@ -122,6 +122,7 @@ export type Settings = {
   homeUrl: string;
   language: string;
   defaultZoomLevel: string;
+  experimentalChromeRuntime: 'off' | 'on';
 };
 
 export type BrowserState = {
@@ -389,6 +390,7 @@ function defaultSettings(): Settings {
     homeUrl: 'https://example.com',
     language: 'system',
     defaultZoomLevel: '0',
+    experimentalChromeRuntime: 'off',
   };
 }
 

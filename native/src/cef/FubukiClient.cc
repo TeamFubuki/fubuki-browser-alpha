@@ -62,19 +62,21 @@ bool IsFubukiInternalUrl(const std::string& url) {
   return StartsWith(url, "fubuki://");
 }
 
-bool IsKrunkerUrl(const std::string& url) {
+bool IsHttpUrl(const std::string& url) {
   CefURLParts parts;
   if (!CefParseURL(url, parts)) {
     return false;
   }
   std::string scheme = CefString(&parts.scheme).ToString();
-  std::string host = CefString(&parts.host).ToString();
   std::transform(scheme.begin(), scheme.end(), scheme.begin(),
                  [](unsigned char c) { return std::tolower(c); });
-  std::transform(host.begin(), host.end(), host.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  return (scheme == "https" || scheme == "http") &&
-         (host == "krunker.io" || host.ends_with(".krunker.io"));
+  return scheme == "https" || scheme == "http";
+}
+
+bool ShouldUseChromeRuntime(BrowserWindow* window, const std::string& url) {
+  return window &&
+         window->Store().GetSetting("experimentalChromeRuntime") == "on" &&
+         IsHttpUrl(url);
 }
 
 std::string DecodeFormValue(const std::string &value) {
@@ -407,17 +409,13 @@ void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
                              download_item->GetFullPath().ToString(), state, percent);
 }
 
-bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event,
+bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event,
                                  CefEventHandle, bool* is_keyboard_shortcut) {
   if (!window_ || event.type != KEYEVENT_RAWKEYDOWN) {
     return false;
   }
   const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0;
   const bool altDown = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
-  if (commandDown && browser &&
-      browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
-    return false;
-  }
   const char character = static_cast<char>(event.unmodified_character);
   const bool handled =
       window_->HandleShortcut(commandDown, altDown, event.windows_key_code, character);
@@ -458,7 +456,7 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFr
     window_->HandleNewTabSearchUrl(tabId_, url);
     return true;
   }
-  if (browser && IsKrunkerUrl(url) &&
+  if (browser && ShouldUseChromeRuntime(window_, url) &&
       browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
     const std::string windowId = window_->WindowId();
     CefPostTask(TID_UI,
@@ -499,7 +497,7 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
 
   const std::string origin = requesting_origin.ToString();
   const bool allowPointerLock =
-      !isUi_ && IsKrunkerUrl(origin) &&
+      !isUi_ && ShouldUseChromeRuntime(window_, origin) &&
       requested_permissions == static_cast<uint32_t>(CEF_PERMISSION_TYPE_POINTER_LOCK);
   const auto result =
       allowPointerLock ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY;
