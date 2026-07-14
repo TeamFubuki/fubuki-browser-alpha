@@ -1,8 +1,8 @@
 import { createStore } from 'solid-js/store';
 import {
   fromFrostTab,
+  getBrowserState,
   invokeBridge,
-  normalizeAppState,
   onBridgeEvent,
   type BookmarkRecord,
   type BrowserState,
@@ -78,59 +78,32 @@ async function refreshHistory() {
 // --- Full snapshot refresh (used only on startup and app.stateChanged) ---
 
 let pendingFullRefresh: Promise<void> | undefined;
-let fullRefreshCounter = 0;
+let refreshRequested = false;
+let stateRevision = 0;
 
 /**
  * Full snapshot refresh — only for startup and rare edge cases.
- * Calls app.snapshot (1 bridge call). Commands are cached separately.
+ * Loads one state snapshot per pass. Commands are cached separately.
  */
 export async function refreshFullState(status = 'Ready') {
+  refreshRequested = true;
   if (pendingFullRefresh) return pendingFullRefresh;
-  const myCounter = ++fullRefreshCounter;
+
   pendingFullRefresh = (async () => {
     try {
-      const snapshot = await invokeBridge('app.snapshot');
-      const state = normalizeAppState(snapshot);
-      if (myCounter !== fullRefreshCounter) return;
+      while (refreshRequested) {
+        refreshRequested = false;
+        const revisionBeforeRequest = stateRevision;
+        const state = await getBrowserState();
 
-      // Only update slices that actually changed
-      if (state.activeTabId !== browserState.activeTabId) {
-        setBrowserState('activeTabId', state.activeTabId);
+        // A differential event received while the snapshot was in flight is
+        // newer than that snapshot may be. Retry instead of overwriting it.
+        if (revisionBeforeRequest !== stateRevision) {
+          refreshRequested = true;
+          continue;
+        }
+        applyFullState(state, status);
       }
-      if (state.windowId !== browserState.windowId) {
-        setBrowserState('windowId', state.windowId);
-      }
-      if (state.isPrivate !== browserState.isPrivate) {
-        setBrowserState('isPrivate', state.isPrivate);
-      }
-      if (state.bridgeVersion !== browserState.bridgeVersion) {
-        setBrowserState('bridgeVersion', state.bridgeVersion);
-      }
-      if (state.tabs !== browserState.tabs) {
-        setBrowserState('tabs', state.tabs);
-      }
-      if (state.windows !== browserState.windows) {
-        setBrowserState('windows', state.windows);
-      }
-      if (state.settings !== browserState.settings) {
-        setBrowserState('settings', state.settings);
-      }
-      if (state.downloads !== browserState.downloads) {
-        setBrowserState('downloads', state.downloads);
-      }
-      if (state.history !== browserState.history) {
-        setBrowserState('history', state.history);
-      }
-      if (state.bookmarks !== browserState.bookmarks) {
-        setBrowserState('bookmarks', state.bookmarks);
-      }
-      if (state.permissions !== browserState.permissions) {
-        setBrowserState('permissions', state.permissions);
-      }
-      if (state.commands !== browserState.commands) {
-        setBrowserState('commands', state.commands);
-      }
-      setBrowserState('status', status);
     } catch (error) {
       console.error('[Fubuki] Full state refresh failed:', error);
       setBrowserState('status', 'Error');
@@ -139,6 +112,10 @@ export async function refreshFullState(status = 'Ready') {
     pendingFullRefresh = undefined;
   });
   return pendingFullRefresh;
+}
+
+function applyFullState(state: BrowserState, status: string) {
+  setBrowserState({ ...state, status });
 }
 
 // Keep backward-compatible alias
@@ -226,6 +203,7 @@ export function bindNativeEvents() {
   const disposers = [
     // --- Tab lifecycle (direct patches) ---
     onBridgeEvent('tab.created', (tab) => {
+      stateRevision += 1;
       const nextTab = fromFrostTab(tab);
       if (nextTab.isActive) {
         setBrowserState('tabs', (item) => item.id !== nextTab.id, {
@@ -242,6 +220,7 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.updated', (patch) => {
+      stateRevision += 1;
       const tabPatch = toTabPatch(patch);
       if (tabPatch) {
         setBrowserState(
@@ -256,6 +235,7 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.closed', ({ tabId }) => {
+      stateRevision += 1;
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
       setBrowserState('tabs', remaining);
       if (browserState.activeTabId === tabId) {
@@ -264,14 +244,23 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {
+      stateRevision += 1;
       setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
       setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
       setBrowserState('activeTabId', tabId);
     }),
 
+    // The compatibility host reports a reorder only on the plural event.
+    onBridgeEvent('tabs.updated', (payload) => {
+      if (payload?.message === 'reordered') {
+        void refreshFullState('tabs.reordered');
+      }
+    }),
+
     // --- Window lifecycle (direct patches) ---
     onBridgeEvent('window.created', (windowState) => {
-      if (windowState) {
+      if (windowState && 'id' in windowState) {
+        stateRevision += 1;
         setBrowserState('windows', (w) => [
           ...w,
           {
@@ -281,6 +270,9 @@ export function bindNativeEvents() {
             tabs: [],
           },
         ]);
+      } else {
+        // Legacy events contain windowId rather than a complete WindowState.
+        void refreshFullState('window.created');
       }
     }),
 
@@ -301,6 +293,7 @@ export function bindNativeEvents() {
         typeof value === 'string' &&
         isSettingsKey(key)
       ) {
+        stateRevision += 1;
         setBrowserState('settings', key, value);
       }
     }),

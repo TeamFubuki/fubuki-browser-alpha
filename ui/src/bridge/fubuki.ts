@@ -261,7 +261,7 @@ export type EventMap = {
   'tab.closed': { tabId: string };
   'tab.activated': { tabId: string };
   'tabs.created': void;
-  'tabs.updated': void;
+  'tabs.updated': { tabId?: string; message?: string } | void;
   'tabs.closed': void;
   'tabs.activated': void;
   'navigation.started': { tabId: string; url: string };
@@ -273,7 +273,10 @@ export type EventMap = {
   'history.changed': { url?: string } | void;
   'setting.changed': { key: string; value: string };
   'permission.changed': void;
-  'window.created': FrostWindowState | void;
+  'window.created':
+    | FrostWindowState
+    | { windowId: string; message?: string }
+    | void;
   'window.closed': void;
   'window.focused': void;
   'app.stateChanged': void;
@@ -324,22 +327,59 @@ async function invoke<T = unknown>(
   method: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  if (!window.cefQuery) {
+  // Capture the function once. CEF can remove the injected function while a
+  // frame is being torn down; reading it again after the availability check
+  // would leave the returned promise pending forever.
+  const cefQuery = window.cefQuery;
+  if (!cefQuery) {
     throw new Error('Fubuki native bridge is not available');
   }
 
   return new Promise<T>((resolve, reject) => {
-    window.cefQuery?.({
+    cefQuery({
       request: JSON.stringify({
         version: 0,
         bridgeVersion: '1',
         method,
         params,
       }),
-      onSuccess: (response) => resolve(JSON.parse(response) as T),
-      onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
+      onSuccess: (response) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(response) as unknown;
+        } catch (error) {
+          const reason = error instanceof Error ? `: ${error.message}` : '';
+          reject(
+            new Error(`Native bridge ${method} returned invalid JSON${reason}`),
+          );
+          return;
+        }
+
+        const error = nativeBridgeError(parsed);
+        if (error) {
+          reject(new Error(`Native bridge ${method} failed: ${error}`));
+          return;
+        }
+        resolve(parsed as T);
+      },
+      onFailure: (code, message) =>
+        reject(
+          new Error(`Native bridge ${method} failed (${code}): ${message}`),
+        ),
     });
   });
+}
+
+function nativeBridgeError(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || !('ok' in value)) {
+    return undefined;
+  }
+  if (value.ok !== false) return undefined;
+
+  const message = 'error' in value ? value.error : undefined;
+  return typeof message === 'string' && message
+    ? message
+    : 'Unknown native bridge error';
 }
 
 function on(
@@ -546,21 +586,31 @@ export async function getBrowserState(): Promise<BrowserState> {
   if (!window.cefQuery) {
     return developmentState();
   }
+  let state: BrowserState;
   try {
     const snapshot = await invokeBridge('app.snapshot');
-    const state = normalizeAppState(snapshot);
-    if (isFrostAppState(snapshot)) {
-      // Fetch commands in parallel, not sequentially
-      const commandsPromise = invokeBridge('commands.list').catch(
-        () => [] as BrowserCommand[],
-      );
-      return { ...state, commands: await commandsPromise };
-    }
-    return state;
+    state = normalizeAppState(snapshot);
   } catch {
-    return invokeBridge('app.getState');
+    state = await invokeBridge('app.getState');
   }
+
+  if (state.commands.length > 0) {
+    commandCache = state.commands;
+    return state;
+  }
+
+  if (commandCache === undefined) {
+    try {
+      commandCache = await invokeBridge('commands.list');
+    } catch {
+      // A transient failure must not permanently cache an empty palette.
+      return state;
+    }
+  }
+  return { ...state, commands: commandCache };
 }
+
+let commandCache: BrowserCommand[] | undefined;
 
 export function onBridgeEvent<K extends keyof EventMap>(
   eventName: K,

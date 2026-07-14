@@ -127,7 +127,10 @@ describe('EventMap types', () => {
     type BookmarkChanged = EventMap['bookmark.changed'];
 
     expectTypeOf<TabsCreated>().toBeVoid();
-    expectTypeOf<TabsUpdated>().toBeVoid();
+    expectTypeOf<TabsUpdated>().toMatchTypeOf<{
+      tabId?: string;
+      message?: string;
+    } | void>();
     expectTypeOf<BookmarkChanged>().toMatchTypeOf<{ url?: string } | void>();
   });
 });
