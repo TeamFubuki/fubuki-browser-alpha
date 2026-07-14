@@ -37,12 +37,10 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const std::string url =
-        params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
-    const bool active = !params->HasKey("active") || params->GetBool("active");
-    return HostBackedFrostInvoke("tabs.create", params, [this, url, active] {
-      return window_.CreateTab(url, active);
-    });
+    // Tabs are created by FrostEngine. It emits one page.create HostCommand,
+    // which BrowserAppController dispatches to the native window. Creating a
+    // native tab here as well produces a duplicate tab with a different ID.
+    return FrostInvoke("tabs.create", params);
   };
 
   methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
