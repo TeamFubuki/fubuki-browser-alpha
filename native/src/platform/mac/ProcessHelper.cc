@@ -9,7 +9,7 @@
 int main(int argc, char *argv[]) {
 #ifdef CEF_USE_SANDBOX
   CefScopedSandboxContext sandboxContext;
-  if (!sandboxContext.Initialize(argc, const_cast<const char **>(argv))) {
+  if (!sandboxContext.Initialize(argc, argv)) {
     return 1;
   }
 #endif

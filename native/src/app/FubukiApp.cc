@@ -33,7 +33,7 @@ int RunFubukiApplication(int argc, char *argv[]) {
 #ifdef CEF_USE_SANDBOX
   // Sandbox is enabled; do not set no_sandbox.
   CefScopedSandboxContext sandboxContext;
-  if (!sandboxContext.Initialize(argc, const_cast<const char **>(argv))) {
+  if (!sandboxContext.Initialize(argc, argv)) {
     return 1;
   }
 #else
