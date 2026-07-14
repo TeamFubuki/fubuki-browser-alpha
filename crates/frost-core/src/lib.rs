@@ -543,9 +543,18 @@ where
             Request::DownloadsList => DownloadService::list(&self.repository)
                 .map(Response::DownloadsList)
                 .map_err(|e| CoreError::Message(e.to_string())),
-            Request::DownloadsRemove { url, path } => {
-                let ok = DownloadService::remove(&self.repository, url.as_deref(), path.as_deref())
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
+            Request::DownloadsRemove {
+                download_id,
+                url,
+                path,
+            } => {
+                let ok = DownloadService::remove(
+                    &self.repository,
+                    download_id.as_deref(),
+                    url.as_deref(),
+                    path.as_deref(),
+                )
+                .map_err(|e| CoreError::Message(e.to_string()))?;
                 if ok {
                     self.emit(Event::DownloadChanged { url, path });
                 }
@@ -621,6 +630,7 @@ where
                 }
                 for download in &state.downloads {
                     if let Err(e) = self.repository.upsert_download(
+                        &download.download_id,
                         &download.url,
                         &download.path,
                         &download.state,
@@ -762,13 +772,14 @@ where
                 Ok(())
             }
             HostEvent::DownloadUpdated {
+                download_id,
                 url,
                 path,
                 state,
                 percent,
             } => {
                 self.repository
-                    .upsert_download(&url, &path, &state, percent)
+                    .upsert_download(&download_id, &url, &path, &state, percent)
                     .map_err(|e| CoreError::Message(e.to_string()))?;
                 self.emit(Event::DownloadChanged {
                     url: Some(url),
@@ -1082,14 +1093,16 @@ impl DownloadRepository for InMemoryStore {
 
     fn upsert_download(
         &self,
+        download_id: &str,
         url: &str,
         path: &str,
         state: &str,
         percent: i64,
     ) -> frost_store::StoreResult<()> {
         let mut downloads = self.downloads.borrow_mut();
-        downloads.retain(|d| d.url != url || d.path != path);
+        downloads.retain(|d| d.download_id != download_id);
         downloads.push(frost_protocol::DownloadRecord {
+            download_id: download_id.to_owned(),
             url: url.to_owned(),
             path: path.to_owned(),
             state: state.to_owned(),
@@ -1101,17 +1114,23 @@ impl DownloadRepository for InMemoryStore {
 
     fn remove_download(
         &self,
+        download_id: Option<&str>,
         url: Option<&str>,
         path: Option<&str>,
     ) -> frost_store::StoreResult<bool> {
         let mut downloads = self.downloads.borrow_mut();
-        let before = downloads.len();
-        downloads.retain(|d| {
+        let index = downloads.iter().rposition(|d| {
+            let id_matches = download_id.is_some_and(|v| !v.is_empty() && v == d.download_id);
             let url_matches = url.is_some_and(|v| !v.is_empty() && v == d.url);
             let path_matches = path.is_some_and(|v| !v.is_empty() && v == d.path);
-            !(url_matches || path_matches)
+            id_matches || (download_id.is_none() && (path_matches || url_matches))
         });
-        Ok(downloads.len() != before)
+        if let Some(index) = index {
+            downloads.remove(index);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 

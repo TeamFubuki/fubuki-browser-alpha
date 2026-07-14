@@ -149,6 +149,7 @@ pub enum Request {
     DownloadsList,
     #[serde(rename = "downloads.remove", rename_all = "camelCase")]
     DownloadsRemove {
+        download_id: Option<String>,
         url: Option<String>,
         path: Option<String>,
     },

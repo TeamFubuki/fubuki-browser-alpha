@@ -414,14 +414,28 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
   }
   const std::string url = request->GetURL().ToString();
   if (StartsWith(url, "fubuki://settings/set")) {
-    if (!user_gesture || is_redirect ||
-        !IsTrustedSettingsActionSource(frame->GetURL().ToString())) {
+    const std::string method = request->GetMethod().ToString();
+    const std::string frameUrl = frame->GetURL().ToString();
+    const std::string referrerUrl = request->GetReferrerURL().ToString();
+    const bool trustedSource = IsTrustedSettingsActionSource(frameUrl) ||
+                               IsTrustedSettingsActionSource(referrerUrl);
+    if (is_redirect || !trustedSource || (method != "POST" && !user_gesture)) {
+      if (!window_->IsPrivate()) {
+        window_->Store().AddLog(
+            "warning", "Blocked settings action: method=" + method +
+                           " source=" + frameUrl + " referrer=" + referrerUrl);
+      }
       return true;
     }
-    const std::string method = request->GetMethod().ToString();
-    const std::string query =
-        method == "POST" ? PostBody(request) : QueryString(url);
+    const std::string postBody = method == "POST" ? PostBody(request) : "";
+    const std::string query = postBody.empty() ? QueryString(url) : postBody;
     const std::string key = FormParam(query, "key");
+    if (key.empty()) {
+      if (!window_->IsPrivate()) {
+        window_->Store().AddLog("warning", "Blocked settings action with empty form body");
+      }
+      return true;
+    }
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
       if (!window_->IsPrivate()) {
         window_->Store().AddLog("warning",

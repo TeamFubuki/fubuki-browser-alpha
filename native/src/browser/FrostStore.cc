@@ -129,23 +129,30 @@ bool FrostStore::RemoveHistory(const std::string &url) {
   return ExecRequest("history.remove", params);
 }
 
-bool FrostStore::AddDownload(const std::string &url, const std::string &path,
+bool FrostStore::AddDownload(const std::string &downloadId,
+                             const std::string &url,
+                             const std::string &path,
                              const std::string &state) {
-  return UpdateDownload(url, path, state, 0);
+  return UpdateDownload(downloadId, url, path, state, 0);
 }
 
-bool FrostStore::UpdateDownload(const std::string &url, const std::string &path,
+bool FrostStore::UpdateDownload(const std::string &downloadId,
+                                const std::string &url,
+                                const std::string &path,
                                 const std::string &state, int percent) {
   if (!handle_) {
     return false;
   }
-  return frost_store_upsert_download(handle_, url.c_str(), path.c_str(),
-                                     state.c_str(), percent);
+  return frost_store_upsert_download(handle_, downloadId.c_str(), url.c_str(),
+                                     path.c_str(), state.c_str(), percent);
 }
 
-bool FrostStore::RemoveDownload(const std::string &url,
+bool FrostStore::RemoveDownload(const std::string &downloadId,
+                                const std::string &url,
                                 const std::string &path) {
-  std::string params = "{\"url\":" + JsonEscape(url) + ",\"path\":" + JsonEscape(path) + "}";
+  std::string params = "{\"downloadId\":" + JsonEscape(downloadId) +
+                       ",\"url\":" + JsonEscape(url) +
+                       ",\"path\":" + JsonEscape(path) + "}";
   return ExecRequest("downloads.remove", params);
 }
 
