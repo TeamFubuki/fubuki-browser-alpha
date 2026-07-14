@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, select};
@@ -757,7 +759,69 @@ fn route_external_to_core(
 /// The native host no longer owns browser data; it delegates persistence to
 /// FrostEngine's `frost-store` through this handle.
 pub struct FrostStoreHandle {
-    store: SqliteStore,
+    // Calls use this pointer only as an opaque registry key. They never
+    // dereference memory that another thread may concurrently release.
+    _private: u8,
+}
+
+struct StoreEntry {
+    lifecycle: Mutex<StoreLifecycle>,
+    idle: Condvar,
+    store: Mutex<SqliteStore>,
+}
+
+#[derive(Default)]
+struct StoreLifecycle {
+    active_calls: usize,
+    closing: bool,
+}
+
+static STORE_REGISTRY: OnceLock<Mutex<HashMap<usize, Arc<StoreEntry>>>> = OnceLock::new();
+
+fn store_registry() -> &'static Mutex<HashMap<usize, Arc<StoreEntry>>> {
+    STORE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct StoreCall {
+    entry: Arc<StoreEntry>,
+}
+
+impl Drop for StoreCall {
+    fn drop(&mut self) {
+        if let Ok(mut lifecycle) = self.entry.lifecycle.lock() {
+            lifecycle.active_calls -= 1;
+            if lifecycle.active_calls == 0 {
+                self.entry.idle.notify_all();
+            }
+        }
+    }
+}
+
+fn begin_store_call(handle: *mut FrostStoreHandle) -> Option<(Arc<StoreEntry>, StoreCall)> {
+    if handle.is_null() {
+        return None;
+    }
+    let entry = store_registry()
+        .lock()
+        .ok()?
+        .get(&(handle as usize))?
+        .clone();
+    let mut lifecycle = entry.lifecycle.lock().ok()?;
+    if lifecycle.closing {
+        return None;
+    }
+    lifecycle.active_calls += 1;
+    drop(lifecycle);
+    Some((entry.clone(), StoreCall { entry }))
+}
+
+fn with_store<T>(
+    handle: *mut FrostStoreHandle,
+    operation: impl FnOnce(&SqliteStore) -> T,
+) -> Option<T> {
+    let (entry, _call) = begin_store_call(handle)?;
+    let store = entry.store.lock().ok()?;
+    Some(operation(&store))
 }
 
 /// Opens (or creates) an engine-owned SQLite store at `path`.
@@ -783,7 +847,21 @@ pub unsafe extern "C" fn frost_store_open(path: *const c_char) -> *mut FrostStor
         }
     };
     match SqliteStore::open(path) {
-        Ok(store) => Box::into_raw(Box::new(FrostStoreHandle { store })),
+        Ok(store) => {
+            let handle = Box::into_raw(Box::new(FrostStoreHandle { _private: 0 }));
+            let entry = Arc::new(StoreEntry {
+                lifecycle: Mutex::new(StoreLifecycle::default()),
+                idle: Condvar::new(),
+                store: Mutex::new(store),
+            });
+            if let Ok(mut registry) = store_registry().lock() {
+                registry.insert(handle as usize, entry);
+                handle
+            } else {
+                unsafe { drop(Box::from_raw(handle)) };
+                ptr::null_mut()
+            }
+        }
         Err(error) => {
             eprintln!("[frost-store] failed to open persistent store: {error}");
             ptr::null_mut()
@@ -801,9 +879,26 @@ pub unsafe extern "C" fn frost_store_free(handle: *mut FrostStoreHandle) {
     if handle.is_null() {
         return;
     }
-    unsafe {
-        drop(Box::from_raw(handle));
+    let entry = store_registry()
+        .lock()
+        .ok()
+        .and_then(|mut registry| registry.remove(&(handle as usize)));
+    let Some(entry) = entry else {
+        return;
+    };
+    let mut lifecycle = match entry.lifecycle.lock() {
+        Ok(lifecycle) => lifecycle,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    lifecycle.closing = true;
+    while lifecycle.active_calls != 0 {
+        lifecycle = match entry.idle.wait(lifecycle) {
+            Ok(lifecycle) => lifecycle,
+            Err(poisoned) => poisoned.into_inner(),
+        };
     }
+    drop(lifecycle);
+    unsafe { drop(Box::from_raw(handle)) };
 }
 
 /// Reads a setting value as JSON string, or `null` if absent.
@@ -823,9 +918,8 @@ pub unsafe extern "C" fn frost_store_get_setting(
         Ok(k) => k,
         Err(_) => return ptr::null_mut(),
     };
-    let store = unsafe { &*handle };
-    match store.store.get_setting(key) {
-        Ok(Some(value)) => into_c_string(value),
+    match with_store(handle, |store| store.get_setting(key)) {
+        Some(Ok(Some(value))) => into_c_string(value),
         _ => ptr::null_mut(),
     }
 }
@@ -852,8 +946,7 @@ pub unsafe extern "C" fn frost_store_set_setting(
         Ok(v) => v,
         Err(_) => return false,
     };
-    let store = unsafe { &*handle };
-    store.store.set_setting(key, value).is_ok()
+    with_store(handle, |store| store.set_setting(key, value).is_ok()).unwrap_or(false)
 }
 
 /// Returns all settings as a JSON object string.
@@ -867,39 +960,41 @@ pub unsafe extern "C" fn frost_store_get_all_settings(
     if handle.is_null() {
         return ptr::null_mut();
     }
-    let store = unsafe { &*handle };
-    let mut map = serde_json::Map::new();
-    for key in [
-        "homepage",
-        "searchEngine",
-        "customSearchUrl",
-        "startupBehavior",
-        "sessionJson",
-        "downloadDirectory",
-        "theme",
-        "appearance",
-        "toolbarDensity",
-        "sidebarVisible",
-        "sidebarWidth",
-        "defaultBookmarkDisplay",
-        "openBookmarkIn",
-        "showBookmarkFavicons",
-        "newTabPage",
-        "homeUrl",
-        "askBeforeDownload",
-        "defaultZoomLevel",
-        "closeWindowWithLastTab",
-        "privateSearchEngine",
-        "language",
-        "newTabBackgroundMode",
-        "newTabBackgroundColor",
-        "newTabBackgroundUrl",
-    ] {
-        if let Ok(Some(value)) = store.store.get_setting(key) {
-            map.insert(key.to_string(), serde_json::Value::String(value));
+    with_store(handle, |store| {
+        let mut map = serde_json::Map::new();
+        for key in [
+            "homepage",
+            "searchEngine",
+            "customSearchUrl",
+            "startupBehavior",
+            "sessionJson",
+            "downloadDirectory",
+            "theme",
+            "appearance",
+            "toolbarDensity",
+            "sidebarVisible",
+            "sidebarWidth",
+            "defaultBookmarkDisplay",
+            "openBookmarkIn",
+            "showBookmarkFavicons",
+            "newTabPage",
+            "homeUrl",
+            "askBeforeDownload",
+            "defaultZoomLevel",
+            "closeWindowWithLastTab",
+            "privateSearchEngine",
+            "language",
+            "newTabBackgroundMode",
+            "newTabBackgroundColor",
+            "newTabBackgroundUrl",
+        ] {
+            if let Ok(Some(value)) = store.get_setting(key) {
+                map.insert(key.to_string(), serde_json::Value::String(value));
+            }
         }
-    }
-    into_c_string(serde_json::Value::Object(map).to_string())
+        into_c_string(serde_json::Value::Object(map).to_string())
+    })
+    .unwrap_or(ptr::null_mut())
 }
 
 /// Appends a log entry. Returns true on success.
@@ -924,8 +1019,7 @@ pub unsafe extern "C" fn frost_store_add_log(
         Ok(m) => m,
         Err(_) => return false,
     };
-    let store = unsafe { &*handle };
-    store.store.add_log(level, message).is_ok()
+    with_store(handle, |store| store.add_log(level, message).is_ok()).unwrap_or(false)
 }
 
 /// Returns recent logs as a JSON array string.
@@ -940,13 +1034,12 @@ pub unsafe extern "C" fn frost_store_get_logs(
     if handle.is_null() {
         return ptr::null_mut();
     }
-    let store = unsafe { &*handle };
-    match store.store.list_logs(limit) {
-        Ok(logs) => match serde_json::to_string(&logs) {
+    match with_store(handle, |store| store.list_logs(limit)) {
+        Some(Ok(logs)) => match serde_json::to_string(&logs) {
             Ok(json) => into_c_string(json),
             Err(_) => ptr::null_mut(),
         },
-        Err(_) => ptr::null_mut(),
+        _ => ptr::null_mut(),
     }
 }
 
@@ -959,8 +1052,7 @@ pub unsafe extern "C" fn frost_store_clear_logs(handle: *mut FrostStoreHandle) -
     if handle.is_null() {
         return false;
     }
-    let store = unsafe { &*handle };
-    store.store.clear_logs().is_ok()
+    with_store(handle, |store| store.clear_logs().is_ok()).unwrap_or(false)
 }
 
 /// Adds a history entry. Returns true on success.
@@ -990,8 +1082,10 @@ pub unsafe extern "C" fn frost_store_add_history(
         Ok(f) => f,
         Err(_) => return false,
     };
-    let store = unsafe { &*handle };
-    store.store.add_history(title, url, favicon_url).is_ok()
+    with_store(handle, |store| {
+        store.add_history(title, url, favicon_url).is_ok()
+    })
+    .unwrap_or(false)
 }
 
 /// Inserts or updates a download record. Returns true on success.
@@ -1022,11 +1116,10 @@ pub unsafe extern "C" fn frost_store_upsert_download(
         Ok(s) => s,
         Err(_) => return false,
     };
-    let store = unsafe { &*handle };
-    store
-        .store
-        .upsert_download(url, path, state, percent)
-        .is_ok()
+    with_store(handle, |store| {
+        store.upsert_download(url, path, state, percent).is_ok()
+    })
+    .unwrap_or(false)
 }
 
 /// Frees a string previously returned by a `frost_store_*` function.
@@ -1060,5 +1153,55 @@ mod tests {
         assert_eq!(command["payload"]["isPrivate"], true);
 
         unsafe { frost_engine_free(handle) };
+    }
+
+    #[test]
+    fn store_free_waits_for_an_in_flight_call() {
+        let path = std::env::temp_dir().join(format!(
+            "fubuki-ffi-store-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_string = CString::new(path.to_string_lossy().as_bytes()).unwrap();
+        let handle = unsafe { frost_store_open(path_string.as_ptr()) };
+        assert!(!handle.is_null());
+
+        let (_entry, active_call) = begin_store_call(handle).unwrap();
+        let handle_address = handle as usize;
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let free_thread = std::thread::spawn(move || {
+            unsafe { frost_store_free(handle_address as *mut FrostStoreHandle) };
+            done_tx.send(()).unwrap();
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while store_registry()
+            .lock()
+            .unwrap()
+            .contains_key(&handle_address)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        assert!(
+            !store_registry()
+                .lock()
+                .unwrap()
+                .contains_key(&handle_address)
+        );
+        assert!(done_rx.try_recv().is_err());
+
+        drop(active_call);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        free_thread.join().unwrap();
+        assert!(begin_store_call(handle).is_none());
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
     }
 }
