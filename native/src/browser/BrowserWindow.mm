@@ -15,6 +15,7 @@
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
 #include "include/wrapper/cef_helpers.h"
+#include "utils/DownloadUtils.h"
 #include "utils/UrlUtils.h"
 
 namespace {
@@ -1328,14 +1329,28 @@ void BrowserWindow::PollAndExecuteHostCommands() {
 }
 
 std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) const {
-  std::string directory = EngineSetting("downloadDirectory");
+  std::filesystem::path directory = EngineSetting("downloadDirectory");
   if (directory.empty()) {
     const char* home = std::getenv("HOME");
-    directory = home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
+    directory = home ? std::filesystem::path(home) / "Downloads" : std::filesystem::path("/tmp");
   }
-  std::filesystem::create_directories(directory);
-  const std::string fileName = suggestedName.empty() ? "download" : suggestedName;
-  return (std::filesystem::path(directory) / fileName).string();
+
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  if (error || !std::filesystem::is_directory(directory, error)) {
+    error.clear();
+    directory = std::filesystem::temp_directory_path(error);
+    if (error) {
+      directory = "/tmp";
+    }
+    directory /= "Fubuki Browser Alpha Downloads";
+    error.clear();
+    std::filesystem::create_directories(directory, error);
+  }
+  if (error || !std::filesystem::is_directory(directory, error)) {
+    return {};
+  }
+  return UniqueDownloadPath(directory, suggestedName).string();
 }
 
 void BrowserWindow::SetUiBrowser(CefRefPtr<CefBrowser> browser) {
