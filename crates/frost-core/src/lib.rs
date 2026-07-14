@@ -988,8 +988,10 @@ where
                         window.id
                     )));
                 }
+                let window_id = window.id.clone();
                 self.windows.commit_new_window(window.clone());
                 self.emit(Event::WindowCreated(window));
+                self.queue_initial_tab(window_id)?;
             }
             PendingOperation::CloseWindow { window_id } => {
                 self.windows.get_window(&window_id).ok_or_else(|| {
@@ -1018,17 +1020,22 @@ where
                 // A host window without a Rust-owned initial page is not a
                 // usable browser. Create that page through the same pending
                 // operation path rather than letting BrowserWindow invent it.
-                let tab = self
-                    .tabs
-                    .new_tab(window_id.clone(), "fubuki://newtab/".into(), true);
-                let dispatch = self
-                    .adapter
-                    .create_page(&tab.id, &window_id, &tab.url)
-                    .map_err(|error| CoreError::Message(error.to_string()))?;
-                self.resolve_host_dispatch(dispatch, PendingOperation::CreateTab(tab))?;
+                self.queue_initial_tab(window_id)?;
             }
             PendingOperation::NoStateChange => {}
         }
+        Ok(())
+    }
+
+    fn queue_initial_tab(&mut self, window_id: String) -> CoreResult<()> {
+        let tab = self
+            .tabs
+            .new_tab(window_id.clone(), "fubuki://newtab/".into(), true);
+        let dispatch = self
+            .adapter
+            .create_page(&tab.id, &window_id, &tab.url)
+            .map_err(|error| CoreError::Message(error.to_string()))?;
+        self.resolve_host_dispatch(dispatch, PendingOperation::CreateTab(tab))?;
         Ok(())
     }
 
@@ -1847,6 +1854,57 @@ mod tests {
     }
 
     #[test]
+    fn host_confirmed_new_window_queues_an_initial_page() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+
+        let response = core.process(ProtocolRequest::new(Request::WindowsCreate));
+        let Response::Operation(window_operation) = response.response else {
+            panic!("window creation must wait for its host result");
+        };
+        let window_command = host_rx.try_recv().unwrap();
+        let HostCommand::WindowCreate { window_id, .. } = &window_command.command else {
+            panic!("expected window.create");
+        };
+        assert_eq!(window_operation.operation_id, window_command.operation_id);
+        let window_id = window_id.clone();
+
+        core.process_host_command_result(HostCommandResultEnvelope::success(
+            window_command.operation_id,
+        ))
+        .unwrap();
+
+        let page_command = host_rx.try_recv().unwrap();
+        assert!(matches!(
+            &page_command.command,
+            HostCommand::PageCreate {
+                window_id: target_window,
+                url,
+                ..
+            } if target_window == &window_id && url == "fubuki://newtab/"
+        ));
+        core.process_host_command_result(HostCommandResultEnvelope::success(
+            page_command.operation_id,
+        ))
+        .unwrap();
+
+        let state = core.snapshot().unwrap();
+        let window = state
+            .windows
+            .iter()
+            .find(|window| window.id == window_id)
+            .unwrap();
+        assert_eq!(window.tab_ids.len(), 1);
+        assert_eq!(window.active_tab_id.as_ref(), window.tab_ids.first());
+        assert!(state.tabs.iter().any(|tab| {
+            tab.id == window.tab_ids[0] && tab.window_id == window_id && tab.is_active
+        }));
+    }
+
+    #[test]
     fn persists_settings_through_repository() {
         let mut core = BrowserCore::new();
         let set = core.process(ProtocolRequest::new(Request::SettingsSet {
@@ -1883,6 +1941,7 @@ mod tests {
 
     /// Helper: create a window and return (window_id, [tab_ids]).
     fn create_window_with_tabs(core: &mut BrowserCore, count: usize) -> (String, Vec<String>) {
+        assert!(count > 0);
         let resp = core.process(ProtocolRequest::new(Request::WindowsCreate));
         assert_eq!(resp.response, Response::Bool(true));
         let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
@@ -1890,8 +1949,14 @@ mod tests {
             panic!("expected snapshot");
         };
         let window_id = state.windows.last().unwrap().id.clone();
-        let mut tab_ids = Vec::new();
-        for i in 0..count {
+        let mut tab_ids = state
+            .tabs
+            .iter()
+            .filter(|tab| tab.window_id == window_id)
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(tab_ids.len(), 1);
+        for i in 1..count {
             let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
                 url: Some(format!("https://example{}.com", i)),
                 active: true,
