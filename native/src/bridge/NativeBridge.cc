@@ -50,9 +50,10 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.close", params, [this, params] {
-      return window_.CloseTab(params->GetString("tabId"));
-    });
+    // FrostEngine owns the close lifecycle and emits page.close for the host
+    // to execute. Closing natively first leaves that delayed command pointing
+    // at a tab that no longer exists.
+    return FrostInvoke("tabs.close", params);
   };
 
   methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
