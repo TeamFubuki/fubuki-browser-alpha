@@ -21,6 +21,8 @@ pub enum Event {
     TabClosed(TabClosed),
     #[serde(rename = "tab.activated")]
     TabActivated(TabActivated),
+    #[serde(rename = "tabs.reordered")]
+    TabsReordered(TabsReordered),
     #[serde(rename = "window.created")]
     WindowCreated(WindowState),
     #[serde(rename = "window.closed")]
@@ -89,6 +91,15 @@ pub struct TabClosed {
 #[serde(rename_all = "camelCase")]
 pub struct TabActivated {
     pub tab_id: String,
+}
+
+/// The authoritative tab order for one window.  A patch on an individual tab
+/// cannot express a reorder, so clients would otherwise retain stale order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabsReordered {
+    pub window_id: String,
+    pub tab_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

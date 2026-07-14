@@ -419,17 +419,9 @@ void BrowserWindow::Show(CefRefPtr<CefDictionaryValue> restoreState) {
       }
     }
   }
-  if (!restored) {
-    const std::string startupBehavior = Store().GetSetting("startupBehavior");
-    const std::string homeUrl = Store().GetSetting("homeUrl").empty()
-                                    ? Store().GetSetting("homepage")
-                                    : Store().GetSetting("homeUrl");
-    std::string startUrl = Store().GetSetting("newTabPage") == "home" ? homeUrl : "fubuki://newtab/";
-    if (startupBehavior == "homePage") {
-      startUrl = homeUrl;
-    }
-    CreateTab(startUrl, true);
-  }
+  // The initial page is created by BrowserAppController through FrostEngine.
+  // Keeping it out of Show() prevents a legacy host-owned tab from appearing
+  // beside the engine-owned tab.
   [window_ makeKeyAndOrderFront:nil];
 }
 
@@ -977,7 +969,16 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
     }
   }
-  Store().SetSetting(key, savedValue);
+  // Internal pages use the same Frost Protocol mutation as the Solid UI. This
+  // keeps persistence and setting.changed delivery in the engine instead of
+  // silently writing the SQLite store from the host.
+  auto params = CefDictionaryValue::Create();
+  params->SetString("key", key);
+  params->SetString("value", savedValue);
+  const auto result = bridge_->Invoke("settings.set", params);
+  if (!result || result->GetType() != VTYPE_BOOL || !result->GetBool()) {
+    return false;
+  }
   if (key == "sidebarWidth") {
     liveSidebarWidth_ = 0.0;
   }
@@ -997,7 +998,12 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
 }
 
 bool BrowserWindow::ResetSetting(const std::string& key) {
-  Store().ResetSetting(key);
+  auto params = CefDictionaryValue::Create();
+  params->SetString("key", key);
+  const auto result = bridge_->Invoke("settings.reset", params);
+  if (!result || result->GetType() != VTYPE_BOOL || !result->GetBool()) {
+    return false;
+  }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://settings");
@@ -1186,8 +1192,9 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   if (command == "page.create") {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
+    const bool active = JsonBool(payload, "active");
     ok = !tabId.empty() &&
-         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, active);
     if (ok) {
       PushHostEventJson(HostEventJson("page.created",
                                       {{ "tabId", JsonStringValue(tabId) },
@@ -1360,7 +1367,10 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      Store().AddHistory(tab->title, tab->url, tab->faviconUrl);
+      PushHostEventJson(HostEventJson("history.visited",
+                                      {{ "title", JsonStringValue(tab->title) },
+                                       { "url", JsonStringValue(tab->url) },
+                                       { "faviconUrl", JsonStringValue(tab->faviconUrl) }}));
       app_.PersistSession();
     }
     eventBus_.Publish(
@@ -1400,11 +1410,13 @@ void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  Store().AddDownload(url, path, "started");
+  PushHostEventJson(HostEventJson("download.updated",
+                                  {{ "url", JsonStringValue(url) },
+                                   { "path", JsonStringValue(path) },
+                                   { "state", JsonStringValue("started") },
+                                   { "percent", JsonIntValue(0) }}));
   Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
-  bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
@@ -1414,7 +1426,6 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  Store().UpdateDownload(url, path, state, percent);
   if (state != "in_progress") {
     Store().AddLog("info", "Download " + state + ": " + path);
   }
@@ -1424,8 +1435,6 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
                                    { "state", JsonStringValue(state) },
                                    { "percent", JsonIntValue(percent) }}));
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
-  bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
 }
 
 void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions) {

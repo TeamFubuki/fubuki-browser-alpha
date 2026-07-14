@@ -16,6 +16,10 @@ impl WindowService {
 
     pub fn create_window(&mut self, is_private: bool) -> String {
         let id = format!("window-{}", Uuid::new_v4());
+        self.create_window_with_id(id, is_private)
+    }
+
+    pub fn create_window_with_id(&mut self, id: String, is_private: bool) -> String {
         self.windows.push(WindowState {
             id: id.clone(),
             active_tab_id: None,

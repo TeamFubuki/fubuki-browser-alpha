@@ -5,7 +5,9 @@ pub mod request;
 pub mod response;
 pub mod state;
 
-pub use event::{Event, EventEnvelope, SettingChanged, TabActivated, TabClosed, TabPatch};
+pub use event::{
+    Event, EventEnvelope, SettingChanged, TabActivated, TabClosed, TabPatch, TabsReordered,
+};
 pub use external::{
     ExternalCapability, ExternalCommand, ExternalCommandEnvelope, ExternalEvent,
     ExternalEventEnvelope,

@@ -260,6 +260,7 @@ export type EventMap = {
   'tab.updated': Partial<FrostTabState> & { tabId: string };
   'tab.closed': { tabId: string };
   'tab.activated': { tabId: string };
+  'tabs.reordered': { windowId: string; tabIds: string[] };
   'tabs.created': void;
   'tabs.updated': void;
   'tabs.closed': void;

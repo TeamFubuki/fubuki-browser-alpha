@@ -264,9 +264,21 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {
+      if (!browserState.tabs.some((tab) => tab.id === tabId)) return;
       setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
       setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
       setBrowserState('activeTabId', tabId);
+    }),
+
+    onBridgeEvent('tabs.reordered', ({ windowId, tabIds }) => {
+      if (windowId !== browserState.windowId) return;
+      const byId = new Map(browserState.tabs.map((tab) => [tab.id, tab]));
+      const ordered = tabIds
+        .map((tabId) => byId.get(tabId))
+        .filter((tab): tab is Tab => Boolean(tab));
+      if (ordered.length === browserState.tabs.length) {
+        setBrowserState('tabs', ordered);
+      }
     }),
 
     // --- Window lifecycle (direct patches) ---

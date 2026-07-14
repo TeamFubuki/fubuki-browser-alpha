@@ -47,15 +47,14 @@ private:
   CefRefPtr<CefValue> FrostResultValue(const std::string &responseJson) const;
   CefRefPtr<CefValue> FrostInvoke(const std::string &method,
                                   CefRefPtr<CefDictionaryValue> params);
-  CefRefPtr<CefValue> HostBackedFrostInvoke(
-      const std::string &method, CefRefPtr<CefDictionaryValue> params,
-      const std::function<bool()> &hostOperation);
   CefRefPtr<CefDictionaryValue> WindowToFrostDictionary(
       const BrowserWindow &window) const;
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
   BrowserWindow &window_;
-  FrostBridge frostBridge_;
+  // BrowserAppController owns the one FrostEngine instance for the profile.
+  // A bridge is only a protocol endpoint; it must never create its own engine.
+  FrostBridge &frostBridge_;
   std::unordered_map<std::string, MethodHandler> methods_;
 };
 

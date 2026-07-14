@@ -98,8 +98,25 @@ impl TabService {
         let window_id = self.tabs[index].window_id.clone();
         self.tabs.remove(index);
 
-        if was_active && let Some(next) = self.tabs.iter_mut().find(|t| t.window_id == window_id) {
-            next.is_active = true;
+        if was_active {
+            // Prefer the tab to the right, then the one to the left.  This is
+            // calculated from engine order, never from CEF instance order.
+            let next_index = self
+                .tabs
+                .iter()
+                .position(|tab| tab.window_id == window_id)
+                .and_then(|first| {
+                    self.tabs[index.min(self.tabs.len())..]
+                        .iter()
+                        .position(|tab| tab.window_id == window_id)
+                        .map(|offset| index.min(self.tabs.len()) + offset)
+                        .or(Some(first))
+                });
+            if let Some(next_index) = next_index
+                && let Some(next) = self.tabs.get_mut(next_index)
+            {
+                next.is_active = true;
+            }
         }
         true
     }
@@ -115,6 +132,14 @@ impl TabService {
 
     pub fn active_tab(&self) -> Option<TabState> {
         self.tabs.iter().find(|t| t.is_active).cloned()
+    }
+
+    pub fn tabs_in_window(&self, window_id: &str) -> Vec<TabState> {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.window_id == window_id)
+            .cloned()
+            .collect()
     }
 
     pub fn pin_tab(&mut self, tab_id: &str, pinned: bool) -> bool {

@@ -17,6 +17,7 @@ pub enum HostCommand {
         tab_id: String,
         window_id: String,
         url: String,
+        active: bool,
     },
     #[serde(rename = "page.close", rename_all = "camelCase")]
     PageClose { tab_id: String },
@@ -95,6 +96,12 @@ pub enum HostEvent {
     },
     #[serde(rename = "page.loadFailed", rename_all = "camelCase")]
     PageLoadFailed { tab_id: String, error_text: String },
+    #[serde(rename = "history.visited", rename_all = "camelCase")]
+    HistoryVisited {
+        title: String,
+        url: String,
+        favicon_url: String,
+    },
     #[serde(rename = "download.updated", rename_all = "camelCase")]
     DownloadUpdated {
         url: String,

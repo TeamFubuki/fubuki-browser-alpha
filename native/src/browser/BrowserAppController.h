@@ -28,7 +28,8 @@ public:
   void Start();
   BrowserWindow *
   NewWindow(bool privateWindow = false,
-            CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+            CefRefPtr<CefDictionaryValue> restoreState = nullptr,
+            std::string engineWindowId = {});
   bool NewPrivateWindow();
   bool RequestNewWindow(bool privateWindow = false,
                         CefRefPtr<CefDictionaryValue> restoreState = nullptr);
@@ -39,6 +40,8 @@ public:
   // commands are handled here; page/overlay commands are delegated to the
   // owning BrowserWindow.
   void DispatchHostCommands();
+  // Delivers differential FrostEngine events to the SolidJS browser UI.
+  void DispatchEngineEvents();
   // Starts the self-rescheduling host command poller on the CEF UI thread.
   void StartHostCommandPoller();
   void NotifyWindowFocused(BrowserWindow *window);

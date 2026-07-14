@@ -9,7 +9,13 @@ pub enum EngineError {
 pub type EngineResult<T> = Result<T, EngineError>;
 
 pub trait EngineAdapter {
-    fn create_page(&mut self, tab_id: &str, window_id: &str, url: &str) -> EngineResult<()>;
+    fn create_page(
+        &mut self,
+        tab_id: &str,
+        window_id: &str,
+        url: &str,
+        active: bool,
+    ) -> EngineResult<()>;
     fn close_page(&mut self, tab_id: &str) -> EngineResult<()>;
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()>;
     fn reload(&mut self, tab_id: &str) -> EngineResult<()>;
@@ -18,6 +24,12 @@ pub trait EngineAdapter {
     fn go_forward(&mut self, tab_id: &str) -> EngineResult<()>;
     fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<()>;
     fn close_window(&mut self, window_id: &str) -> EngineResult<()>;
+    fn set_ui_overlay(
+        &mut self,
+        active: bool,
+        width: Option<f64>,
+        height: Option<f64>,
+    ) -> EngineResult<()>;
 }
 
 pub trait PageAdapter {
@@ -41,7 +53,7 @@ pub trait WindowHost {
 pub struct NoopEngineAdapter;
 
 impl EngineAdapter for NoopEngineAdapter {
-    fn create_page(&mut self, _: &str, _: &str, _: &str) -> EngineResult<()> {
+    fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
         Ok(())
     }
 
@@ -74,6 +86,10 @@ impl EngineAdapter for NoopEngineAdapter {
     }
 
     fn close_window(&mut self, _: &str) -> EngineResult<()> {
+        Ok(())
+    }
+
+    fn set_ui_overlay(&mut self, _: bool, _: Option<f64>, _: Option<f64>) -> EngineResult<()> {
         Ok(())
     }
 }
