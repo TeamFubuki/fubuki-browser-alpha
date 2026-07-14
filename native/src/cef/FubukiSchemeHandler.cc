@@ -86,63 +86,32 @@ std::string HtmlEscape(const std::string& value) {
   return out;
 }
 
-void Execute(sqlite3* db, const std::string& sql) {
-  sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
-}
-
 std::string ColumnText(sqlite3_stmt* statement, int column) {
   const unsigned char* text = sqlite3_column_text(statement, column);
   return text ? reinterpret_cast<const char*>(text) : "";
 }
 
 sqlite3* OpenDatabase() {
-  // Cache a single process-lifetime connection. Opening the database (and
-  // running the DDL) on every Setting()/QueryRecords() call was a major source
-  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
-  // The connection is now opened once and reused for the process lifetime.
+  // The Rust store owns creation and migrations. Internal pages only read the
+  // database so they cannot race a writer with their own DDL.
   static sqlite3* cached = nullptr;
-  static bool initialized = false;
-  if (initialized) {
+  if (cached) {
     return cached;
   }
-  std::filesystem::create_directories(ProfilePath());
-  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
+  if (sqlite3_open_v2(DatabasePath().string().c_str(), &cached,
+                      SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+                      nullptr) != SQLITE_OK) {
+    if (cached) {
+      sqlite3_close(cached);
+    }
     cached = nullptr;
     return nullptr;
   }
-  // Only mark as initialized after a successful open so retries are possible.
-  initialized = true;
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL "
-          "UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
-          "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  // Migration for existing databases that lack download_id column.
-  // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
-  Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
-  Execute(cached,
-          "UPDATE downloads SET download_id='legacy-' || id WHERE "
-          "download_id IS NULL OR download_id=''");
-  Execute(cached,
-          "CREATE UNIQUE INDEX IF NOT EXISTS downloads_download_id ON "
-          "downloads(download_id)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT "
-          "NULL,permission TEXT NOT NULL,value TEXT NOT NULL,updated_at "
-          "TEXT NOT NULL,PRIMARY KEY(origin,permission))");
+  if (sqlite3_busy_timeout(cached, 500) != SQLITE_OK) {
+    sqlite3_close(cached);
+    cached = nullptr;
+    return nullptr;
+  }
   return cached;
 }
 
@@ -287,10 +256,27 @@ std::string DownloadStatusText(const std::string& state, int percent) {
   return state;
 }
 
-std::vector<Record> QueryRecords(const std::string& table, int limit) {
+enum class DatabaseErrorKind { kNone, kBusy, kOpenFailed, kPrepareFailed, kBindFailed, kStepFailed };
+
+template <typename T>
+struct DatabaseResult {
+  T value{};
+  DatabaseErrorKind error = DatabaseErrorKind::kNone;
+
+  bool Ok() const { return error == DatabaseErrorKind::kNone; }
+};
+
+DatabaseErrorKind DatabaseErrorFor(int code, DatabaseErrorKind fallback) {
+  return code == SQLITE_BUSY || code == SQLITE_LOCKED ? DatabaseErrorKind::kBusy : fallback;
+}
+
+DatabaseResult<std::vector<Record>> QueryRecords(const std::string& table, int limit) {
+  DatabaseResult<std::vector<Record>> result;
   sqlite3* db = OpenDatabase();
-  if (!db)
-    return {};
+  if (!db) {
+    result.error = DatabaseErrorKind::kOpenFailed;
+    return result;
+  }
 
   const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at,'' "
                                                  "FROM bookmarks ORDER BY id DESC LIMIT ?"
@@ -305,11 +291,19 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
                                 "downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC "
                                 "LIMIT ?";
   sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
-  sqlite3_bind_int(statement, 1, limit);
+  int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
+  if (rc != SQLITE_OK) {
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kPrepareFailed);
+    return result;
+  }
+  rc = sqlite3_bind_int(statement, 1, limit);
+  if (rc != SQLITE_OK) {
+    sqlite3_finalize(statement);
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kBindFailed);
+    return result;
+  }
 
-  std::vector<Record> records;
-  while (sqlite3_step(statement) == SQLITE_ROW) {
+  while ((rc = sqlite3_step(statement)) == SQLITE_ROW) {
     Record record;
     record.title = ColumnText(statement, 0);
     record.url = ColumnText(statement, 1);
@@ -319,11 +313,15 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
     record.percent = sqlite3_column_int(statement, 5);
     record.createdAt = ColumnText(statement, 6);
     record.downloadId = ColumnText(statement, 7);
-    records.push_back(record);
+    result.value.push_back(record);
   }
 
   sqlite3_finalize(statement);
-  return records;
+  if (rc != SQLITE_DONE) {
+    result.value.clear();
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kStepFailed);
+  }
+  return result;
 }
 
 std::string FubukiLogoSvg(const std::string& className = "logo") {
@@ -399,9 +397,29 @@ std::string FileName(const std::string& path, const std::string& url) {
   return slash == std::string::npos ? source : source.substr(slash + 1);
 }
 
-std::string BookmarksHtml() {
+struct PageRenderResult {
+  std::string html;
+  int status = 200;
+  bool cacheable = true;
+};
+
+PageRenderResult DatabaseErrorPage(const std::string& title) {
+  return {PageChrome(title,
+                     "<section class=\"field\"><strong>" +
+                         HtmlEscape(title) +
+                         " could not be loaded</strong><p class=\"meta\">"
+                         "The internal database is temporarily unavailable. "
+                         "Reload this page in a moment.</p></section>"),
+          503, false};
+}
+
+PageRenderResult BookmarksHtml() {
   std::ostringstream body;
-  const auto records = QueryRecords("bookmarks", 500);
+  const auto query = QueryRecords("bookmarks", 500);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("Bookmarks");
+  }
+  const auto& records = query.value;
   if (records.empty()) {
     body << "<p class=\"empty\">" << Label("No bookmarks") << "</p>";
   } else {
@@ -421,12 +439,16 @@ std::string BookmarksHtml() {
            << "</div>";    }
     body << "</div>";
   }
-  return PageChrome("Bookmarks", body.str());
+  return {PageChrome("Bookmarks", body.str())};
 }
 
-std::string DownloadsHtml() {
+PageRenderResult DownloadsHtml() {
   std::ostringstream body;
-  const auto records = QueryRecords("downloads", 50);
+  const auto query = QueryRecords("downloads", 50);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("Downloads");
+  }
+  const auto& records = query.value;
   body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
        << ActionForm("clearData", "downloads", "fubuki://downloads/",
                      Label("Clear downloads"), "chip danger")
@@ -468,12 +490,16 @@ std::string DownloadsHtml() {
     }
     body << "</div>";
   }
-  return PageChrome("Downloads", body.str());
+  return {PageChrome("Downloads", body.str())};
 }
 
-std::string HistoryHtml() {
+PageRenderResult HistoryHtml() {
   std::ostringstream body;
-  const auto records = QueryRecords("history", 500);
+  const auto query = QueryRecords("history", 500);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("History");
+  }
+  const auto& records = query.value;
   body << "<form class=\"inline-form\" style=\"margin-bottom:12px\"><input "
           "type=\"search\" id=\"historySearch\" placeholder=\""
        << Label("Search history")
@@ -515,7 +541,7 @@ std::string HistoryHtml() {
            << "</div>";    }
     body << "</div>";
   }
-  return PageChrome("History", body.str());
+  return {PageChrome("History", body.str())};
 }
 
 std::string SettingsHtml() {
@@ -695,7 +721,7 @@ std::string SettingsHtml() {
       << "</section></div>";  return PageChrome("Settings", body.str());
 }
 
-std::string DebugHtml() {
+PageRenderResult DebugHtml() {
   std::ostringstream body;
   BrowserAppController* app = GetBrowserAppController();
   body << "<section class=\"section\">";
@@ -747,7 +773,11 @@ std::string DebugHtml() {
   }
 
   body << "<div class=\"field\"><span>" << Label("Logs") << "</span><div class=\"list\">";
-  const auto logs = QueryRecords("logs", 80);
+  const auto query = QueryRecords("logs", 80);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("Debug");
+  }
+  const auto& logs = query.value;
   for (const auto& record : logs) {
     body << "<article class=\"row\"><span>i</span><div><div class=\"title\">"
          << HtmlEscape(record.title) << "</div><div class=\"meta\">"
@@ -760,7 +790,7 @@ std::string DebugHtml() {
        << ActionForm("openDevTools", "1", "fubuki://debug/",
                      Label("Open DevTools"), "chip")
        << "</div></div>";  body << "</section>";
-  return PageChrome("Debug", body.str());
+  return {PageChrome("Debug", body.str())};
 }
 
 std::string NewTabHtml() {
@@ -960,9 +990,11 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (cache.Get(url, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
-      html = BookmarksHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+      auto page = BookmarksHtml();
+      if (page.cacheable) {
+        cache.Set(url, page.html);
+      }
+      LoadText(std::move(page.html), "text/html", page.status);
     }
     return true;
   }
@@ -971,9 +1003,11 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (cache.Get(url, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
-      html = DownloadsHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+      auto page = DownloadsHtml();
+      if (page.cacheable) {
+        cache.Set(url, page.html);
+      }
+      LoadText(std::move(page.html), "text/html", page.status);
     }
     return true;
   }
@@ -982,9 +1016,11 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (cache.Get(url, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
-      html = HistoryHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+      auto page = HistoryHtml();
+      if (page.cacheable) {
+        cache.Set(url, page.html);
+      }
+      LoadText(std::move(page.html), "text/html", page.status);
     }
     return true;
   }
@@ -1000,7 +1036,8 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     return true;
   }
   if (url.rfind("fubuki://debug/", 0) == 0) {
-    LoadText(DebugHtml(), "text/html", 200);
+    auto page = DebugHtml();
+    LoadText(std::move(page.html), "text/html", page.status);
     return true;
   }
   if (url.rfind("fubuki://app/", 0) == 0) {
