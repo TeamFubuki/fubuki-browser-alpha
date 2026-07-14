@@ -1498,6 +1498,15 @@ void BrowserWindow::OnChromeContentWindowCreated(
     return;
   }
 
+  // Chrome Runtime requires a top-level CefWindow on macOS. Attach the
+  // resulting NSWindow as a frameless child so it is visually only the
+  // Fubuki content region, never a second browser window.
+  [nativeWindow setStyleMask:NSWindowStyleMaskBorderless];
+  [nativeWindow setTitleVisibility:NSWindowTitleHidden];
+  [nativeWindow setTitlebarAppearsTransparent:YES];
+  [nativeWindow setHasShadow:NO];
+  [nativeWindow setMovable:NO];
+
   chromeContentWindows_[tabId] = chromeWindow;
   chromeNativeWindows_[tabId] = nativeWindow;
 }
