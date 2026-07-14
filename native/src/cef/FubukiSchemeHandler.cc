@@ -497,6 +497,8 @@ std::string SettingsHtml() {
   const std::string askBeforeDownload = Setting("askBeforeDownload", "off");
   const std::string sidebarVisible = Setting("sidebarVisible", "show") == "hide" ? "hide" : "show";
   const std::string language = Setting("language", "system");
+  const std::string experimentalChromeRuntime =
+      Setting("experimentalChromeRuntime", "off") == "on" ? "on" : "off";
 
   auto chip = [](const std::string &key, const std::string &current,
                  const std::string &value, const std::string &label) {
@@ -657,7 +659,14 @@ std::string SettingsHtml() {
          "Cmd+R, Cmd+F, Cmd+,, Cmd+Plus, Cmd+Minus, Cmd+0</div></div>"
       << "<div id=\"developer\" class=\"field\" data-setting-section><span>"
       << Label("Developer")
-      << "</span><div class=\"section-kicker\">Inspect the app shell and "
+      << "</span><div class=\"section-kicker\">Experimental: use Chrome "
+         "Runtime and allow pointer lock for all web pages. Changes apply the "
+         "next time a page is opened or navigated.</div><div class=\"segmented\">"
+      << chip("experimentalChromeRuntime", experimentalChromeRuntime, "off",
+              "Chrome Runtime off")
+      << chip("experimentalChromeRuntime", experimentalChromeRuntime, "on",
+              "Chrome Runtime on")
+      << "</div><div class=\"section-kicker\">Inspect the app shell and "
          "internal diagnostics.</div><div class=\"segmented\"><a "
          "class=\"chip\" href=\"fubuki://debug/\">"
       << Label("Debug page") << "</a></div></div>"

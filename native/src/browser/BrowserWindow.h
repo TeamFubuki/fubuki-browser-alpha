@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -13,6 +15,8 @@
 #include "include/cef_browser.h"
 #include "include/cef_drag_handler.h"
 #include "include/cef_request_context.h"
+#include "include/views/cef_browser_view.h"
+#include "include/views/cef_window.h"
 
 #ifdef __OBJC__
 @class NSWindow;
@@ -85,6 +89,8 @@ class BrowserWindow {
                           double overlayHeight = 560.0);
   bool HandleSettingsUrl(const std::string &tabId, const std::string &url);
   bool HandleNewTabSearchUrl(const std::string &tabId, const std::string &url);
+  bool UpgradeTabToChromeRuntime(const std::string& tabId,
+                                 const std::string& url);
   // Polls pending HostCommands from FrostEngine and executes them, routing
   // host side effects (page/window I/O) back as HostEvents/results.
   void PollAndExecuteHostCommands();
@@ -112,6 +118,9 @@ class BrowserWindow {
   void OnDownloadUpdated(const std::string& downloadId, const std::string& url,
                          const std::string& path, const std::string& state, int percent);
   void OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions);
+  void OnChromeContentWindowCreated(
+      const std::string& tabId, CefRefPtr<CefWindow> chromeWindow,
+      CefRefPtr<CefBrowserView> browserView);
 
   NativeBridge* Bridge() {
     return bridge_.get();
@@ -156,10 +165,14 @@ class BrowserWindow {
   void CreateNativeWindow();
   void CreateUiBrowser();
   void CreateTabBrowser(const Tab& tab);
+  void CreateChromeTabBrowser(const Tab& tab);
   bool CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bool active);
   void RegisterCommands();
   void WireEvents();
   void ResizeViews();
+  void PositionChromeContentWindows();
+  void AttachChromeContentWindow(const std::string& tabId);
+  void CloseChromeContentWindow(const std::string& tabId);
   void UpdateTabPatch(const std::string& tabId, const std::string& title, const std::string& url,
                       bool isLoading, bool canGoBack, bool canGoForward);
   void SetActiveContentView();
@@ -176,6 +189,10 @@ class BrowserWindow {
   std::vector<ClosedTab> closedTabs_;
   double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
+  std::unordered_map<std::string, CefRefPtr<CefWindow>> chromeContentWindows_;
+  std::unordered_map<std::string, NSWindow*> chromeNativeWindows_;
+  std::unordered_set<std::string> chromeRuntimeTabs_;
+  std::unordered_set<std::string> attachedChromeRuntimeTabs_;
   std::string windowId_;
   NSWindow* window_ = nullptr;
   NSView* uiHostView_ = nullptr;

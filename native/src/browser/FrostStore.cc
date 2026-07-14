@@ -207,6 +207,7 @@ std::string DefaultSetting(const std::string &key) {
   if (key == "homeUrl") return "https://example.com";
   if (key == "askBeforeDownload") return "off";
   if (key == "defaultZoomLevel") return "0";
+  if (key == "experimentalChromeRuntime") return "off";
   if (key == "closeWindowWithLastTab") return "off";
   if (key == "privateSearchEngine") return "default";
   if (key == "language") return "system";

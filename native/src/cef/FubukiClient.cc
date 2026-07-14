@@ -1,5 +1,7 @@
 #include "cef/FubukiClient.h"
 
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 
 #include "browser/BrowserAppController.h"
@@ -58,6 +60,23 @@ bool IsBlankPopupUrl(const std::string& url) {
 
 bool IsFubukiInternalUrl(const std::string& url) {
   return StartsWith(url, "fubuki://");
+}
+
+bool IsHttpUrl(const std::string& url) {
+  CefURLParts parts;
+  if (!CefParseURL(url, parts)) {
+    return false;
+  }
+  std::string scheme = CefString(&parts.scheme).ToString();
+  std::transform(scheme.begin(), scheme.end(), scheme.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return scheme == "https" || scheme == "http";
+}
+
+bool ShouldUseChromeRuntime(BrowserWindow* window, const std::string& url) {
+  return window &&
+         window->Store().GetSetting("experimentalChromeRuntime") == "on" &&
+         IsHttpUrl(url);
 }
 
 std::string DecodeFormValue(const std::string &value) {
@@ -390,8 +409,8 @@ void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
                              download_item->GetFullPath().ToString(), state, percent);
 }
 
-bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle,
-                                 bool* is_keyboard_shortcut) {
+bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event,
+                                 CefEventHandle, bool* is_keyboard_shortcut) {
   if (!window_ || event.type != KEYEVENT_RAWKEYDOWN) {
     return false;
   }
@@ -406,7 +425,7 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   return handled;
 }
 
-bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request, bool user_gesture,
                                   bool is_redirect) {
   if (!window_ || isUi_ || !frame || !frame->IsMain() || !request) {
@@ -437,6 +456,27 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     window_->HandleNewTabSearchUrl(tabId_, url);
     return true;
   }
+  if (browser && ShouldUseChromeRuntime(window_, url) &&
+      browser->GetHost()->GetRuntimeStyle() != CEF_RUNTIME_STYLE_CHROME) {
+    const std::string windowId = window_->WindowId();
+    CefPostTask(TID_UI,
+                base::BindOnce(
+                    [](std::string windowId, std::string tabId,
+                       std::string url) {
+                      BrowserAppController* app = GetBrowserAppController();
+                      if (!app) {
+                        return;
+                      }
+                      for (auto* window : app->Windows()) {
+                        if (window && window->WindowId() == windowId) {
+                          window->UpgradeTabToChromeRuntime(tabId, url);
+                          return;
+                        }
+                      }
+                    },
+                    windowId, tabId_, url));
+    return true;
+  }
   return false;
 }
 
@@ -455,11 +495,19 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
     return false;
   }
 
+  const std::string origin = requesting_origin.ToString();
+  const bool allowPointerLock =
+      !isUi_ && ShouldUseChromeRuntime(window_, origin) &&
+      requested_permissions == static_cast<uint32_t>(CEF_PERMISSION_TYPE_POINTER_LOCK);
+  const auto result =
+      allowPointerLock ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY;
+
   if (window_ && !window_->IsPrivate()) {
-    window_->Store().AddLog("info", "Permission denied for " + requesting_origin.ToString() + " (" +
-                                     std::to_string(requested_permissions) + ")");
+    window_->Store().AddLog(
+        "info", std::string("Permission ") + (allowPointerLock ? "granted" : "denied") +
+                    " for " + origin + " (" + std::to_string(requested_permissions) + ")");
   }
-  callback->Continue(CEF_PERMISSION_RESULT_DENY);
+  callback->Continue(result);
   return true;
 }
 

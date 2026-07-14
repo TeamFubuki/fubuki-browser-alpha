@@ -16,6 +16,7 @@ impl SettingsService {
         "homeUrl",
         "language",
         "defaultZoomLevel",
+        "experimentalChromeRuntime",
     ];
 
     /// Returns the default value for a given setting key.
@@ -31,6 +32,7 @@ impl SettingsService {
             "newTabPage" => "blank",
             "language" => "system",
             "defaultZoomLevel" => "0",
+            "experimentalChromeRuntime" => "off",
             _ => "",
         }
     }

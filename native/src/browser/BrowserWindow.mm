@@ -11,9 +11,13 @@
 #include "browser/BrowserAppController.h"
 #include "cef/FubukiClient.h"
 #include "cef/FubukiSchemeHandler.h"
+#include "include/base/cef_callback.h"
 #include "include/cef_cookie.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
+#include "include/views/cef_browser_view_delegate.h"
+#include "include/views/cef_window_delegate.h"
+#include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 #include "utils/UrlUtils.h"
 
@@ -206,6 +210,7 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 - (void)windowDidMove:(NSNotification*)notification {
   NSWindow* window = (NSWindow*)[notification object];
   if (auto* browserWindow = fubuki::GetBrowserWindowForNativeWindow(window)) {
+    browserWindow->UpdateContentFrame();
     browserWindow->App().PersistSession();
   }
 }
@@ -233,6 +238,90 @@ namespace {
 constexpr CGFloat kNavHeight = 42.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
+
+class ChromeContentBrowserViewDelegate : public CefBrowserViewDelegate {
+ public:
+  ChromeToolbarType GetChromeToolbarType(
+      CefRefPtr<CefBrowserView>) override {
+    return CEF_CTT_NONE;
+  }
+
+  cef_runtime_style_t GetBrowserRuntimeStyle() override {
+    return CEF_RUNTIME_STYLE_CHROME;
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(ChromeContentBrowserViewDelegate);
+};
+
+class ChromeContentWindowDelegate : public CefWindowDelegate {
+ public:
+  ChromeContentWindowDelegate(std::string windowId, std::string tabId,
+                              CefRefPtr<CefBrowserView> browserView)
+      : windowId_(std::move(windowId)),
+        tabId_(std::move(tabId)),
+        browserView_(browserView) {}
+
+  void OnWindowCreated(CefRefPtr<CefWindow> window) override {
+    window->AddChildView(browserView_);
+    BrowserAppController* app = GetBrowserAppController();
+    if (app) {
+      for (auto* browserWindow : app->Windows()) {
+        if (browserWindow && browserWindow->WindowId() == windowId_) {
+          browserWindow->OnChromeContentWindowCreated(tabId_, window,
+                                                       browserView_);
+          return;
+        }
+      }
+    }
+    window->Close();
+  }
+
+  void OnWindowDestroyed(CefRefPtr<CefWindow>) override {
+    browserView_ = nullptr;
+  }
+
+  bool CanClose(CefRefPtr<CefWindow>) override {
+    CefRefPtr<CefBrowser> browser =
+        browserView_ ? browserView_->GetBrowser() : nullptr;
+    return !browser || browser->GetHost()->TryCloseBrowser();
+  }
+
+  CefSize GetPreferredSize(CefRefPtr<CefView>) override {
+    return CefSize(800, 600);
+  }
+
+  CefRect GetInitialBounds(CefRefPtr<CefWindow>) override {
+    return CefRect(0, 0, 800, 600);
+  }
+
+  cef_show_state_t GetInitialShowState(CefRefPtr<CefWindow>) override {
+    return CEF_SHOW_STATE_HIDDEN;
+  }
+
+  bool IsFrameless(CefRefPtr<CefWindow>) override {
+    return true;
+  }
+
+  bool WithStandardWindowButtons(CefRefPtr<CefWindow>) override {
+    return false;
+  }
+
+  bool CanResize(CefRefPtr<CefWindow>) override {
+    return true;
+  }
+
+  cef_runtime_style_t GetWindowRuntimeStyle() override {
+    return CEF_RUNTIME_STYLE_CHROME;
+  }
+
+ private:
+  std::string windowId_;
+  std::string tabId_;
+  CefRefPtr<CefBrowserView> browserView_;
+
+  IMPLEMENT_REFCOUNTING(ChromeContentWindowDelegate);
+};
 
 CefWindowInfo ChildWindowInfo(NSView* parent) {
   CefWindowInfo info;
@@ -385,6 +474,21 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
 }
 
 BrowserWindow::~BrowserWindow() {
+  for (const auto& [tabId, nativeWindow] : chromeNativeWindows_) {
+    if (window_ && nativeWindow &&
+        attachedChromeRuntimeTabs_.contains(tabId)) {
+      [window_ removeChildWindow:nativeWindow];
+    }
+  }
+  for (const auto& [tabId, chromeWindow] : chromeContentWindows_) {
+    if (chromeWindow) {
+      chromeWindow->Close();
+    }
+  }
+  chromeNativeWindows_.clear();
+  chromeContentWindows_.clear();
+  chromeRuntimeTabs_.clear();
+  attachedChromeRuntimeTabs_.clear();
   for (const auto& [type, token] : eventSubscriptions_) {
     eventBus_.Unsubscribe(type, token);
   }
@@ -499,7 +603,10 @@ bool BrowserWindow::CloseTab(const std::string& tabId) {
       closedTabs_.erase(closedTabs_.begin());
     }
   }
-  if (tab && tab->browser) {
+  if (tab && chromeRuntimeTabs_.contains(tabId)) {
+    CloseChromeContentWindow(tabId);
+    tab->browser = nullptr;
+  } else if (tab && tab->browser) {
     NSView* view = reinterpret_cast<NSView*>(tab->browser->GetHost()->GetWindowHandle());
     [view removeFromSuperview];
     tab->browser->GetHost()->CloseBrowser(true);
@@ -507,7 +614,7 @@ bool BrowserWindow::CloseTab(const std::string& tabId) {
   }
   const bool ok = tabManager_.CloseTab(tabId);
   for (const auto& item : tabManager_.GetTabs()) {
-    if (!item.browser) {
+    if (!item.browser && !chromeRuntimeTabs_.contains(item.id)) {
       if (Tab* newTab = tabManager_.GetTab(item.id)) {
         CreateTabBrowser(*newTab);
       }
@@ -737,6 +844,9 @@ bool BrowserWindow::FocusOmnibox() {
   if (!uiBrowser_) {
     return false;
   }
+  if (window_) {
+    [window_ makeKeyAndOrderFront:nil];
+  }
   uiBrowser_->GetHost()->SetFocus(true);
   uiBrowser_->GetMainFrame()->ExecuteJavaScript(
       "document.querySelector('.omnibox input')?.select();", "fubuki://app/", 0);
@@ -804,7 +914,12 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return Reload(tabId);
   }
   if (commandDown && character == 't') {
-    return CreateTab("fubuki://newtab/", true);
+    if (!bridge_) {
+      return false;
+    }
+    CefRefPtr<CefValue> result =
+        bridge_->Invoke("tabs.create", CefDictionaryValue::Create());
+    return result && result->GetType() == VTYPE_BOOL && result->GetBool();
   }
   if (commandDown && (character == 'w' || character == 'W')) {
     return CloseTab(tabId);
@@ -964,7 +1079,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       key != "defaultBookmarkDisplay" && key != "openBookmarkIn" && key != "showBookmarkFavicons" &&
       key != "newTabPage" && key != "homeUrl" && key != "askBeforeDownload" &&
       key != "defaultZoomLevel" && key != "closeWindowWithLastTab" &&
-      key != "privateSearchEngine") {
+      key != "privateSearchEngine" && key != "experimentalChromeRuntime") {
     return false;
   }
   std::string savedValue = value;
@@ -1048,6 +1163,7 @@ bool BrowserWindow::SetUiOverlayActive(bool active, double overlayWidth, double 
           relativeTo:(active ? uiHostView_ : contentHostView_)];
   }
   UpdateContentFrame();
+  SetActiveContentView();
   return true;
 }
 
@@ -1095,6 +1211,44 @@ bool BrowserWindow::HandleNewTabSearchUrl(const std::string& tabId, const std::s
     return false;
   }
   return Navigate(tabId, query);
+}
+
+bool BrowserWindow::UpgradeTabToChromeRuntime(const std::string& tabId,
+                                              const std::string& url) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || url.empty()) {
+    return false;
+  }
+  if (chromeRuntimeTabs_.contains(tabId) ||
+      (tab->browser &&
+       tab->browser->GetHost()->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME)) {
+    return true;
+  }
+
+  if (tab->browser) {
+    CefRefPtr<CefBrowser> oldBrowser = tab->browser;
+    NSView* oldView =
+        reinterpret_cast<NSView*>(oldBrowser->GetHost()->GetWindowHandle());
+    [oldView removeFromSuperview];
+    tab->browser = nullptr;
+    oldBrowser->GetHost()->CloseBrowser(true);
+  }
+
+  Tab patch = *tab;
+  patch.url = url;
+  patch.isLoading = true;
+  tabManager_.UpdateTab(tabId, patch);
+  chromeRuntimeTabs_.insert(tabId);
+  if (!privateWindow_) {
+    Store().AddLog("info", "Using Chrome runtime for pointer lock: " + url);
+  }
+  CreateChromeTabBrowser(patch);
+  ResizeViews();
+  SetActiveContentView();
+  if (!privateWindow_) {
+    app_.PersistSession();
+  }
+  return true;
 }
 
 namespace {
@@ -1308,7 +1462,58 @@ void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefB
     }
     browser->GetHost()->SetZoomLevel(tab->zoomLevel);
   }
+  if (chromeRuntimeTabs_.contains(tabId)) {
+    const std::string windowId = windowId_;
+    CefPostTask(
+        TID_UI,
+        base::BindOnce(
+            [](std::string windowId, std::string tabId) {
+              BrowserAppController* app = GetBrowserAppController();
+              if (!app) {
+                return;
+              }
+              for (auto* browserWindow : app->Windows()) {
+                if (browserWindow && browserWindow->WindowId() == windowId) {
+                  browserWindow->AttachChromeContentWindow(tabId);
+                  return;
+                }
+              }
+            },
+            windowId, tabId));
+    return;
+  }
   SetActiveContentView();
+}
+
+void BrowserWindow::OnChromeContentWindowCreated(
+    const std::string& tabId, CefRefPtr<CefWindow> chromeWindow,
+    CefRefPtr<CefBrowserView>) {
+  if (!window_ || !chromeWindow || !chromeRuntimeTabs_.contains(tabId)) {
+    if (chromeWindow) {
+      chromeWindow->Close();
+    }
+    return;
+  }
+
+  NSView* chromeRootView =
+      reinterpret_cast<NSView*>(chromeWindow->GetWindowHandle());
+  NSWindow* nativeWindow = [chromeRootView window];
+  if (!nativeWindow) {
+    chromeWindow->Close();
+    return;
+  }
+
+  // Chrome Runtime requires a top-level CefWindow on macOS. Attach the
+  // resulting NSWindow as a frameless child so it is visually only the
+  // Fubuki content region, never a second browser window.
+  [nativeWindow setStyleMask:NSWindowStyleMaskBorderless];
+  [nativeWindow setTitleVisibility:NSWindowTitleHidden];
+  [nativeWindow setTitlebarAppearsTransparent:YES];
+  [nativeWindow setHasShadow:NO];
+  [nativeWindow setMovable:NO];
+
+  chromeContentWindows_[tabId] = chromeWindow;
+  chromeNativeWindows_[tabId] = nativeWindow;
 }
 
 void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& title) {
@@ -1541,6 +1746,17 @@ void BrowserWindow::CreateTabBrowser(const Tab& tab) {
   CefBrowserHost::CreateBrowser(ChildWindowInfo(contentHostView_),
                                 new FubukiClient(this, tab.id, false), tab.url, settings, nullptr,
                                 privateWindow_ ? privateRequestContext_ : nullptr);
+}
+
+void BrowserWindow::CreateChromeTabBrowser(const Tab& tab) {
+  CefBrowserSettings settings;
+  settings.background_color = CefColorSetARGB(255, 255, 255, 255);
+  CefRefPtr<CefBrowserView> browserView = CefBrowserView::CreateBrowserView(
+      new FubukiClient(this, tab.id, false), tab.url, settings, nullptr,
+      privateWindow_ ? privateRequestContext_ : nullptr,
+      new ChromeContentBrowserViewDelegate());
+  CefWindow::CreateTopLevelWindow(
+      new ChromeContentWindowDelegate(windowId_, tab.id, browserView));
 }
 
 bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bool active) {
@@ -1878,13 +2094,67 @@ void BrowserWindow::WireEvents() {
 }
 
 void BrowserWindow::ResizeViews() {
+  PositionChromeContentWindows();
   for (const auto& tab : tabManager_.GetTabs()) {
-    if (!tab.browser) {
+    if (!tab.browser || chromeRuntimeTabs_.contains(tab.id)) {
       continue;
     }
     NSView* view = reinterpret_cast<NSView*>(tab.browser->GetHost()->GetWindowHandle());
     [view setFrame:[contentHostView_ bounds]];
   }
+}
+
+void BrowserWindow::PositionChromeContentWindows() {
+  if (!window_ || !contentHostView_) {
+    return;
+  }
+  const NSRect windowRect =
+      [contentHostView_ convertRect:[contentHostView_ bounds] toView:nil];
+  const NSRect screenRect = [window_ convertRectToScreen:windowRect];
+  for (const auto& [tabId, nativeWindow] : chromeNativeWindows_) {
+    if (nativeWindow && attachedChromeRuntimeTabs_.contains(tabId)) {
+      [nativeWindow setFrame:screenRect display:YES];
+    }
+  }
+}
+
+void BrowserWindow::AttachChromeContentWindow(const std::string& tabId) {
+  if (!window_ || attachedChromeRuntimeTabs_.contains(tabId)) {
+    return;
+  }
+  const auto nativeIt = chromeNativeWindows_.find(tabId);
+  if (nativeIt == chromeNativeWindows_.end() || !nativeIt->second) {
+    return;
+  }
+
+  NSWindow* nativeWindow = nativeIt->second;
+  [nativeWindow setCollectionBehavior:
+                    [nativeWindow collectionBehavior] |
+                    NSWindowCollectionBehaviorFullScreenAuxiliary];
+  [window_ addChildWindow:nativeWindow ordered:NSWindowAbove];
+  attachedChromeRuntimeTabs_.insert(tabId);
+  PositionChromeContentWindows();
+  SetActiveContentView();
+}
+
+void BrowserWindow::CloseChromeContentWindow(const std::string& tabId) {
+  const bool attached = attachedChromeRuntimeTabs_.erase(tabId) > 0;
+  const auto nativeIt = chromeNativeWindows_.find(tabId);
+  if (nativeIt != chromeNativeWindows_.end()) {
+    if (window_ && nativeIt->second && attached) {
+      [window_ removeChildWindow:nativeIt->second];
+    }
+    chromeNativeWindows_.erase(nativeIt);
+  }
+
+  const auto windowIt = chromeContentWindows_.find(tabId);
+  if (windowIt != chromeContentWindows_.end()) {
+    if (windowIt->second) {
+      windowIt->second->Close();
+    }
+    chromeContentWindows_.erase(windowIt);
+  }
+  chromeRuntimeTabs_.erase(tabId);
 }
 
 void BrowserWindow::UpdateContentFrame() {
@@ -1898,7 +2168,7 @@ void BrowserWindow::UpdateContentFrame() {
           ? settingsValue->GetDictionary()
           : CefDictionaryValue::Create();
   const std::string sidebarState = settings->GetString("sidebarVisible");
-  const bool sidebarVisible = sidebarState == "show";
+  const bool sidebarVisible = sidebarState.empty() || sidebarState == "show";
   double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;
   if (sidebarVisible) {
     if (liveSidebarWidth_ > 0.0) {
@@ -1953,7 +2223,39 @@ void BrowserWindow::UpdateTabPatch(const std::string& tabId, const std::string& 
 }
 
 void BrowserWindow::SetActiveContentView() {
+  PositionChromeContentWindows();
+  const Tab* activeTab = tabManager_.GetActiveTab();
+  const bool showChromeContent =
+      activeTab && chromeRuntimeTabs_.contains(activeTab->id) &&
+      !uiOverlayActive_;
+  if (!showChromeContent && window_) {
+    for (const auto& [tabId, nativeWindow] : chromeNativeWindows_) {
+      if (nativeWindow && [nativeWindow isKeyWindow]) {
+        [window_ makeKeyWindow];
+        break;
+      }
+    }
+  }
   for (const auto& tab : tabManager_.GetTabs()) {
+    if (chromeRuntimeTabs_.contains(tab.id)) {
+      if (tab.browser && !tab.isActive) {
+        tab.browser->GetHost()->SetFocus(false);
+      }
+      const auto chromeIt = chromeContentWindows_.find(tab.id);
+      if (chromeIt != chromeContentWindows_.end() && chromeIt->second &&
+          attachedChromeRuntimeTabs_.contains(tab.id)) {
+        if (tab.isActive && !uiOverlayActive_) {
+          chromeIt->second->Show();
+          chromeIt->second->BringToTop();
+          if (tab.browser) {
+            tab.browser->GetHost()->SetFocus(true);
+          }
+        } else {
+          chromeIt->second->Hide();
+        }
+      }
+      continue;
+    }
     SetBrowserViewHidden(tab.browser, !tab.isActive);
     if (tab.browser && tab.isActive) {
       NSView* view = reinterpret_cast<NSView*>(tab.browser->GetHost()->GetWindowHandle());
