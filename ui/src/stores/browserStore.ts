@@ -93,109 +93,88 @@ onBridgeFailure(({ method, error }) => reportBrowserError(error, method));
 
 // --- Lightweight targeted refresh (no full snapshot) ---
 
-let bookmarksPending = false;
-let historyPending = false;
-let downloadsPending = false;
+function createQueuedRefresh<T>(
+  load: () => Promise<T>,
+  apply: (value: T) => void,
+  method: string,
+): () => Promise<void> {
+  let pending: Promise<void> | undefined;
+  let requested = false;
 
-async function refreshBookmarks() {
-  if (bookmarksPending) return;
-  bookmarksPending = true;
-  try {
-    const list = await invokeBridge('bookmarks.list');
-    setBrowserState('bookmarks', list as BookmarkRecord[]);
-  } catch (error) {
-    reportBrowserError(error, 'bookmarks.list');
-  } finally {
-    bookmarksPending = false;
-  }
+  return async () => {
+    requested = true;
+    if (pending) return pending;
+
+    pending = (async () => {
+      while (requested) {
+        requested = false;
+        try {
+          apply(await load());
+        } catch (error) {
+          reportBrowserError(error, method);
+        }
+      }
+    })().finally(() => {
+      pending = undefined;
+    });
+    return pending;
+  };
 }
 
-async function refreshHistory() {
-  if (historyPending) return;
-  historyPending = true;
-  try {
-    const list = await invokeBridge('history.list');
-    setBrowserState('history', list as HistoryRecord[]);
-  } catch (error) {
-    reportBrowserError(error, 'history.list');
-  } finally {
-    historyPending = false;
-  }
-}
+const refreshBookmarks = createQueuedRefresh<BookmarkRecord[]>(
+  () => invokeBridge('bookmarks.list'),
+  (list) => setBrowserState('bookmarks', list),
+  'bookmarks.list',
+);
 
-async function refreshDownloads() {
-  if (downloadsPending) return;
-  downloadsPending = true;
-  try {
-    const list = await invokeBridge('downloads.list');
-    setBrowserState('downloads', list as BrowserState['downloads']);
-  } catch (error) {
-    reportBrowserError(error, 'downloads.list');
-  } finally {
-    downloadsPending = false;
-  }
-}
+const refreshHistory = createQueuedRefresh<HistoryRecord[]>(
+  () => invokeBridge('history.list'),
+  (list) => setBrowserState('history', list),
+  'history.list',
+);
+
+const refreshDownloads = createQueuedRefresh<BrowserState['downloads']>(
+  () => invokeBridge('downloads.list'),
+  (list) => setBrowserState('downloads', list),
+  'downloads.list',
+);
 
 // --- Full snapshot refresh (startup and explicit failure recovery only) ---
 
 let pendingFullRefresh: Promise<void> | undefined;
-let fullRefreshCounter = 0;
+let fullRefreshRequested = false;
+let fullRefreshStatus = 'Ready';
+let stateRevision = 0;
 
 /**
  * Full snapshot refresh. Event handlers patch individual state slices and must
  * not call this as a routine synchronization mechanism.
  */
 export async function refreshFullState(status = 'Ready') {
+  fullRefreshRequested = true;
+  fullRefreshStatus = status;
   if (pendingFullRefresh) return pendingFullRefresh;
-  const myCounter = ++fullRefreshCounter;
+
   pendingFullRefresh = (async () => {
     try {
-      const [snapshot, commandList] = await Promise.all([
-        invokeBridge('app.snapshot'),
-        invokeBridge('commands.list'),
-      ]);
-      const state = normalizeAppState(snapshot);
-      state.commands = commandList;
-      if (myCounter !== fullRefreshCounter) return;
+      while (fullRefreshRequested) {
+        fullRefreshRequested = false;
+        const revisionBeforeRequest = stateRevision;
+        const [snapshot, commandList] = await Promise.all([
+          invokeBridge('app.snapshot'),
+          invokeBridge('commands.list'),
+        ]);
+        const state = normalizeAppState(snapshot);
+        state.commands = commandList;
 
-      // Only update slices that actually changed
-      if (state.activeTabId !== browserState.activeTabId) {
-        setBrowserState('activeTabId', state.activeTabId);
+        // A differential event delivered while the snapshot was in flight is
+        // newer than that snapshot may be. Retry instead of erasing the patch.
+        if (revisionBeforeRequest !== stateRevision) {
+          fullRefreshRequested = true;
+          continue;
+        }
+        applyFullState(state, fullRefreshStatus);
       }
-      if (state.windowId !== browserState.windowId) {
-        setBrowserState('windowId', state.windowId);
-      }
-      if (state.isPrivate !== browserState.isPrivate) {
-        setBrowserState('isPrivate', state.isPrivate);
-      }
-      if (state.bridgeVersion !== browserState.bridgeVersion) {
-        setBrowserState('bridgeVersion', state.bridgeVersion);
-      }
-      if (state.tabs !== browserState.tabs) {
-        setBrowserState('tabs', state.tabs);
-      }
-      if (state.windows !== browserState.windows) {
-        setBrowserState('windows', state.windows);
-      }
-      if (state.settings !== browserState.settings) {
-        setBrowserState('settings', state.settings);
-      }
-      if (state.downloads !== browserState.downloads) {
-        setBrowserState('downloads', state.downloads);
-      }
-      if (state.history !== browserState.history) {
-        setBrowserState('history', state.history);
-      }
-      if (state.bookmarks !== browserState.bookmarks) {
-        setBrowserState('bookmarks', state.bookmarks);
-      }
-      if (state.permissions !== browserState.permissions) {
-        setBrowserState('permissions', state.permissions);
-      }
-      if (state.commands !== browserState.commands) {
-        setBrowserState('commands', state.commands);
-      }
-      setBrowserState('status', status);
     } catch (error) {
       reportBrowserError(error, 'app.snapshot');
       throw error;
@@ -204,6 +183,10 @@ export async function refreshFullState(status = 'Ready') {
     pendingFullRefresh = undefined;
   });
   return pendingFullRefresh;
+}
+
+function applyFullState(state: BrowserState, status: string): void {
+  setBrowserState({ ...state, status });
 }
 
 /** Reconcile from Rust only after a user-visible bridge failure. */
@@ -297,6 +280,7 @@ export function bindNativeEvents() {
   const disposers = [
     // --- Tab lifecycle (direct patches) ---
     onBridgeEvent('tab.created', (tab) => {
+      stateRevision += 1;
       const nextTab = fromFrostTab(tab);
       if (nextTab.isActive) {
         setBrowserState('tabs', (item) => item.id !== nextTab.id, {
@@ -313,6 +297,7 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.updated', (patch) => {
+      stateRevision += 1;
       const tabPatch = toTabPatch(patch);
       if (tabPatch) {
         setBrowserState(
@@ -327,6 +312,7 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.closed', ({ tabId }) => {
+      stateRevision += 1;
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
       setBrowserState('tabs', remaining);
       if (browserState.activeTabId === tabId) {
@@ -335,6 +321,7 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {
+      stateRevision += 1;
       setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
       setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
       setBrowserState('activeTabId', tabId);
@@ -343,6 +330,7 @@ export function bindNativeEvents() {
     // --- Window lifecycle (direct patches) ---
     onBridgeEvent('window.created', (windowState) => {
       if (windowState) {
+        stateRevision += 1;
         setBrowserState('windows', (w) => [
           ...w,
           {
@@ -356,12 +344,14 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('window.closed', ({ windowId }) => {
+      stateRevision += 1;
       setBrowserState('windows', (windows) =>
         windows.filter((windowState) => windowState.id !== windowId),
       );
     }),
 
     onBridgeEvent('window.focused', ({ windowId }) => {
+      stateRevision += 1;
       setBrowserState('windowId', windowId);
     }),
 
@@ -372,30 +362,36 @@ export function bindNativeEvents() {
         typeof value === 'string' &&
         isSettingsKey(key)
       ) {
+        stateRevision += 1;
         setBrowserState('settings', key, value);
       }
     }),
 
     // --- Bookmarks / History (targeted single-endpoint refresh) ---
     onBridgeEvent('bookmark.changed', () => {
+      stateRevision += 1;
       runBrowserAction(refreshBookmarks(), 'bookmarks.list');
     }),
 
     onBridgeEvent('history.changed', () => {
+      stateRevision += 1;
       runBrowserAction(refreshHistory(), 'history.list');
     }),
 
     onBridgeEvent('permission.changed', () => {
+      stateRevision += 1;
       // Permissions are rarely needed in the sidebar — skip refresh.
       // Will be available on next full refresh (startup, settings page).
     }),
 
     // --- Downloads (targeted refresh) ---
     onBridgeEvent('downloads.updated', () => {
+      stateRevision += 1;
       runBrowserAction(refreshDownloads(), 'downloads.list');
     }),
 
     onBridgeEvent('download.changed', () => {
+      stateRevision += 1;
       runBrowserAction(refreshDownloads(), 'downloads.list');
     }),
 
@@ -403,6 +399,7 @@ export function bindNativeEvents() {
     // hosts emit individual differential events; snapshot is reserved for an
     // explicit failure-recovery action.
     onBridgeEvent('app.stateChanged', () => {
+      stateRevision += 1;
       setBrowserState('status', 'Ready');
     }),
   ];
