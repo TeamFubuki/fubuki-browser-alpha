@@ -54,6 +54,8 @@ pub(crate) enum PendingOperation {
         tab_id: String,
         from_window_id: String,
         to_window_id: String,
+        from_index: usize,
+        to_index: usize,
     },
     TabActivated {
         tab_id: String,
@@ -61,6 +63,44 @@ pub(crate) enum PendingOperation {
     },
     WindowCreated {
         window_id: String,
+    },
+    TabClosed {
+        tab_id: String,
+        window_id: String,
+        was_active: bool,
+        tab_state: frost_protocol::TabState,
+        previous_active_tab_id: Option<String>,
+    },
+    TabsCloseOther {
+        keep_tab_id: String,
+        closed_tabs: Vec<frost_protocol::TabState>,
+        window_id: String,
+        was_active: bool,
+        previous_active_tab_id: Option<String>,
+    },
+    TabsCloseToRight {
+        anchor_tab_id: String,
+        closed_tabs: Vec<frost_protocol::TabState>,
+        window_id: String,
+        was_active: bool,
+        previous_active_tab_id: Option<String>,
+    },
+    TabMoveToNewWindow {
+        tab_id: String,
+        original_window_id: String,
+        new_window_id: String,
+        new_window_is_private: bool,
+        empty_tab_created: Option<frost_protocol::TabState>,
+    },
+    TabPin {
+        tab_id: String,
+        previous_pinned: bool,
+    },
+    TabNavigate {
+        tab_id: String,
+        previous_url: String,
+        previous_error_text: String,
+        previous_is_loading: bool,
     },
 }
 
@@ -324,52 +364,90 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsActivate { tab_id } => {
-                let snapshot = self.take_snapshot();
+                let previous_active_tab_id = self
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .find(|t| {
+                        t.is_active
+                            && t.window_id
+                                == self
+                                    .windows
+                                    .get_window(&tab_id)
+                                    .map(|w| w.id.clone())
+                                    .unwrap_or_default()
+                    })
+                    .map(|t| t.id);
                 let activated = self.tabs.activate_tab(&tab_id);
                 if activated {
                     self.windows.set_active_tab(&tab_id);
                     if let Err(e) = self.adapter.activate_page(&tab_id) {
-                        self.restore_from_snapshot(&snapshot);
+                        // Rollback: reactivate previous tab
+                        if let Some(prev_tab_id) = previous_active_tab_id {
+                            self.tabs.activate_tab(&prev_tab_id);
+                            self.windows.set_active_tab(&prev_tab_id);
+                        }
                         return Err(CoreError::Message(e.to_string()));
                     }
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    self.record_pending(PendingOperation::TabActivated {
+                        tab_id: tab_id.clone(),
+                        previous_active_tab_id,
+                    });
                     self.emit(Event::TabActivated(TabActivated { tab_id }));
                 }
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
-                let snapshot = self.take_snapshot();
                 // Capture the tab state before closing
-                let was_active = self
+                let (was_active, window_id, tab_state) = self
                     .tabs
                     .get_tab(&tab_id)
-                    .map(|t| t.is_active)
-                    .unwrap_or(false);
-                let window_id = self.tabs.get_tab(&tab_id).map(|t| t.window_id.clone());
-                if let Some(tab) = self.tabs.get_tab(&tab_id) {
-                    self.closed_tabs.push(tab);
-                    if self.closed_tabs.len() > 50 {
-                        self.closed_tabs.remove(0);
-                    }
-                }
+                    .map(|t| (t.is_active, t.window_id.clone(), t.clone()))
+                    .unwrap_or((false, String::new(), frost_protocol::TabState::default()));
+                // Find the previously active tab in the same window (before closing)
+                let previous_active_tab_id = if was_active {
+                    self.tabs
+                        .tabs_in_window(&window_id)
+                        .into_iter()
+                        .find(|t| t.is_active && t.id != tab_id)
+                        .map(|t| t.id)
+                } else {
+                    None
+                };
                 let closed = self.tabs.close_tab(&tab_id);
-                if closed {
+                if closed && !window_id.is_empty() {
+                    let wid = window_id;
                     self.windows.detach_tab(&tab_id);
-                    let new_active_id = window_id.as_deref().and_then(|wid| {
-                        self.tabs
-                            .tabs_in_window(wid)
-                            .into_iter()
-                            .find(|tab| tab.is_active)
-                            .map(|tab| tab.id)
-                    });
+                    let new_active_id = self
+                        .tabs
+                        .tabs_in_window(&wid)
+                        .into_iter()
+                        .find(|tab| tab.is_active)
+                        .map(|tab| tab.id);
                     if let Some(ref new_active_id) = new_active_id {
                         self.windows.set_active_tab(new_active_id);
                     }
                     if let Err(e) = self.adapter.close_page(&tab_id) {
-                        self.restore_from_snapshot(&snapshot);
+                        // Rollback: restore the tab
+                        self.tabs.upsert_tab(tab_state.clone());
+                        self.windows.attach_tab(&wid, &tab_id, was_active);
+                        if let Some(prev_tab_id) = previous_active_tab_id {
+                            self.tabs.activate_tab(&prev_tab_id);
+                            self.windows.set_active_tab(&prev_tab_id);
+                        }
                         return Err(CoreError::Message(e.to_string()));
                     }
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    self.closed_tabs.push(tab_state.clone());
+                    if self.closed_tabs.len() > 50 {
+                        self.closed_tabs.remove(0);
+                    }
+                    self.record_pending(PendingOperation::TabClosed {
+                        tab_id: tab_id.clone(),
+                        window_id: wid.clone(),
+                        was_active,
+                        tab_state,
+                        previous_active_tab_id,
+                    });
                     self.emit(Event::TabClosed(TabClosed {
                         tab_id: tab_id.clone(),
                     }));
@@ -381,9 +459,7 @@ where
                             tab_id: new_active_id,
                         }));
                     }
-                    if let Some(wid) = window_id
-                        && self.tabs.tabs_in_window(&wid).is_empty()
-                    {
+                    if self.tabs.tabs_in_window(&wid).is_empty() {
                         let close_window =
                             SettingsService::get(&self.repository, "closeWindowWithLastTab")
                                 .ok()
@@ -410,14 +486,22 @@ where
                 Ok(Response::Bool(closed))
             }
             Request::TabsPin { tab_id, pinned } => {
-                let snapshot = self.take_snapshot();
+                let previous_pinned = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .map(|t| t.is_pinned)
+                    .unwrap_or(false);
                 let ok = self.tabs.pin_tab(&tab_id, pinned);
                 if ok {
                     if let Err(e) = self.adapter.pin_page(&tab_id, pinned) {
-                        self.restore_from_snapshot(&snapshot);
+                        // Rollback: restore previous pinned state
+                        self.tabs.pin_tab(&tab_id, previous_pinned);
                         return Err(CoreError::Message(e.to_string()));
                     }
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    self.record_pending(PendingOperation::TabPin {
+                        tab_id: tab_id.clone(),
+                        previous_pinned,
+                    });
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_pinned: Some(pinned),
@@ -472,12 +556,24 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsCloseOther { tab_id } => {
+                let window_id = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .map(|tab| tab.window_id.clone())
+                    .ok_or_else(|| CoreError::Message("Tab not found".into()))?;
                 let was_active = self
                     .tabs
                     .get_tab(&tab_id)
                     .map(|tab| tab.is_active)
                     .unwrap_or(false);
+                let previous_active_tab_id = self
+                    .tabs
+                    .tabs_in_window(&window_id)
+                    .into_iter()
+                    .find(|t| t.is_active && t.id != tab_id)
+                    .map(|t| t.id);
                 let closed = self.tabs.close_other_tabs(&tab_id);
+                let closed_tabs = closed.clone();
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
                     self.adapter
@@ -495,17 +591,36 @@ where
                         tab_id: tab_id.clone(),
                     }));
                 }
+                self.record_pending(PendingOperation::TabsCloseOther {
+                    keep_tab_id: tab_id,
+                    closed_tabs,
+                    window_id,
+                    was_active,
+                    previous_active_tab_id,
+                });
                 self.closed_tabs.extend(closed);
                 self.trim_closed_tabs();
                 Ok(Response::Bool(true))
             }
             Request::TabsCloseToRight { tab_id } => {
+                let window_id = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .map(|tab| tab.window_id.clone())
+                    .ok_or_else(|| CoreError::Message("Tab not found".into()))?;
                 let was_active = self
                     .tabs
                     .get_tab(&tab_id)
                     .map(|tab| tab.is_active)
                     .unwrap_or(false);
+                let previous_active_tab_id = self
+                    .tabs
+                    .tabs_in_window(&window_id)
+                    .into_iter()
+                    .find(|t| t.is_active && t.id != tab_id)
+                    .map(|t| t.id);
                 let closed = self.tabs.close_tabs_to_right(&tab_id);
+                let closed_tabs = closed.clone();
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
                     self.adapter
@@ -525,6 +640,13 @@ where
                         }));
                     }
                 }
+                self.record_pending(PendingOperation::TabsCloseToRight {
+                    anchor_tab_id: tab_id,
+                    closed_tabs,
+                    window_id,
+                    was_active,
+                    previous_active_tab_id,
+                });
                 self.closed_tabs.extend(closed);
                 self.trim_closed_tabs();
                 Ok(Response::Bool(true))
@@ -535,6 +657,14 @@ where
                     .get_tab(&tab_id)
                     .map(|tab| tab.window_id.clone())
                     .unwrap_or_default();
+                // Find the current index before moving
+                let from_index = self
+                    .tabs
+                    .list()
+                    .iter()
+                    .filter(|t| t.window_id == window_id)
+                    .position(|t| t.id == tab_id)
+                    .unwrap_or(0);
                 let ok = self.tabs.move_tab(&tab_id, to_index);
                 if ok {
                     // Also update WindowState.tab_ids order
@@ -542,12 +672,21 @@ where
                     self.adapter
                         .move_page(&tab_id, to_index)
                         .map_err(|e| CoreError::Message(e.to_string()))?;
+                    let tab_id_for_event = tab_id.clone();
+                    let window_id_for_event = window_id.clone();
                     self.emit(Event::TabMoved(TabMoved {
-                        tab_id,
-                        from_window_id: window_id.clone(),
-                        to_window_id: window_id,
+                        tab_id: tab_id_for_event,
+                        from_window_id: window_id_for_event.clone(),
+                        to_window_id: window_id_for_event,
                         to_index,
                     }));
+                    self.record_pending(PendingOperation::TabMoved {
+                        tab_id: tab_id.clone(),
+                        from_window_id: window_id.clone(),
+                        to_window_id: window_id.clone(),
+                        from_index,
+                        to_index,
+                    });
                 }
                 Ok(Response::Bool(ok))
             }
@@ -573,11 +712,8 @@ where
                     self.windows.close_window(&new_window_id);
                     return Err(CoreError::Message(e.to_string()));
                 }
-                self.record_pending(PendingOperation::TabMoved {
-                    tab_id: tab_id.clone(),
-                    from_window_id: previous_window.clone().unwrap_or_default(),
-                    to_window_id: new_window_id.clone(),
-                });
+                // Track if we create an empty tab in the source window
+                let mut empty_tab_created: Option<frost_protocol::TabState> = None;
                 // If the source window is now empty, create an active empty tab there
                 if let Some(ref prev_window_id) = previous_window
                     && self.tabs.tabs_in_window(prev_window_id).is_empty()
@@ -598,8 +734,16 @@ where
                         self.tabs.remove_tab(&empty_tab.id);
                         return Err(CoreError::Message(e.to_string()));
                     }
+                    empty_tab_created = Some(empty_tab.clone());
                     self.emit(Event::TabCreated(empty_tab));
                 }
+                self.record_pending(PendingOperation::TabMoveToNewWindow {
+                    tab_id: tab_id.clone(),
+                    original_window_id: previous_window.clone().unwrap_or_default(),
+                    new_window_id: new_window_id.clone(),
+                    new_window_is_private: is_private,
+                    empty_tab_created,
+                });
                 if let Some(window) = self.windows.get_window(&new_window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
@@ -610,14 +754,30 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsNavigate { tab_id, input } => {
-                let snapshot = self.take_snapshot();
+                // Capture previous state for rollback
+                let previous_state = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .map(|t| (t.url.clone(), t.error_text.clone(), t.is_loading));
                 let changed = self.tabs.navigate(&tab_id, &input);
                 if changed {
                     if let Err(e) = self.adapter.navigate(&tab_id, &input) {
-                        self.restore_from_snapshot(&snapshot);
+                        // Rollback: restore previous state
+                        if let Some((prev_url, prev_error, prev_loading)) = previous_state {
+                            let _ = self.tabs.set_url(&tab_id, &prev_url);
+                            let _ = self.tabs.set_error_text(&tab_id, &prev_error);
+                            let _ = self.tabs.set_loading(&tab_id, prev_loading);
+                        }
                         return Err(CoreError::Message(e.to_string()));
                     }
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    if let Some((prev_url, prev_error_text, prev_is_loading)) = previous_state {
+                        self.record_pending(PendingOperation::TabNavigate {
+                            tab_id: tab_id.clone(),
+                            previous_url: prev_url,
+                            previous_error_text: prev_error_text,
+                            previous_is_loading: prev_is_loading,
+                        });
+                    }
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         url: Some(input),
@@ -675,27 +835,29 @@ where
             }
             Request::WindowsList => Ok(Response::WindowsList(self.windows.list())),
             Request::WindowsCreate => {
-                let snapshot = self.take_snapshot();
                 let window_id = self.windows.create_window(false);
                 if let Err(e) = self.adapter.create_window(&window_id, false) {
                     self.windows.close_window(&window_id);
                     return Err(CoreError::Message(e.to_string()));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    self.record_pending(PendingOperation::WindowCreated {
+                        window_id: window_id.clone(),
+                    });
                     self.emit(Event::WindowCreated(window));
                 }
                 Ok(Response::Bool(true))
             }
             Request::WindowsCreatePrivate => {
-                let snapshot = self.take_snapshot();
                 let window_id = self.windows.create_window(true);
                 if let Err(e) = self.adapter.create_window(&window_id, true) {
                     self.windows.close_window(&window_id);
                     return Err(CoreError::Message(e.to_string()));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    self.record_pending(PendingOperation::WindowCreated {
+                        window_id: window_id.clone(),
+                    });
                     self.emit(Event::WindowCreated(window));
                 }
                 Ok(Response::Bool(true))
@@ -970,14 +1132,22 @@ where
                 }
             }
             Request::TabsUnpin { tab_id } => {
-                let snapshot = self.take_snapshot();
+                let previous_pinned = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .map(|t| t.is_pinned)
+                    .unwrap_or(false);
                 let ok = self.tabs.pin_tab(&tab_id, false);
                 if ok {
                     if let Err(e) = self.adapter.pin_page(&tab_id, false) {
-                        self.restore_from_snapshot(&snapshot);
+                        // Rollback: restore previous pinned state
+                        self.tabs.pin_tab(&tab_id, previous_pinned);
                         return Err(CoreError::Message(e.to_string()));
                     }
-                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
+                    self.record_pending(PendingOperation::TabPin {
+                        tab_id: tab_id.clone(),
+                        previous_pinned,
+                    });
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_pinned: Some(false),
@@ -1230,6 +1400,8 @@ where
                 self.tabs.move_tab_to_window(&tab_id, &to_window_id);
                 self.windows.move_tab_to_window(&tab_id, &to_window_id);
                 self.tabs.move_tab(&tab_id, to_index);
+                // Also update WindowState.tabIds order
+                self.windows.move_tab_in_window(&tab_id, to_index);
                 // If the source window is now empty, create an active empty tab
                 if self.tabs.tabs_in_window(&from_window_id).is_empty() {
                     let empty_tab = self.tabs.create_tab(
@@ -1329,10 +1501,14 @@ where
                 tab_id,
                 from_window_id,
                 to_window_id,
+                from_index,
+                to_index: _,
             } => {
-                // Move tab back to original window
+                // Move tab back to original window and position
                 self.tabs.move_tab_to_window(&tab_id, &from_window_id);
                 self.windows.move_tab_to_window(&tab_id, &from_window_id);
+                self.tabs.move_tab(&tab_id, from_index);
+                self.windows.move_tab_in_window(&tab_id, from_index);
                 // If the new window is now empty, close it
                 if self.tabs.tabs_in_window(&to_window_id).is_empty() {
                     self.windows.close_window(&to_window_id);
@@ -1348,6 +1524,102 @@ where
             }
             PendingOperation::WindowCreated { window_id } => {
                 self.windows.close_window(&window_id);
+            }
+            PendingOperation::TabClosed {
+                tab_id,
+                window_id,
+                was_active,
+                tab_state,
+                previous_active_tab_id,
+            } => {
+                // Restore the tab
+                self.tabs.upsert_tab(tab_state.clone());
+                self.windows.attach_tab(&window_id, &tab_id, was_active);
+                // Restore previous active tab if needed
+                if let Some(prev_tab_id) = previous_active_tab_id {
+                    self.tabs.activate_tab(&prev_tab_id);
+                } else if was_active {
+                    self.tabs.activate_tab(&tab_id);
+                }
+            }
+            PendingOperation::TabsCloseOther {
+                keep_tab_id,
+                closed_tabs,
+                window_id,
+                was_active,
+                previous_active_tab_id,
+            } => {
+                // Restore all closed tabs
+                for tab in &closed_tabs {
+                    self.tabs.upsert_tab(tab.clone());
+                    self.windows.attach_tab(&window_id, &tab.id, tab.is_active);
+                }
+                // Restore previous active tab
+                if let Some(prev_tab_id) = previous_active_tab_id {
+                    self.tabs.activate_tab(&prev_tab_id);
+                } else if was_active {
+                    self.tabs.activate_tab(&keep_tab_id);
+                }
+            }
+            PendingOperation::TabsCloseToRight {
+                anchor_tab_id,
+                closed_tabs,
+                window_id,
+                was_active,
+                previous_active_tab_id,
+            } => {
+                // Restore all closed tabs
+                for tab in &closed_tabs {
+                    self.tabs.upsert_tab(tab.clone());
+                    self.windows.attach_tab(&window_id, &tab.id, tab.is_active);
+                }
+                // Restore previous active tab
+                if let Some(prev_tab_id) = previous_active_tab_id {
+                    self.tabs.activate_tab(&prev_tab_id);
+                } else if was_active {
+                    self.tabs.activate_tab(&anchor_tab_id);
+                }
+            }
+            PendingOperation::TabMoveToNewWindow {
+                tab_id,
+                original_window_id,
+                new_window_id,
+                new_window_is_private: _,
+                empty_tab_created,
+            } => {
+                // Move tab back to original window
+                self.tabs.move_tab_to_window(&tab_id, &original_window_id);
+                self.windows
+                    .move_tab_to_window(&tab_id, &original_window_id);
+                // Close the new window if it was created
+                self.windows.close_window(&new_window_id);
+                // Remove empty tab if it was created in original window
+                if let Some(empty_tab) = empty_tab_created {
+                    self.windows.detach_tab(&empty_tab.id);
+                    self.tabs.remove_tab(&empty_tab.id);
+                }
+            }
+            PendingOperation::TabPin {
+                tab_id,
+                previous_pinned,
+            } => {
+                self.tabs.pin_tab(&tab_id, previous_pinned);
+                // Best effort to notify host - ignore errors during rollback
+                let _ = self.adapter.pin_page(&tab_id, previous_pinned);
+            }
+            PendingOperation::TabNavigate {
+                tab_id,
+                previous_url,
+                previous_error_text,
+                previous_is_loading,
+            } => {
+                if let Some(tab) = self.tabs.get_tab(&tab_id) {
+                    let mut tab = tab.clone();
+                    tab.url = previous_url;
+                    tab.error_text = previous_error_text;
+                    tab.is_loading = previous_is_loading;
+                    self.tabs.upsert_tab(tab);
+                }
             }
         }
     }
@@ -1448,9 +1720,10 @@ where
             .collect();
         for id in expired {
             self.pending_since.remove(&id);
-            if let Some(operation) = self.pending_operations.remove(&id) {
-                self.rollback_operation(operation);
-            }
+            // Do NOT rollback on timeout - the host may still complete the operation.
+            // Rolling back here would cause Core/Host inconsistency.
+            // Just remove the pending operation tracking.
+            self.pending_operations.remove(&id);
         }
     }
 }
