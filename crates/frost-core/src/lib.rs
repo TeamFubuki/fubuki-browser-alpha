@@ -361,31 +361,29 @@ where
                             tab_id: new_active.id.clone(),
                         }));
                     }
-                    if let Some(wid) = window_id {
-                        if self.tabs.tabs_in_window(&wid).is_empty() {
-                            let close_window =
-                                SettingsService::get(&self.repository, "closeWindowWithLastTab")
-                                    .ok()
-                                    .flatten()
-                                    .is_some_and(|value| value == "true");
-                            if close_window {
-                                self.windows.close_window(&wid);
-                                self.adapter
-                                    .close_window(&wid)
-                                    .map_err(|e| CoreError::Message(e.to_string()))?;
-                                self.emit(Event::WindowClosed { window_id: wid });
-                            } else {
-                                let empty = self.tabs.create_tab(
-                                    wid.clone(),
-                                    "fubuki://newtab/".into(),
-                                    true,
-                                );
-                                self.windows.attach_tab(&wid, &empty.id, true);
-                                self.adapter
-                                    .create_page(&empty.id, &wid, &empty.url, true)
-                                    .map_err(|e| CoreError::Message(e.to_string()))?;
-                                self.emit(Event::TabCreated(empty));
-                            }
+                    if let Some(wid) = window_id
+                        && self.tabs.tabs_in_window(&wid).is_empty()
+                    {
+                        let close_window =
+                            SettingsService::get(&self.repository, "closeWindowWithLastTab")
+                                .ok()
+                                .flatten()
+                                .is_some_and(|value| value == "true");
+                        if close_window {
+                            self.windows.close_window(&wid);
+                            self.adapter
+                                .close_window(&wid)
+                                .map_err(|e| CoreError::Message(e.to_string()))?;
+                            self.emit(Event::WindowClosed { window_id: wid });
+                        } else {
+                            let empty =
+                                self.tabs
+                                    .create_tab(wid.clone(), "fubuki://newtab/".into(), true);
+                            self.windows.attach_tab(&wid, &empty.id, true);
+                            self.adapter
+                                .create_page(&empty.id, &wid, &empty.url, true)
+                                .map_err(|e| CoreError::Message(e.to_string()))?;
+                            self.emit(Event::TabCreated(empty));
                         }
                     }
                 }
@@ -1033,10 +1031,8 @@ where
                     self.tabs.activate_tab(&tab_id);
                 }
                 self.windows.attach_tab(&window_id, &tab_id, active);
-                if is_new_tab {
-                    if let Some(tab) = self.tabs.get_tab(&tab_id) {
-                        self.emit(Event::TabCreated(tab));
-                    }
+                if is_new_tab && let Some(tab) = self.tabs.get_tab(&tab_id) {
+                    self.emit(Event::TabCreated(tab));
                 }
                 Ok(())
             }
