@@ -234,7 +234,10 @@ export type BridgeMethodMap = {
   'windows.createPrivate': { params: Record<string, never>; result: boolean };
   'windows.close': { params: { windowId?: string }; result: boolean };
   'windows.reopenClosed': { params: Record<string, never>; result: boolean };
-  'windows.reopenClosedPrivate': { params: Record<string, never>; result: boolean };
+  'windows.reopenClosedPrivate': {
+    params: Record<string, never>;
+    result: boolean;
+  };
   'bookmarks.save': {
     params: { title: string; url: string; faviconUrl: string };
     result: boolean;
@@ -608,8 +611,15 @@ export const commands = {
 };
 
 export const tabs = {
-  create: (url = 'fubuki://newtab/', options?: { active?: boolean; windowId?: string }) =>
-    invokeBridge('tabs.create', { url, active: options?.active ?? true, windowId: options?.windowId }),
+  create: (
+    url = 'fubuki://newtab/',
+    options?: { active?: boolean; windowId?: string },
+  ) =>
+    invokeBridge('tabs.create', {
+      url,
+      active: options?.active ?? true,
+      windowId: options?.windowId,
+    }),
   navigate: (tabId: string, input: string) =>
     invokeBridge('tabs.navigate', { tabId, input }),
   activate: (tabId: string) => invokeBridge('tabs.activate', { tabId }),
@@ -622,8 +632,7 @@ export const tabs = {
     invokeBridge('tabs.move', { tabId, toIndex }),
   pin: (tabId: string, pinned: boolean) =>
     invokeBridge('tabs.pin', { tabId, pinned }),
-  unpin: (tabId: string) =>
-    invokeBridge('tabs.unpin', { tabId }),
+  unpin: (tabId: string) => invokeBridge('tabs.unpin', { tabId }),
   duplicate: (tabId: string) => invokeBridge('tabs.duplicate', { tabId }),
   reopenClosed: () => invokeBridge('tabs.reopenClosed'),
   closeOther: (tabId: string) => invokeBridge('tabs.closeOther', { tabId }),
