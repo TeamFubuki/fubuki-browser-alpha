@@ -231,6 +231,14 @@ const FrostStore &BrowserWindow::Store() const {
 
 namespace {
 
+// Host-event helpers are defined near the other JSON utilities below, but
+// are used by tab creation during the window implementation above them.
+CefRefPtr<CefValue> JsonStringValue(const std::string& s);
+CefRefPtr<CefValue> JsonBoolValue(bool b);
+std::string HostEventJson(
+    const std::string& event,
+    const std::map<std::string, CefRefPtr<CefValue>>& fields);
+
 constexpr CGFloat kNavHeight = 42.0;
 constexpr CGFloat kMinWidth = 900.0;
 constexpr CGFloat kMinHeight = 620.0;
@@ -451,7 +459,7 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
                                   {{ "tabId", JsonStringValue(tab.id) },
                                    { "windowId", JsonStringValue(windowId_) },
                                    { "url", JsonStringValue(tab.url) },
-                                   { "active", JsonBoolValue(active) },
+                                   { "active", JsonBoolValue(tab.isActive) },
                                    { "isPrivate", JsonBoolValue(privateWindow_) }}));
   CreateTabBrowser(tab);
   ResizeViews();
@@ -472,7 +480,7 @@ bool BrowserWindow::CreateTabWithId(const std::string& input,
                                   {{ "tabId", JsonStringValue(tab.id) },
                                    { "windowId", JsonStringValue(windowId_) },
                                    { "url", JsonStringValue(tab.url) },
-                                   { "active", JsonBoolValue(active) },
+                                   { "active", JsonBoolValue(tab.isActive) },
                                    { "isPrivate", JsonBoolValue(privateWindow_) }}));
   CreateTabBrowser(tab);
   ResizeViews();

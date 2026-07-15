@@ -44,11 +44,8 @@ NativeBridge::NativeBridge(BrowserWindow &window)
 
 void NativeBridge::RegisterMethods() {
   methods_["app.snapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
-    auto snapshot = FrostInvoke("app.snapshot", CefDictionaryValue::Create());
-    if (snapshot && snapshot->GetType() == VTYPE_DICTIONARY) {
-      snapshot->GetDictionary()->SetString("activeWindowId", window_.WindowId());
-    }
-    return snapshot;
+    // FrostEngine owns global activeWindowId; this bridge must not rewrite it.
+    return FrostInvoke("app.snapshot", CefDictionaryValue::Create());
   };
 
   methods_["tabs.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -56,6 +53,8 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    if (!params) params = CefDictionaryValue::Create();
+    params->SetString("windowId", window_.WindowId());
     return FrostInvoke("tabs.create", params);
   };
 
@@ -119,6 +118,10 @@ void NativeBridge::RegisterMethods() {
 
   methods_["tabs.home"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
+    if (auto *tab = window_.Tabs().GetActiveTab()) {
+      params->SetString("tabId", tab->id);
+    }
+    params->SetString("windowId", window_.WindowId());
     return FrostInvoke("tabs.home", params);
   };
 

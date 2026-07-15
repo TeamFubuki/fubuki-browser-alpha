@@ -21,6 +21,8 @@ pub enum Event {
     TabClosed(TabClosed),
     #[serde(rename = "tab.activated")]
     TabActivated(TabActivated),
+    #[serde(rename = "tab.moved")]
+    TabMoved(TabMoved),
     #[serde(rename = "window.created")]
     WindowCreated(WindowState),
     #[serde(rename = "window.closed")]
@@ -89,6 +91,15 @@ pub struct TabClosed {
 #[serde(rename_all = "camelCase")]
 pub struct TabActivated {
     pub tab_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabMoved {
+    pub tab_id: String,
+    pub from_window_id: String,
+    pub to_window_id: String,
+    pub to_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

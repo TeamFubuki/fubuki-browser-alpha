@@ -226,6 +226,10 @@ export type BridgeMethodMap = {
   'tabs.goBack': { params: { tabId: string }; result: boolean };
   'tabs.goForward': { params: { tabId: string }; result: boolean };
   'tabs.move': { params: { tabId: string; toIndex: number }; result: boolean };
+  'tabs.home': {
+    params: { tabId?: string; windowId?: string };
+    result: boolean;
+  };
   'windows.list': {
     params: Record<string, never>;
     result: FrostWindowState[] | WindowSnapshot[];
@@ -272,6 +276,12 @@ export type EventMap = {
   'tab.updated': Partial<FrostTabState> & { tabId: string };
   'tab.closed': { tabId: string };
   'tab.activated': { tabId: string };
+  'tab.moved': {
+    tabId: string;
+    fromWindowId: string;
+    toWindowId: string;
+    toIndex: number;
+  };
   'tabs.created': void;
   'tabs.updated': void;
   'tabs.closed': void;
@@ -630,6 +640,8 @@ export const tabs = {
   goForward: (tabId: string) => invokeBridge('tabs.goForward', { tabId }),
   move: (tabId: string, toIndex: number) =>
     invokeBridge('tabs.move', { tabId, toIndex }),
+  home: (tabId?: string, windowId?: string) =>
+    invokeBridge('tabs.home', { tabId, windowId }),
   pin: (tabId: string, pinned: boolean) =>
     invokeBridge('tabs.pin', { tabId, pinned }),
   unpin: (tabId: string) => invokeBridge('tabs.unpin', { tabId }),

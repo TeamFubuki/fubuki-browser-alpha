@@ -122,8 +122,13 @@ pub enum Request {
     TabsGoBack { tab_id: String },
     #[serde(rename = "tabs.goForward", rename_all = "camelCase")]
     TabsGoForward { tab_id: String },
-    #[serde(rename = "tabs.home")]
-    TabsHome,
+    #[serde(rename = "tabs.home", rename_all = "camelCase")]
+    TabsHome {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+    },
     #[serde(rename = "windows.list")]
     WindowsList,
     #[serde(rename = "windows.create")]

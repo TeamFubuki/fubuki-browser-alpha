@@ -99,6 +99,12 @@ impl WindowService {
             }
             if activate {
                 window.active_tab_id = Some(tab_id.to_owned());
+            } else if window.active_tab_id.as_deref() == Some(tab_id) {
+                window.active_tab_id = window
+                    .tab_ids
+                    .iter()
+                    .find(|id| id.as_str() != tab_id)
+                    .cloned();
             }
             // Ensure a non-empty window always has exactly one active tab
             if window.active_tab_id.is_none() && !window.tab_ids.is_empty() {

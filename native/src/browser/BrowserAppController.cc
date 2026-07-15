@@ -132,6 +132,11 @@ void BrowserAppController::DispatchHostCommands() {
         } else if (payload->HasKey("tabId")) {
           target = FindWindowForTab(payload->GetString("tabId").ToString());
         }
+        if (!target && command == "page.create") {
+          engine_.PushHostCommandResultJson(
+              HostCommandResultJson(commandId, false, "window not found"));
+          continue;
+        }
         if (!target) {
           target = activeWindow_;
         }
@@ -256,9 +261,15 @@ void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
                        window->WindowId(),
                        "",
                        ""});
-    engine_.PushHostEventJson(
-        "{\"version\":0,\"event\":\"window.focused\",\"payload\":{\"windowId\":" +
-        JsonEscape(window->WindowId()) + "}}");
+    auto root = CefDictionaryValue::Create();
+    root->SetInt("version", 0);
+    root->SetString("event", "window.focused");
+    auto payload = CefDictionaryValue::Create();
+    payload->SetString("windowId", window->WindowId());
+    root->SetDictionary("payload", payload);
+    auto value = CefValue::Create();
+    value->SetDictionary(root);
+    engine_.PushHostEventJson(CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString());
   }
 }
 
@@ -295,9 +306,15 @@ void BrowserAppController::FinalizeWindowClosed(BrowserWindow *window) {
   }
   const std::string windowId = window->WindowId();
   // Notify FrostEngine before removing the window
-  engine_.PushHostEventJson(
-      "{\"version\":0,\"event\":\"window.closed\",\"payload\":{\"windowId\":\"" +
-      JsonEscape(windowId) + "\"}}");
+  auto root = CefDictionaryValue::Create();
+  root->SetInt("version", 0);
+  root->SetString("event", "window.closed");
+  auto payload = CefDictionaryValue::Create();
+  payload->SetString("windowId", windowId);
+  root->SetDictionary("payload", payload);
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  engine_.PushHostEventJson(CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString());
   if (!window->IsPrivate()) {
     closedWindows_.push_back(window->SessionSnapshot());
     if (closedWindows_.size() > 10) {

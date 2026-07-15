@@ -9,6 +9,12 @@ pub enum EngineError {
 pub type EngineResult<T> = Result<T, EngineError>;
 
 pub trait EngineAdapter {
+    /// Returns the id of the most recently queued asynchronous host command,
+    /// when this adapter exposes command correlation.
+    fn last_command_id(&self) -> Option<&str> {
+        None
+    }
+
     fn create_page(
         &mut self,
         tab_id: &str,

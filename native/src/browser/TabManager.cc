@@ -82,8 +82,10 @@ bool TabManager::CloseTab(const std::string &tabId) {
   eventBus_.Publish(
       {EventType::TabClosed, "tabs.closed", closed, "", tabId, ""});
 
+  // Empty-window policy belongs to FrostEngine. Do not create a native-only
+  // replacement tab that is absent from the engine state.
   if (tabs_.empty()) {
-    CreateTab("fubuki://newtab/", true);
+    activeTabId_.clear();
     return true;
   }
 
