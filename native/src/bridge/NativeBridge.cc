@@ -45,7 +45,14 @@ NativeBridge::NativeBridge(BrowserWindow &window)
 void NativeBridge::RegisterMethods() {
   methods_["app.snapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
     // FrostEngine owns global activeWindowId; this bridge must not rewrite it.
-    return FrostInvoke("app.snapshot", CefDictionaryValue::Create());
+    auto result = FrostInvoke("app.snapshot", CefDictionaryValue::Create());
+    if (result && result->GetType() == VTYPE_DICTIONARY) {
+      auto snapshot = result->GetDictionary();
+      // activeWindowId is global; every BrowserWindow needs its own local
+      // rendering context to select tabs from the shared snapshot.
+      snapshot->SetString("currentWindowId", window_.WindowId());
+    }
+    return result;
   };
 
   methods_["tabs.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -146,7 +153,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["windows.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
-    return BoolValue(window_.App().ReopenClosedWindow());
+    return FrostInvoke("windows.reopenClosed", CefDictionaryValue::Create());
   };
 
   methods_["page.find"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -189,23 +196,15 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.save"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("bookmarks.save", params, [this, params] {
-      return window_.SaveBookmark(params->GetString("title"),
-                                  params->GetString("url"),
-                                  params->GetString("faviconUrl"));
-    });
+    return FrostInvoke("bookmarks.save", params);
   };
 
   methods_["bookmarks.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("bookmarks.remove", params, [this, params] {
-      return window_.RemoveBookmark(params->GetString("url"));
-    });
+    return FrostInvoke("bookmarks.remove", params);
   };
 
   methods_["history.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("history.remove", params, [this, params] {
-      return window_.RemoveHistory(params->GetString("url"));
-    });
+    return FrostInvoke("history.remove", params);
   };
 
   methods_["history.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -214,11 +213,7 @@ void NativeBridge::RegisterMethods() {
 
   methods_["history.clearRange"] =
       [this](CefRefPtr<CefDictionaryValue> params) {
-        return HostBackedFrostInvoke("history.clearRange", params,
-                                     [this, params] {
-                                       return window_.ClearHistoryRange(
-                                           params->GetString("range"));
-                                     });
+        return FrostInvoke("history.clearRange", params);
       };
 
   methods_["downloads.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -226,10 +221,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("downloads.remove", params, [this, params] {
-      return window_.RemoveDownload(params->GetString("url"),
-                                    params->GetString("path"));
-    });
+    return FrostInvoke("downloads.remove", params);
   };
 
   methods_["downloads.open"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -241,9 +233,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["data.clear"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("data.clear", params, [this, params] {
-      return window_.ClearBrowsingData(params->GetString("target"));
-    });
+    return FrostInvoke("data.clear", params);
   };
 
   methods_["settings.get"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -267,11 +257,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("permissions.set", params, [this, params] {
-      return window_.SetPermission(params->GetString("origin"),
-                                   params->GetString("permission"),
-                                   params->GetString("value"));
-    });
+    return FrostInvoke("permissions.set", params);
   };
 
   methods_["ui.setOverlayActive"] = [this](

@@ -243,13 +243,12 @@ bool BrowserAppController::CloseActiveWindow() {
 }
 
 bool BrowserAppController::ReopenClosedWindow() {
-  if (closedWindows_.empty()) {
+  if (!activeWindow_) {
     return false;
   }
-  auto state = closedWindows_.back();
-  closedWindows_.pop_back();
-  NewWindow(false, state);
-  return true;
+  auto value = activeWindow_->Bridge()->Invoke(
+      "windows.reopenClosed", CefDictionaryValue::Create());
+  return value && value->GetType() == VTYPE_BOOL && value->GetBool();
 }
 
 void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
@@ -315,12 +314,6 @@ void BrowserAppController::FinalizeWindowClosed(BrowserWindow *window) {
   auto value = CefValue::Create();
   value->SetDictionary(root);
   engine_.PushHostEventJson(CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString());
-  if (!window->IsPrivate()) {
-    closedWindows_.push_back(window->SessionSnapshot());
-    if (closedWindows_.size() > 10) {
-      closedWindows_.erase(closedWindows_.begin());
-    }
-  }
   windows_.erase(existing);
   activeWindow_ = windows_.empty() ? nullptr : windows_.back()->window.get();
   eventBus_.Publish(

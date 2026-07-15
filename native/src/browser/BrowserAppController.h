@@ -78,7 +78,6 @@ private:
   FrostStore store_;
   EventBus eventBus_;
   std::vector<std::unique_ptr<WindowContext>> windows_;
-  std::vector<CefRefPtr<CefDictionaryValue>> closedWindows_;
   BrowserWindow *activeWindow_ = nullptr;
   int nextWindowId_ = 1;
   bool restoring_ = false;

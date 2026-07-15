@@ -147,13 +147,6 @@ class BrowserWindow {
   CefRefPtr<CefDictionaryValue> SessionSnapshot() const;
 
  private:
-  struct ClosedTab {
-    std::string title;
-    std::string url;
-    std::string faviconUrl;
-    bool pinned = false;
-  };
-
   void CreateNativeWindow();
   void CreateUiBrowser();
   void CreateTabBrowser(const Tab& tab);
@@ -174,7 +167,6 @@ class BrowserWindow {
   std::unique_ptr<NativeBridge> bridge_;
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
-  std::vector<ClosedTab> closedTabs_;
   double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
   std::string windowId_;

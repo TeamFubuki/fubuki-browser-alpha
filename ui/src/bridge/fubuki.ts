@@ -37,6 +37,8 @@ export type FrostWindowState = {
 
 export type FrostAppState = {
   protocolVersion: number;
+  /** Native bridge local context; unlike activeWindowId this is per BrowserWindow. */
+  currentWindowId?: string;
   activeWindowId: string | null;
   windows: FrostWindowState[];
   tabs: FrostTabState[];
@@ -477,22 +479,23 @@ export function normalizeAppState(
     return snapshot;
   }
 
+  const currentWindowId = snapshot.currentWindowId ?? snapshot.activeWindowId;
   const activeWindow = snapshot.windows.find(
-    (windowState) => windowState.id === snapshot.activeWindowId,
+    (windowState) => windowState.id === currentWindowId,
   );
   const tabById = new Map(snapshot.tabs.map((tab) => [tab.id, tab]));
   const currentWindowTabs = activeWindow
     ? activeWindow.tabIds
         .map((tabId) => tabById.get(tabId))
         .filter((tab): tab is FrostTabState => Boolean(tab))
-    : snapshot.tabs;
+    : [];
   const activeTab =
     currentWindowTabs.find((tab) => tab.id === activeWindow?.activeTabId) ??
     currentWindowTabs.find((tab) => tab.isActive);
 
   return {
     bridgeVersion: `frost-${snapshot.protocolVersion}`,
-    windowId: activeWindow?.id ?? '',
+    windowId: activeWindow?.id ?? currentWindowId ?? '',
     isPrivate: activeWindow?.isPrivate ?? false,
     activeTabId: activeWindow?.activeTabId ?? activeTab?.id ?? '',
     tabs: currentWindowTabs.map((tab) => ({

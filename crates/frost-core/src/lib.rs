@@ -10,7 +10,7 @@ pub use external_router::{ExternalPolicy, ExternalResponse};
 
 use std::{
     collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crossbeam_channel::{Receiver, Sender};
@@ -45,6 +45,7 @@ pub type CoreResult<T> = Result<T, CoreError>;
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum PendingOperation {
+    StateSnapshot(StateSnapshot),
     TabCreated {
         tab_id: String,
         window_id: String,
@@ -70,6 +71,8 @@ pub(crate) struct StateSnapshot {
     tabs: Vec<frost_protocol::TabState>,
     windows: Vec<frost_protocol::WindowState>,
     active_window_id: Option<String>,
+    closed_tabs: Vec<frost_protocol::TabState>,
+    closed_windows: Vec<ClosedWindow>,
 }
 
 pub struct HostCommandAdapter {
@@ -203,6 +206,7 @@ pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     event_tx: Option<Sender<EventEnvelope>>,
     /// Tracks pending operations for rollback on host command failure
     pending_operations: HashMap<String, PendingOperation>,
+    pending_since: HashMap<String, SystemTime>,
 }
 
 impl BrowserCore<NoopEngineAdapter, InMemoryStore> {
@@ -244,6 +248,7 @@ where
             events: Vec::new(),
             event_tx: None,
             pending_operations: HashMap::new(),
+            pending_since: HashMap::new(),
         }
     }
 
@@ -256,6 +261,7 @@ where
     }
 
     pub fn process(&mut self, request: ProtocolRequest) -> ProtocolResponse {
+        self.expire_pending_operations();
         let id = request.id.clone();
         match self.process_inner(request.request) {
             Ok(response) => ProtocolResponse::ok(id, response),
@@ -318,17 +324,21 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsActivate { tab_id } => {
+                let snapshot = self.take_snapshot();
                 let activated = self.tabs.activate_tab(&tab_id);
                 if activated {
                     self.windows.set_active_tab(&tab_id);
-                    self.adapter
-                        .activate_page(&tab_id)
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    if let Err(e) = self.adapter.activate_page(&tab_id) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::TabActivated(TabActivated { tab_id }));
                 }
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
+                let snapshot = self.take_snapshot();
                 // Capture the tab state before closing
                 let was_active = self
                     .tabs
@@ -345,9 +355,11 @@ where
                 let closed = self.tabs.close_tab(&tab_id);
                 if closed {
                     self.windows.detach_tab(&tab_id);
-                    self.adapter
-                        .close_page(&tab_id)
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    if let Err(e) = self.adapter.close_page(&tab_id) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::TabClosed(TabClosed {
                         tab_id: tab_id.clone(),
                     }));
@@ -390,11 +402,14 @@ where
                 Ok(Response::Bool(closed))
             }
             Request::TabsPin { tab_id, pinned } => {
+                let snapshot = self.take_snapshot();
                 let ok = self.tabs.pin_tab(&tab_id, pinned);
                 if ok {
-                    self.adapter
-                        .pin_page(&tab_id, pinned)
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    if let Err(e) = self.adapter.pin_page(&tab_id, pinned) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_pinned: Some(pinned),
@@ -587,11 +602,14 @@ where
                 Ok(Response::Bool(true))
             }
             Request::TabsNavigate { tab_id, input } => {
+                let snapshot = self.take_snapshot();
                 let changed = self.tabs.navigate(&tab_id, &input);
                 if changed {
-                    self.adapter
-                        .navigate(&tab_id, &input)
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    if let Err(e) = self.adapter.navigate(&tab_id, &input) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         url: Some(input),
@@ -649,28 +667,33 @@ where
             }
             Request::WindowsList => Ok(Response::WindowsList(self.windows.list())),
             Request::WindowsCreate => {
+                let snapshot = self.take_snapshot();
                 let window_id = self.windows.create_window(false);
                 if let Err(e) = self.adapter.create_window(&window_id, false) {
                     self.windows.close_window(&window_id);
                     return Err(CoreError::Message(e.to_string()));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::WindowCreated(window));
                 }
                 Ok(Response::Bool(true))
             }
             Request::WindowsCreatePrivate => {
+                let snapshot = self.take_snapshot();
                 let window_id = self.windows.create_window(true);
                 if let Err(e) = self.adapter.create_window(&window_id, true) {
                     self.windows.close_window(&window_id);
                     return Err(CoreError::Message(e.to_string()));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::WindowCreated(window));
                 }
                 Ok(Response::Bool(true))
             }
             Request::WindowsClose { window_id } => {
+                let snapshot = self.take_snapshot();
                 let target = window_id
                     .or_else(|| self.windows.active_window_id().map(ToOwned::to_owned))
                     .ok_or_else(|| CoreError::Message("No active window".into()))?;
@@ -699,14 +722,17 @@ where
                     for tab in &window_tabs {
                         self.tabs.remove_tab(&tab.id);
                     }
-                    self.adapter
-                        .close_window(&target)
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    if let Err(e) = self.adapter.close_window(&target) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::WindowClosed { window_id: target });
                 }
                 Ok(Response::Bool(closed))
             }
             Request::WindowsReopenClosed => {
+                let snapshot = self.take_snapshot();
                 let Some(closed) = self.closed_windows.pop() else {
                     return Ok(Response::Bool(false));
                 };
@@ -719,6 +745,23 @@ where
                 windows.push(closed.window.clone());
                 self.windows
                     .replace_all(windows, Some(closed.window.id.clone()));
+                if let Err(e) = self
+                    .adapter
+                    .create_window(&closed.window.id, closed.window.is_private)
+                {
+                    self.restore_from_snapshot(&snapshot);
+                    return Err(CoreError::Message(e.to_string()));
+                }
+                self.record_pending(PendingOperation::StateSnapshot(snapshot.clone()));
+                for tab in &closed.tabs {
+                    if let Err(e) = self.adapter.create_page(
+                        &tab.id, &closed.window.id, &tab.url, tab.is_active,
+                    ) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot.clone()));
+                }
                 // Emit events for restored tabs.
                 for tab in &closed.tabs {
                     self.emit(Event::TabCreated(tab.clone()));
@@ -916,11 +959,14 @@ where
                 }
             }
             Request::TabsUnpin { tab_id } => {
+                let snapshot = self.take_snapshot();
                 let ok = self.tabs.pin_tab(&tab_id, false);
                 if ok {
-                    self.adapter
-                        .pin_page(&tab_id, false)
-                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    if let Err(e) = self.adapter.pin_page(&tab_id, false) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_pinned: Some(false),
@@ -966,6 +1012,7 @@ where
                 }
             }
             Request::WindowsReopenClosedPrivate => {
+                let snapshot = self.take_snapshot();
                 let Some(idx) = self
                     .closed_windows
                     .iter()
@@ -981,6 +1028,23 @@ where
                 windows.push(closed.window.clone());
                 self.windows
                     .replace_all(windows, Some(closed.window.id.clone()));
+                if let Err(e) = self
+                    .adapter
+                    .create_window(&closed.window.id, true)
+                {
+                    self.restore_from_snapshot(&snapshot);
+                    return Err(CoreError::Message(e.to_string()));
+                }
+                self.record_pending(PendingOperation::StateSnapshot(snapshot.clone()));
+                for tab in &closed.tabs {
+                    if let Err(e) = self.adapter.create_page(
+                        &tab.id, &closed.window.id, &tab.url, tab.is_active,
+                    ) {
+                        self.restore_from_snapshot(&snapshot);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.record_pending(PendingOperation::StateSnapshot(snapshot.clone()));
+                }
                 for tab in &closed.tabs {
                     self.emit(Event::TabCreated(tab.clone()));
                 }
@@ -1204,10 +1268,12 @@ where
     ) -> CoreResult<()> {
         if result.ok {
             self.pending_operations.remove(&result.command_id);
+            self.pending_since.remove(&result.command_id);
             return Ok(());
         }
         // Roll back only the operation identified by this host response.
         if let Some(op) = self.pending_operations.remove(&result.command_id) {
+            self.pending_since.remove(&result.command_id);
             self.rollback_operation(op);
         }
         Err(CoreError::Message(format!(
@@ -1223,6 +1289,8 @@ where
             tabs: self.tabs.list(),
             windows: self.windows.list(),
             active_window_id: self.windows.active_window_id().map(ToOwned::to_owned),
+            closed_tabs: self.closed_tabs.clone(),
+            closed_windows: self.closed_windows.clone(),
         }
     }
 
@@ -1231,10 +1299,13 @@ where
         self.tabs.replace_all(snapshot.tabs.clone());
         self.windows
             .replace_all(snapshot.windows.clone(), snapshot.active_window_id.clone());
+        self.closed_tabs = snapshot.closed_tabs.clone();
+        self.closed_windows = snapshot.closed_windows.clone();
     }
 
     fn rollback_operation(&mut self, op: PendingOperation) {
         match op {
+            PendingOperation::StateSnapshot(snapshot) => self.restore_from_snapshot(&snapshot),
             PendingOperation::TabCreated { tab_id, window_id } => {
                 self.windows.detach_tab(&tab_id);
                 self.tabs.remove_tab(&tab_id);
@@ -1349,7 +1420,27 @@ where
             .last_command_id()
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| format!("local-pending-{}", self.pending_operations.len()));
-        self.pending_operations.insert(id, operation);
+        self.pending_operations.insert(id.clone(), operation);
+        self.pending_since.insert(id, SystemTime::now());
+    }
+
+    fn expire_pending_operations(&mut self) {
+        const HOST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+        let now = SystemTime::now();
+        let expired: Vec<String> = self
+            .pending_since
+            .iter()
+            .filter_map(|(id, started)| {
+                (now.duration_since(*started).unwrap_or_default() >= HOST_COMMAND_TIMEOUT)
+                    .then(|| id.clone())
+            })
+            .collect();
+        for id in expired {
+            self.pending_since.remove(&id);
+            if let Some(operation) = self.pending_operations.remove(&id) {
+                self.rollback_operation(operation);
+            }
+        }
     }
 }
 
@@ -1417,6 +1508,7 @@ enum HostTabAction {
     GoForward,
 }
 
+#[derive(Debug, Clone)]
 struct ClosedWindow {
     window: frost_protocol::WindowState,
     tabs: Vec<frost_protocol::TabState>,

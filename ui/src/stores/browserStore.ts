@@ -52,6 +52,19 @@ export const [browserState, setBrowserState] = createStore(initialState);
 
 let bookmarksPending = false;
 let historyPending = false;
+let commandsPending = false;
+
+async function refreshCommands() {
+  if (commandsPending) return;
+  commandsPending = true;
+  try {
+    setBrowserState('commands', await invokeBridge('commands.list'));
+  } catch {
+    // Keep the last known command list on transient bridge failures.
+  } finally {
+    commandsPending = false;
+  }
+}
 
 async function refreshBookmarks() {
   if (bookmarksPending) return;
@@ -95,6 +108,7 @@ export async function refreshFullState(status = 'Ready') {
     try {
       const snapshot = await invokeBridge('app.snapshot');
       const state = normalizeAppState(snapshot);
+      void refreshCommands();
       if (myCounter !== fullRefreshCounter) return;
 
       // Only update slices that actually changed
@@ -130,9 +144,6 @@ export async function refreshFullState(status = 'Ready') {
       }
       if (state.permissions !== browserState.permissions) {
         setBrowserState('permissions', state.permissions);
-      }
-      if (state.commands !== browserState.commands) {
-        setBrowserState('commands', state.commands);
       }
       setBrowserState('status', status);
     } catch (error) {
@@ -340,6 +351,7 @@ export function bindNativeEvents() {
 
   // Fire-and-forget initial state load
   void refreshFullState('Ready');
+  void refreshCommands();
 
   return () => disposers.forEach((dispose) => dispose());
 }

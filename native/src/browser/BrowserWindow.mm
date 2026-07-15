@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <set>
 
 #include "browser/BrowserAppController.h"
 #include "cef/FubukiClient.h"
@@ -390,7 +391,9 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
     RegisterFubukiSchemeHandlers(privateRequestContext_);
   }
   RegisterCommands();
-  WireEvents();
+  // FrostEngine's differential event queue is the sole UI event source.
+  // Subscribing the per-window legacy EventBus here duplicated events and
+  // leaked events from other BrowserWindow instances.
 }
 
 BrowserWindow::~BrowserWindow() {
@@ -495,6 +498,14 @@ std::string BrowserWindow::CreatePendingPopupTab(const std::string& url, bool ac
   Tab& tab = tabManager_.CreateTab(url.empty() ? "about:blank" : url, active);
   tab.isPendingPopup = true;
   tabManager_.UpdateTab(tab.id, tab);
+  // window.open() creates a real Engine tab immediately. The pending flag is
+  // host-only bookkeeping and must not hide the page.created event.
+  PushHostEventJson(HostEventJson("page.created",
+                                  {{ "tabId", JsonStringValue(tab.id) },
+                                   { "windowId", JsonStringValue(windowId_) },
+                                   { "url", JsonStringValue(tab.url) },
+                                   { "active", JsonBoolValue(tab.isActive) },
+                                   { "isPrivate", JsonBoolValue(privateWindow_) }}));
   ResizeViews();
   SetActiveContentView();
   if (!privateWindow_) {
@@ -514,12 +525,6 @@ bool BrowserWindow::ActivateTab(const std::string& tabId) {
 
 bool BrowserWindow::CloseTab(const std::string& tabId) {
   Tab* tab = tabManager_.GetTab(tabId);
-  if (tab && !privateWindow_) {
-    closedTabs_.push_back({tab->title, tab->url, tab->faviconUrl, tab->isPinned});
-    if (closedTabs_.size() > 30) {
-      closedTabs_.erase(closedTabs_.begin());
-    }
-  }
   if (tab && tab->browser) {
     NSView* view = reinterpret_cast<NSView*>(tab->browser->GetHost()->GetWindowHandle());
     [view removeFromSuperview];
@@ -559,18 +564,8 @@ bool BrowserWindow::DuplicateTab(const std::string& tabId) {
 }
 
 bool BrowserWindow::ReopenClosedTab() {
-  if (closedTabs_.empty()) {
-    return false;
-  }
-  ClosedTab closed = closedTabs_.back();
-  closedTabs_.pop_back();
-  if (!CreateTab(closed.url.empty() ? "fubuki://newtab/" : closed.url, true)) {
-    return false;
-  }
-  if (Tab* tab = tabManager_.GetActiveTab()) {
-    tabManager_.SetPinned(tab->id, closed.pinned);
-  }
-  return true;
+  auto value = bridge_->Invoke("tabs.reopenClosed", CefDictionaryValue::Create());
+  return value && value->GetType() == VTYPE_BOOL && value->GetBool();
 }
 
 bool BrowserWindow::CloseOtherTabs(const std::string& tabId) {
@@ -772,6 +767,22 @@ bool BrowserWindow::FocusOmnibox() {
 
 CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId,
                                                   CefRefPtr<CefDictionaryValue> args) {
+  // Commands that change browser state always enter through FrostEngine. The
+  // registry remains for host-only presentation commands (zoom, find, etc.).
+  static const std::set<std::string> kEngineCommands = {
+      "tabs.create", "tabs.close", "tabs.reopenClosed", "tabs.duplicate",
+      "tabs.pin", "tabs.unpin", "tabs.closeOther", "tabs.closeToRight",
+      "tabs.moveToNewWindow", "tabs.reload", "tabs.stop", "tabs.goBack",
+      "tabs.goForward", "tabs.home", "windows.create", "windows.createPrivate",
+      "windows.close", "windows.reopenClosed", "bookmarks.save",
+      "bookmarks.remove"};
+  if (kEngineCommands.contains(commandId)) {
+    auto params = args ? args->Copy(false) : CefDictionaryValue::Create();
+    if (commandId.rfind("tabs.", 0) == 0 && !params->HasKey("tabId")) {
+      params->SetString("tabId", tabManager_.GetActiveTabId());
+    }
+    return bridge_->Invoke(commandId, params);
+  }
   return commands_.Execute(commandId, args);
 }
 
@@ -782,11 +793,12 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return FocusOmnibox();
   }
   if (commandDown && character == 'N') {
-    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewPrivateWindow() : false;
+    auto value = ExecuteCommand("windows.createPrivate", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && character == 'n') {
-    return GetBrowserAppController() ? GetBrowserAppController()->RequestNewWindow(false, nullptr)
-                                     : false;
+    auto value = ExecuteCommand("windows.create", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && character == ',') {
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
@@ -808,7 +820,8 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return false;
   }
   if (commandDown && character == 'T') {
-    return ReopenClosedTab();
+    auto value = ExecuteCommand("tabs.reopenClosed", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && character == '+') {
     return ZoomIn();
@@ -828,13 +841,18 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return false;
   }
   if (commandDown && (character == 'r' || character == 'R')) {
-    return Reload(tabId);
+    auto value = ExecuteCommand("tabs.reload", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && character == 't') {
-    return CreateTab("fubuki://newtab/", true);
+    auto args = CefDictionaryValue::Create();
+    args->SetString("url", "fubuki://newtab/");
+    auto value = ExecuteCommand("tabs.create", args);
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && (character == 'w' || character == 'W')) {
-    return CloseTab(tabId);
+    auto value = ExecuteCommand("tabs.close", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if ((commandDown && character == '[') || (altDown && keyCode == 0x25)) {
     return GoBack(tabId);
