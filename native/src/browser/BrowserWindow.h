@@ -65,7 +65,9 @@ class BrowserWindow {
   bool FocusOmnibox();
   CefRefPtr<CefValue> ExecuteCommand(const std::string& commandId,
                                      CefRefPtr<CefDictionaryValue> args);
-  bool HandleShortcut(bool commandDown, bool altDown, int keyCode, char character);
+  bool HandleShortcut(bool commandDown, bool altDown, bool shiftDown,
+                      int keyCode, char character,
+                      const std::string& sourceTabId = "");
   bool OpenDevTools();
   bool AddActiveBookmark();
   bool SaveBookmark(const std::string& title, const std::string& url,

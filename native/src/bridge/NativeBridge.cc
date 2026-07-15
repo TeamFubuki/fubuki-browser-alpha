@@ -1,5 +1,7 @@
 #include "bridge/NativeBridge.h"
 
+#include <algorithm>
+
 #include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
 #include "include/cef_parser.h"
@@ -62,10 +64,62 @@ void NativeBridge::RegisterMethods() {
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
     if (!params) params = CefDictionaryValue::Create();
     params->SetString("windowId", window_.WindowId());
+    // Native shortcuts and menu commands do not carry UI defaults. The
+    // protocol requires `active`, so make a newly created shortcut tab active
+    // just like the UI-side tabs.create helper does.
+    if (!params->HasKey("active")) {
+      params->SetBool("active", true);
+    }
     return FrostInvoke("tabs.create", params);
   };
 
   methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    auto result = FrostInvoke("tabs.activate", params);
+    // FrostEngine emits page.activate asynchronously. Keep the native tab
+    // manager in sync immediately as well: a following Cmd+W is handled by
+    // the native key path and must use the tab the user just selected.
+    if (result && result->GetType() == VTYPE_BOOL && result->GetBool() &&
+        params && params->HasKey("tabId")) {
+      window_.ActivateTab(params->GetString("tabId").ToString());
+    }
+    return result;
+  };
+
+  // The engine's global active tab belongs to whichever native window was
+  // focused last. Resolve next/previous from this window's TabManager first,
+  // then activate that explicit tab in FrostEngine. This keeps tab cycling
+  // scoped to the window that received the shortcut.
+  methods_["tabs.activateNext"] = [this](CefRefPtr<CefDictionaryValue>) {
+    const auto tabs = window_.Tabs().GetTabs();
+    const std::string activeId = window_.Tabs().GetActiveTabId();
+    if (tabs.empty() || activeId.empty()) {
+      return BoolValue(false);
+    }
+    const auto current = std::find_if(
+        tabs.begin(), tabs.end(), [&activeId](const Tab& tab) { return tab.id == activeId; });
+    if (current == tabs.end()) {
+      return BoolValue(false);
+    }
+    const size_t index = static_cast<size_t>(std::distance(tabs.begin(), current));
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabs[(index + 1) % tabs.size()].id);
+    return FrostInvoke("tabs.activate", params);
+  };
+
+  methods_["tabs.activatePrevious"] = [this](CefRefPtr<CefDictionaryValue>) {
+    const auto tabs = window_.Tabs().GetTabs();
+    const std::string activeId = window_.Tabs().GetActiveTabId();
+    if (tabs.empty() || activeId.empty()) {
+      return BoolValue(false);
+    }
+    const auto current = std::find_if(
+        tabs.begin(), tabs.end(), [&activeId](const Tab& tab) { return tab.id == activeId; });
+    if (current == tabs.end()) {
+      return BoolValue(false);
+    }
+    const size_t index = static_cast<size_t>(std::distance(tabs.begin(), current));
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabs[(index + tabs.size() - 1) % tabs.size()].id);
     return FrostInvoke("tabs.activate", params);
   };
 
@@ -188,7 +242,28 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.addActive"] = [this](CefRefPtr<CefDictionaryValue>) {
-    return BoolValue(window_.AddActiveBookmark());
+    auto *tab = window_.Tabs().GetActiveTab();
+    if (!tab || tab->url.empty() || tab->url.rfind("fubuki://", 0) == 0 ||
+        tab->url.rfind("data:", 0) == 0) {
+      return BoolValue(false);
+    }
+    auto list = FrostInvoke("bookmarks.list", CefDictionaryValue::Create());
+    if (list && list->GetType() == VTYPE_LIST) {
+      auto records = list->GetList();
+      for (size_t i = 0; i < records->GetSize(); ++i) {
+        auto record = records->GetDictionary(i);
+        if (record && record->GetString("url").ToString() == tab->url) {
+          auto params = CefDictionaryValue::Create();
+          params->SetString("url", tab->url);
+          return FrostInvoke("bookmarks.remove", params);
+        }
+      }
+    }
+    auto params = CefDictionaryValue::Create();
+    params->SetString("title", tab->title.empty() ? tab->url : tab->title);
+    params->SetString("url", tab->url);
+    params->SetString("faviconUrl", tab->faviconUrl);
+    return FrostInvoke("bookmarks.save", params);
   };
 
   methods_["bookmarks.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -215,6 +290,11 @@ void NativeBridge::RegisterMethods() {
       [this](CefRefPtr<CefDictionaryValue> params) {
         return FrostInvoke("history.clearRange", params);
       };
+  methods_["history.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("range", "all");
+    return FrostInvoke("history.clearRange", params);
+  };
 
   methods_["downloads.list"] = [this](CefRefPtr<CefDictionaryValue>) {
     return FrostInvoke("downloads.list", CefDictionaryValue::Create());
@@ -222,6 +302,16 @@ void NativeBridge::RegisterMethods() {
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return FrostInvoke("downloads.remove", params);
+  };
+  methods_["downloads.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("target", "downloads");
+    return FrostInvoke("data.clear", params);
+  };
+  methods_["bookmarks.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("target", "bookmarks");
+    return FrostInvoke("data.clear", params);
   };
 
   methods_["downloads.open"] = [this](CefRefPtr<CefDictionaryValue> params) {

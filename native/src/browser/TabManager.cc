@@ -90,7 +90,9 @@ bool TabManager::CloseTab(const std::string &tabId) {
   }
 
   if (wasActive) {
-    const size_t index = std::min(closedIndex, tabs_.size() - 1);
+    // Prefer the tab immediately to the left. If the first tab was closed,
+    // fall back to the new first tab.
+    const size_t index = closedIndex == 0 ? 0 : closedIndex - 1;
     ActivateTab(tabs_[index].id);
   }
   return true;

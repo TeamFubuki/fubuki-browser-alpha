@@ -767,27 +767,41 @@ bool BrowserWindow::FocusOmnibox() {
 
 CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId,
                                                   CefRefPtr<CefDictionaryValue> args) {
+  if (!args) {
+    args = CefDictionaryValue::Create();
+  }
   // Commands that change browser state always enter through FrostEngine. The
   // registry remains for host-only presentation commands (zoom, find, etc.).
   static const std::set<std::string> kEngineCommands = {
       "tabs.create", "tabs.close", "tabs.reopenClosed", "tabs.duplicate",
       "tabs.pin", "tabs.unpin", "tabs.closeOther", "tabs.closeToRight",
       "tabs.moveToNewWindow", "tabs.reload", "tabs.stop", "tabs.goBack",
-      "tabs.goForward", "tabs.home", "windows.create", "windows.createPrivate",
+      "tabs.goForward", "tabs.home", "tabs.activateNext", "tabs.activatePrevious",
+      "windows.create", "windows.createPrivate",
       "windows.close", "windows.reopenClosed", "bookmarks.save",
-      "bookmarks.remove"};
+      "bookmarks.remove", "bookmarks.addActive", "history.clear",
+      "downloads.clear", "bookmarks.clear"};
   if (kEngineCommands.contains(commandId)) {
-    auto params = args ? args->Copy(false) : CefDictionaryValue::Create();
+    auto params = args->Copy(false);
     if (commandId.rfind("tabs.", 0) == 0 && !params->HasKey("tabId")) {
       params->SetString("tabId", tabManager_.GetActiveTabId());
     }
-    return bridge_->Invoke(commandId, params);
+    return bridge_ ? bridge_->Invoke(commandId, params) : nullptr;
   }
   return commands_.Execute(commandId, args);
 }
 
-bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, char character) {
-  Tab* tab = tabManager_.GetActiveTab();
+bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDown,
+                                   int keyCode, char character,
+                                   const std::string& sourceTabId) {
+  // The content CEF client knows which tab received the key event. Prefer it
+  // over the asynchronously updated native active-tab state so Cmd+W always
+  // closes the tab the user is currently using.
+  Tab* tab = sourceTabId.empty() ? tabManager_.GetActiveTab()
+                                 : tabManager_.GetTab(sourceTabId);
+  if (!tab) {
+    tab = tabManager_.GetActiveTab();
+  }
   const std::string tabId = tab ? tab->id : "";
   if ((commandDown && character == 'l') || (commandDown && character == 'L')) {
     return FocusOmnibox();
@@ -800,6 +814,13 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     auto value = ExecuteCommand("windows.create", CefDictionaryValue::Create());
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
+  // Cmd+Shift+Delete is the native browser shortcut for clearing browsing
+  // history. Keep it independent of the currently displayed content tab.
+  if (commandDown && shiftDown && (keyCode == 51 || keyCode == 117 ||
+                                   character == 8 || character == 127)) {
+    auto value = ExecuteCommand("history.clear", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
+  }
   if (commandDown && character == ',') {
     return tab ? Navigate(tabId, "fubuki://settings/") : CreateTab("fubuki://settings/", true);
   }
@@ -808,16 +829,8 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return SetSetting("sidebarVisible", current == "hide" ? "show" : "hide");
   }
   if (commandDown && (character == 'd' || character == 'D')) {
-    if (uiBrowser_) {
-      uiBrowser_->GetMainFrame()->ExecuteJavaScript(
-          "window.dispatchEvent(new CustomEvent('fubuki:toggle-active-bookmark'));",
-          "fubuki://app/", 0);
-      return true;
-    }
-    return false;
-  }
-  if (!tab) {
-    return false;
+    auto value = ExecuteCommand("bookmarks.addActive", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && character == 'T') {
     auto value = ExecuteCommand("tabs.reopenClosed", CefDictionaryValue::Create());
@@ -855,10 +868,12 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, int keyCode, 
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if ((commandDown && character == '[') || (altDown && keyCode == 0x25)) {
-    return GoBack(tabId);
+    auto value = ExecuteCommand("tabs.goBack", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if ((commandDown && character == ']') || (altDown && keyCode == 0x27)) {
-    return GoForward(tabId);
+    auto value = ExecuteCommand("tabs.goForward", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   return false;
 }

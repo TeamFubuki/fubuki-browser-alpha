@@ -355,6 +355,16 @@ where
                 let closed = self.tabs.close_tab(&tab_id);
                 if closed {
                     self.windows.detach_tab(&tab_id);
+                    let new_active_id = window_id.as_deref().and_then(|wid| {
+                        self.tabs
+                            .tabs_in_window(wid)
+                            .into_iter()
+                            .find(|tab| tab.is_active)
+                            .map(|tab| tab.id)
+                    });
+                    if let Some(ref new_active_id) = new_active_id {
+                        self.windows.set_active_tab(new_active_id);
+                    }
                     if let Err(e) = self.adapter.close_page(&tab_id) {
                         self.restore_from_snapshot(&snapshot);
                         return Err(CoreError::Message(e.to_string()));
@@ -364,14 +374,12 @@ where
                         tab_id: tab_id.clone(),
                     }));
                     // If the closed tab was active, emit tab.activated for the newly selected tab
-                    if was_active
-                        && let Some(ref wid) = window_id
-                        && let Some(new_active) =
-                            self.tabs.tabs_in_window(wid).iter().find(|t| t.is_active)
-                    {
-                        self.emit(Event::TabActivated(TabActivated {
-                            tab_id: new_active.id.clone(),
-                        }));
+                    if let Some(new_active_id) = new_active_id {
+                        if was_active {
+                            self.emit(Event::TabActivated(TabActivated {
+                                tab_id: new_active_id,
+                            }));
+                        }
                     }
                     if let Some(wid) = window_id
                         && self.tabs.tabs_in_window(&wid).is_empty()
@@ -1489,6 +1497,9 @@ fn default_commands() -> Vec<BrowserCommand> {
             "Bookmarks",
             "Cmd+D",
         ),
+        ("bookmarks.clear", "Clear Bookmarks", "Bookmarks", ""),
+        ("history.clear", "Clear History", "History", ""),
+        ("downloads.clear", "Clear Download History", "Downloads", ""),
         ("bookmarks.save", "Save Bookmark", "Bookmarks", ""),
         ("bookmarks.remove", "Remove Bookmark", "Bookmarks", ""),
     ]
@@ -1758,6 +1769,36 @@ mod tests {
         assert_eq!(state.tabs[0].url, "https://example.com");
         assert!(state.tabs[0].is_active);
         assert_eq!(state.windows[0].tab_ids, vec![state.tabs[0].id.clone()]);
+    }
+
+    #[test]
+    fn clearing_history_does_not_close_tabs() {
+        let mut core = BrowserCore::new();
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        frost_store::HistoryRepository::add_history(
+            &core.repository,
+            "Example",
+            "https://example.com",
+            "",
+        )
+        .unwrap();
+
+        let response = core.process(ProtocolRequest::new(Request::HistoryClearRange {
+            range: "all".into(),
+        }));
+        assert_eq!(response.response, Response::Bool(true));
+
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        assert!(state.history.is_empty());
+        assert_eq!(state.tabs.len(), 1);
+        assert_eq!(state.tabs[0].url, "https://example.com");
     }
 
     #[test]
@@ -2687,7 +2728,7 @@ mod tests {
         let mut core = BrowserCore::new();
         core.set_event_sender(tx);
 
-        // Create two tabs
+        // Create three tabs and make the middle tab active.
         core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://tab1.com".into()),
             active: true,
@@ -2695,8 +2736,27 @@ mod tests {
         }));
         core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://tab2.com".into()),
-            active: true,
+            active: false,
             window_id: None,
+        }));
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://tab3.com".into()),
+            active: false,
+            window_id: None,
+        }));
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!()
+        };
+        let middle_id = state
+            .tabs
+            .iter()
+            .find(|tab| tab.url == "https://tab2.com")
+            .unwrap()
+            .id
+            .clone();
+        core.process(ProtocolRequest::new(Request::TabsActivate {
+            tab_id: middle_id,
         }));
         while rx.try_recv().is_ok() {}
 
@@ -2725,6 +2785,12 @@ mod tests {
             has_activated,
             "should emit tab.activated for newly selected tab"
         );
+        let final_snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = final_snapshot.response else {
+            panic!()
+        };
+        let selected = state.tabs.iter().find(|tab| tab.is_active).unwrap();
+        assert_eq!(selected.url, "https://tab1.com");
     }
 
     /// Moving the last tab to a new window creates an active empty tab in the source.

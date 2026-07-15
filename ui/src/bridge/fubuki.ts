@@ -250,17 +250,20 @@ export type BridgeMethodMap = {
   };
   'bookmarks.list': { params: Record<string, never>; result: BookmarkRecord[] };
   'bookmarks.remove': { params: { url: string }; result: boolean };
+  'bookmarks.clear': { params: Record<string, never>; result: boolean };
   'history.list': { params: Record<string, never>; result: HistoryRecord[] };
   'history.remove': { params: { url: string }; result: boolean };
   'history.clearRange': {
     params: { range: 'lastHour' | 'today' | 'all' };
     result: boolean;
   };
+  'history.clear': { params: Record<string, never>; result: boolean };
   'downloads.list': { params: Record<string, never>; result: DownloadRecord[] };
   'downloads.remove': {
     params: { url?: string; path?: string };
     result: boolean;
   };
+  'downloads.clear': { params: Record<string, never>; result: boolean };
   'downloads.open': { params: { path: string }; result: boolean };
   'downloads.reveal': { params: { path: string }; result: boolean };
   'settings.get': { params: { key: string }; result: string | null };

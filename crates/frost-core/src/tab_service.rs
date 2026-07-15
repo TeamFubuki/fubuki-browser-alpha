@@ -98,8 +98,26 @@ impl TabService {
         let window_id = self.tabs[index].window_id.clone();
         self.tabs.remove(index);
 
-        if was_active && let Some(next) = self.tabs.iter_mut().find(|t| t.window_id == window_id) {
-            next.is_active = true;
+        if was_active {
+            // Select the tab immediately to the left in this window. When
+            // closing the first tab, select the new first tab instead.
+            let previous_id = self.tabs[..index.min(self.tabs.len())]
+                .iter()
+                .rev()
+                .find(|t| t.window_id == window_id)
+                .map(|t| t.id.clone())
+                .or_else(|| {
+                    self.tabs
+                        .iter()
+                        .find(|t| t.window_id == window_id)
+                        .map(|t| t.id.clone())
+                });
+
+            if let Some(previous_id) = previous_id {
+                if let Some(previous) = self.tabs.iter_mut().find(|t| t.id == previous_id) {
+                    previous.is_active = true;
+                }
+            }
         }
         true
     }
