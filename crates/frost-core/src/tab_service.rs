@@ -113,6 +113,14 @@ impl TabService {
         self.tabs.iter().find(|t| t.id == tab_id).cloned()
     }
 
+    pub fn tabs_in_window(&self, window_id: &str) -> Vec<TabState> {
+        self.tabs
+            .iter()
+            .filter(|t| t.window_id == window_id)
+            .cloned()
+            .collect()
+    }
+
     pub fn active_tab(&self) -> Option<TabState> {
         self.tabs.iter().find(|t| t.is_active).cloned()
     }

@@ -51,13 +51,16 @@ FubukiCefApp::FubukiCefApp(std::string uiDistPath)
 void FubukiCefApp::OnBeforeCommandLineProcessing(
     const CefString &, CefRefPtr<CefCommandLine> commandLine) {
   // Locally rebuilt/ad-hoc-signed app bundles receive a new designated code
-  // requirement and macOS asks for the Chromium Safe Storage item again. Alpha
-  // builds use Chromium's supported non-blocking development key storage. A
-  // signed distribution can opt into the system keychain explicitly.
-  const char *systemKeychain = std::getenv("FUBUKI_USE_SYSTEM_KEYCHAIN");
-  if (!systemKeychain || std::string(systemKeychain) != "1") {
-    commandLine->AppendSwitch("use-mock-keychain");
-  }
+  // requirement and macOS asks for the Chromium Safe Storage item again. Debug
+  // builds use Chromium's supported non-blocking development key storage.
+  // Release builds use the system keychain explicitly.
+#if defined(NDEBUG)
+  // Release build: use system keychain (do nothing, let CEF use default)
+  (void)commandLine;
+#else
+  // Debug build: use mock keychain
+  commandLine->AppendSwitch("use-mock-keychain");
+#endif
 }
 
 void FubukiCefApp::OnRegisterCustomSchemes(

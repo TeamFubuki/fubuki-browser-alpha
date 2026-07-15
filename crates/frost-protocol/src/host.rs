@@ -84,6 +84,8 @@ pub enum HostEvent {
         tab_id: String,
         window_id: String,
         url: String,
+        #[serde(default = "default_true")]
+        active: bool,
     },
     #[serde(rename = "page.closed", rename_all = "camelCase")]
     PageClosed { tab_id: String },
@@ -130,6 +132,10 @@ impl HostCommandEnvelope {
             command,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl HostEventEnvelope {

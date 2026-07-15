@@ -82,7 +82,12 @@ pub enum Request {
     #[serde(rename = "tabs.list")]
     TabsList,
     #[serde(rename = "tabs.create", rename_all = "camelCase")]
-    TabsCreate { url: Option<String>, active: bool },
+    TabsCreate {
+        url: Option<String>,
+        active: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+    },
     #[serde(rename = "tabs.activate", rename_all = "camelCase")]
     TabsActivate { tab_id: String },
     #[serde(rename = "tabs.close", rename_all = "camelCase")]

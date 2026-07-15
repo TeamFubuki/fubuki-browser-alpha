@@ -38,6 +38,37 @@ pub enum CoreError {
 
 pub type CoreResult<T> = Result<T, CoreError>;
 
+/// Tracks a pending operation that can be rolled back on host command failure.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) enum PendingOperation {
+    TabCreated {
+        tab_id: String,
+        window_id: String,
+    },
+    TabMoved {
+        tab_id: String,
+        from_window_id: String,
+        to_window_id: String,
+    },
+    TabActivated {
+        tab_id: String,
+        previous_active_tab_id: Option<String>,
+    },
+    WindowCreated {
+        window_id: String,
+    },
+}
+
+/// Snapshot of state before an operation for rollback purposes.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct StateSnapshot {
+    tabs: Vec<frost_protocol::TabState>,
+    windows: Vec<frost_protocol::WindowState>,
+    active_window_id: Option<String>,
+}
+
 pub struct HostCommandAdapter {
     tx: Sender<HostCommandEnvelope>,
 }
@@ -151,6 +182,8 @@ pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     closed_windows: Vec<ClosedWindow>,
     events: Vec<EventEnvelope>,
     event_tx: Option<Sender<EventEnvelope>>,
+    /// Tracks pending operations for rollback on host command failure
+    pending_operations: Vec<PendingOperation>,
 }
 
 impl BrowserCore<NoopEngineAdapter, InMemoryStore> {
@@ -191,6 +224,7 @@ where
             closed_windows: Vec::new(),
             events: Vec::new(),
             event_tx: None,
+            pending_operations: Vec::new(),
         }
     }
 
@@ -227,21 +261,28 @@ where
         match request {
             Request::AppSnapshot => Ok(Response::AppSnapshot(self.snapshot())),
             Request::TabsList => Ok(Response::TabsList(self.tabs.list())),
-            Request::TabsCreate { url, active } => {
-                let window_id = self
-                    .windows
-                    .active_window_id()
-                    .ok_or_else(|| CoreError::Message("No active window".into()))?
-                    .to_owned();
+            Request::TabsCreate {
+                url,
+                active,
+                window_id,
+            } => {
+                let window_id = window_id
+                    .or_else(|| self.windows.active_window_id().map(ToOwned::to_owned))
+                    .ok_or_else(|| CoreError::Message("No active window".into()))?;
                 let tab = self.tabs.create_tab(
                     window_id.clone(),
                     url.unwrap_or_else(|| "fubuki://newtab/".into()),
                     active,
                 );
                 self.windows.attach_tab(&window_id, &tab.id, true);
+                self.pending_operations.push(PendingOperation::TabCreated {
+                    tab_id: tab.id.clone(),
+                    window_id: window_id.clone(),
+                });
                 if let Err(e) = self.adapter.create_page(&tab.id, &window_id, &tab.url) {
                     self.windows.detach_tab(&tab.id);
                     self.tabs.remove_tab(&tab.id);
+                    self.pending_operations.pop();
                     return Err(CoreError::Message(e.to_string()));
                 }
                 self.emit(Event::TabCreated(tab));
@@ -373,13 +414,38 @@ where
                 let window_id = self.windows.create_window(false);
                 self.tabs.move_tab_to_window(&tab_id, &window_id);
                 self.windows.move_tab_to_window(&tab_id, &window_id);
+                self.pending_operations.push(PendingOperation::TabMoved {
+                    tab_id: tab_id.clone(),
+                    from_window_id: previous_window.clone().unwrap_or_default(),
+                    to_window_id: window_id.clone(),
+                });
                 if let Err(e) = self.adapter.move_page_to_window(&tab_id, &window_id) {
                     self.tabs
                         .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
                     self.windows
                         .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
                     self.windows.close_window(&window_id);
+                    self.pending_operations.pop();
                     return Err(CoreError::Message(e.to_string()));
+                }
+                // If the source window is now empty, create an empty tab there
+                if let Some(ref prev_window_id) = previous_window
+                    && self.tabs.tabs_in_window(prev_window_id).is_empty()
+                {
+                    let empty_tab = self.tabs.create_tab(
+                        prev_window_id.clone(),
+                        "fubuki://newtab/".into(),
+                        false,
+                    );
+                    self.windows.attach_tab(prev_window_id, &empty_tab.id, false);
+                    if let Err(e) =
+                        self.adapter.create_page(&empty_tab.id, prev_window_id, &empty_tab.url)
+                    {
+                        self.windows.detach_tab(&empty_tab.id);
+                        self.tabs.remove_tab(&empty_tab.id);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.emit(Event::TabCreated(empty_tab));
                 }
                 if let Some(window) = self.windows.get_window(&window_id) {
                     self.emit(Event::WindowCreated(window));
@@ -714,12 +780,13 @@ where
                 tab_id,
                 window_id,
                 url,
+                active,
             } => {
                 self.windows.ensure_window(&window_id, false);
                 if let Some(mut tab) = self.tabs.get_tab(&tab_id) {
                     tab.window_id = window_id.clone();
                     tab.url = url;
-                    tab.is_active = true;
+                    tab.is_active = active;
                     self.tabs.upsert_tab(tab);
                 } else {
                     self.tabs.upsert_tab(frost_protocol::TabState {
@@ -733,12 +800,14 @@ where
                         is_loading: false,
                         can_go_back: false,
                         can_go_forward: false,
-                        is_active: true,
+                        is_active: active,
                         is_pinned: false,
                     });
                 }
-                self.tabs.activate_tab(&tab_id);
-                self.windows.attach_tab(&window_id, &tab_id, true);
+                if active {
+                    self.tabs.activate_tab(&tab_id);
+                }
+                self.windows.attach_tab(&window_id, &tab_id, active);
                 Ok(())
             }
             HostEvent::PageClosed { tab_id } => {
@@ -878,11 +947,68 @@ where
         if result.ok {
             return Ok(());
         }
+        // Rollback the last pending operation if available
+        if let Some(op) = self.pending_operations.pop() {
+            self.rollback_operation(op);
+        }
         Err(CoreError::Message(format!(
             "Host command {} failed: {}",
             result.command_id,
             result.error.unwrap_or_else(|| "unknown error".into())
         )))
+    }
+
+    #[allow(dead_code)]
+    fn take_snapshot(&self) -> StateSnapshot {
+        StateSnapshot {
+            tabs: self.tabs.list(),
+            windows: self.windows.list(),
+            active_window_id: self.windows.active_window_id().map(ToOwned::to_owned),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn restore_from_snapshot(&mut self, snapshot: &StateSnapshot) {
+        self.tabs.replace_all(snapshot.tabs.clone());
+        self.windows
+            .replace_all(snapshot.windows.clone(), snapshot.active_window_id.clone());
+    }
+
+    fn rollback_operation(&mut self, op: PendingOperation) {
+        match op {
+            PendingOperation::TabCreated { tab_id, window_id } => {
+                self.windows.detach_tab(&tab_id);
+                self.tabs.remove_tab(&tab_id);
+                // If this was the only tab in the window, close the window
+                if self.tabs.tabs_in_window(&window_id).is_empty() {
+                    self.windows.close_window(&window_id);
+                }
+            }
+            PendingOperation::TabMoved {
+                tab_id,
+                from_window_id,
+                to_window_id,
+            } => {
+                // Move tab back to original window
+                self.tabs.move_tab_to_window(&tab_id, &from_window_id);
+                self.windows.move_tab_to_window(&tab_id, &from_window_id);
+                // If the new window is now empty, close it
+                if self.tabs.tabs_in_window(&to_window_id).is_empty() {
+                    self.windows.close_window(&to_window_id);
+                }
+            }
+            PendingOperation::TabActivated {
+                tab_id: _,
+                previous_active_tab_id,
+            } => {
+                if let Some(prev_tab_id) = previous_active_tab_id {
+                    self.tabs.activate_tab(&prev_tab_id);
+                }
+            }
+            PendingOperation::WindowCreated { window_id } => {
+                self.windows.close_window(&window_id);
+            }
+        }
     }
 
     fn host_tab_action(&mut self, tab_id: &str, action: HostTabAction) -> CoreResult<Response> {
@@ -1258,6 +1384,7 @@ mod tests {
         let response = core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://example.com".into()),
             active: true,
+            window_id: None,
         }));
 
         assert!(response.ok);
@@ -1282,6 +1409,7 @@ mod tests {
         core.process(ProtocolRequest::new(Request::TabsCreate {
             url: None,
             active: true,
+            window_id: None,
         }));
 
         let event = rx.try_recv().unwrap();
@@ -1299,6 +1427,7 @@ mod tests {
         let response = core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://example.com".into()),
             active: true,
+            window_id: None,
         }));
 
         assert_eq!(response.response, Response::Bool(true));
@@ -1315,6 +1444,7 @@ mod tests {
         let create = core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://example.com".into()),
             active: true,
+            window_id: None,
         }));
         assert!(create.ok);
         let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
@@ -1349,6 +1479,7 @@ mod tests {
             tab_id: "host-tab-1".into(),
             window_id: "host-window-1".into(),
             url: "fubuki://newtab/".into(),
+            active: true,
         }))
         .unwrap();
 
@@ -1422,6 +1553,7 @@ mod tests {
             core.process(ProtocolRequest::new(Request::TabsCreate {
                 url: Some(format!("https://{index}.example")),
                 active: true,
+                window_id: None,
             }));
         }
         while host_rx.try_recv().is_ok() {}
@@ -1476,6 +1608,7 @@ mod tests {
             let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
                 url: Some(format!("https://example{}.com", i)),
                 active: true,
+                window_id: Some(window_id.clone()),
             }));
             assert!(resp.ok);
             let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
@@ -1496,6 +1629,7 @@ mod tests {
         let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://w1.com".into()),
             active: true,
+            window_id: None,
         }));
         assert!(resp.ok);
         let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
@@ -1534,6 +1668,7 @@ mod tests {
         let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
             url: Some("https://w1.com".into()),
             active: true,
+            window_id: None,
         }));
         assert!(resp.ok);
         let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
@@ -1669,5 +1804,240 @@ mod tests {
         // Only one active tab total (all in same window, default window has no tabs).
         let active_count = s.tabs.iter().filter(|t| t.is_active).count();
         assert_eq!(active_count, 1, "only one tab should be active");
+    }
+
+    // ── Integration tests for new features ───────────────────────────────────
+
+    #[test]
+    fn tabs_create_with_explicit_window_id() {
+        let mut core = BrowserCore::new();
+        let (w2_id, _) = create_window_with_tabs(&mut core, 1);
+
+        // Create a tab explicitly in window 2
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+            window_id: Some(w2_id.clone()),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // The new tab should be in window 2
+        let new_tab = s.tabs.last().unwrap();
+        assert_eq!(new_tab.window_id, w2_id);
+        assert_eq!(new_tab.url, "https://example.com");
+    }
+
+    #[test]
+    fn tabs_create_active_false_does_not_activate_tab() {
+        let mut core = BrowserCore::new();
+        // Create initial active tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://initial.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // Create a tab with active=false
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://inactive.com".into()),
+            active: false,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // Only one tab should be active
+        let active_tabs: Vec<_> = s.tabs.iter().filter(|t| t.is_active).collect();
+        assert_eq!(active_tabs.len(), 1);
+        // The active tab should be the initial one, not the new one
+        assert_eq!(active_tabs[0].url, "https://initial.com");
+    }
+
+    #[test]
+    fn move_last_tab_creates_empty_tab_in_source_window() {
+        let mut core = BrowserCore::new();
+        // Create window 2 with one tab
+        let (w2_id, w2_tabs) = create_window_with_tabs(&mut core, 1);
+
+        // Move the only tab from window 2 to a new window
+        let resp = core.process(ProtocolRequest::new(Request::TabsMoveToNewWindow {
+            tab_id: w2_tabs[0].clone(),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // Window 2 should still exist with an empty tab
+        let w2_tabs_now: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
+        assert_eq!(w2_tabs_now.len(), 1, "window 2 should have an empty tab");
+        assert_eq!(
+            w2_tabs_now[0].url, "fubuki://newtab/",
+            "empty tab should have newtab URL"
+        );
+    }
+
+    #[test]
+    fn multiple_tabs_restoration() {
+        let mut core = BrowserCore::new();
+        // Create multiple tabs in window 1
+        for i in 0..3 {
+            let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+                url: Some(format!("https://tab{}.example.com", i)),
+                active: true,
+                window_id: None,
+            }));
+            assert!(resp.ok);
+        }
+
+        // Create window 2 with 2 tabs
+        let (w2_id, _) = create_window_with_tabs(&mut core, 2);
+
+        // Verify initial state
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let initial_tab_count = s.tabs.len();
+        assert_eq!(initial_tab_count, 5); // 3 + 2
+
+        // Close window 2
+        let resp = core.process(ProtocolRequest::new(Request::WindowsClose {
+            window_id: Some(w2_id.clone()),
+        }));
+        assert!(resp.ok);
+
+        // Verify window 2 is gone
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert_eq!(s.tabs.len(), 3);
+
+        // Restore window 2
+        let resp = core.process(ProtocolRequest::new(Request::WindowsReopenClosed));
+        assert!(resp.ok);
+
+        // Verify all tabs are restored
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert_eq!(s.tabs.len(), initial_tab_count);
+        let w2_tabs_restored: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
+        assert_eq!(w2_tabs_restored.len(), 2);
+    }
+
+    #[test]
+    fn host_failure_rolls_back_tab_creation() {
+        // Create a core with an adapter that always fails
+        struct FailingAdapter;
+        impl frost_engine_api::EngineAdapter for FailingAdapter {
+            fn create_page(&mut self, _: &str, _: &str, _: &str) -> frost_engine_api::EngineResult<()> {
+                Err(frost_engine_api::EngineError::Message("host failure".into()))
+            }
+            fn close_page(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn activate_page(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn pin_page(&mut self, _: &str, _: bool) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn move_page(&mut self, _: &str, _: usize) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn move_page_to_window(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn navigate(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn reload(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn stop(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn go_back(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn go_forward(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn create_window(&mut self, _: &str, _: bool) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn close_window(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+        }
+
+        let mut core = BrowserCore::with_adapter_and_settings(
+            FailingAdapter,
+            InMemoryStore::default(),
+        );
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let initial_tab_count = s.tabs.len();
+
+        // Try to create a tab - should fail and rollback
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(!resp.ok);
+
+        // Verify state is unchanged
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert_eq!(s.tabs.len(), initial_tab_count);
+    }
+
+    #[test]
+    fn host_command_result_failure_triggers_rollback() {
+        let mut core = BrowserCore::new();
+
+        // Simulate a host command failure
+        let result = HostCommandResultEnvelope {
+            version: frost_protocol::PROTOCOL_VERSION,
+            command_id: "cmd-fail".into(),
+            ok: false,
+            error: Some("host command failed".into()),
+        };
+
+        let err = core.process_host_command_result(result).unwrap_err();
+        assert!(err.to_string().contains("host command failed"));
+    }
+
+    #[test]
+    fn page_created_event_respects_active_flag() {
+        let mut core = BrowserCore::new();
+
+        // Create initial active tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://active.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // Simulate host creating a page with active=false
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+            tab_id: "host-tab-1".into(),
+            window_id: "host-window-1".into(),
+            url: "https://inactive.com".into(),
+            active: false,
+        }))
+        .unwrap();
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // The original tab should still be active
+        let active_tabs: Vec<_> = s.tabs.iter().filter(|t| t.is_active).collect();
+        assert_eq!(active_tabs.len(), 1);
+        assert_eq!(active_tabs[0].url, "https://active.com");
+
+        // The new tab should not be active
+        let host_tab = s.tabs.iter().find(|t| t.id == "host-tab-1").unwrap();
+        assert!(!host_tab.is_active);
     }
 }

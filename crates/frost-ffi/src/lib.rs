@@ -510,6 +510,7 @@ fn route_external_to_core(
             Some(ProtocolRequest::new(Request::TabsCreate {
                 url: url.clone(),
                 active: *active,
+                window_id: None,
             }))
         }
         ExternalCommand::TabClose { tab_id } => Some(ProtocolRequest::new(Request::TabsClose {
