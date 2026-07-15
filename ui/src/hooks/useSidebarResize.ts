@@ -5,7 +5,31 @@ import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
 
 function applyLiveSidebarWidth(width: number) {
   document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
-  void fubuki.invoke('ui.setSidebarWidth', { width });
+  queueNativeSidebarWidth(width);
+}
+
+let nativeWidthRequest: Promise<unknown> | undefined;
+let queuedNativeWidth: number | undefined;
+
+function queueNativeSidebarWidth(width: number) {
+  queuedNativeWidth = width;
+  if (nativeWidthRequest) return;
+
+  const flush = () => {
+    const next = queuedNativeWidth;
+    queuedNativeWidth = undefined;
+    if (next === undefined) return;
+    nativeWidthRequest = fubuki
+      .invoke('ui.setSidebarWidth', { width: next })
+      .catch((error) => {
+        console.error('[Fubuki] Failed to resize native content:', error);
+      })
+      .finally(() => {
+        nativeWidthRequest = undefined;
+        flush();
+      });
+  };
+  flush();
 }
 
 function currentSidebarWidth() {

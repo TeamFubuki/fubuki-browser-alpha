@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <ctime>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +37,10 @@ std::filesystem::path ProfilePath() {
 }
 
 std::filesystem::path DatabasePath() {
-  return ProfilePath() / "fubuki.sqlite3";
+  // Internal pages are read-only projections of the FrostEngine store. The
+  // legacy fubuki.sqlite3 database split reads from writes, making successful
+  // setting/delete actions appear to do nothing.
+  return ProfilePath() / "frost-engine.sqlite3";
 }
 
 std::string MimeForPath(const std::string& path) {
@@ -85,10 +89,6 @@ std::string HtmlEscape(const std::string& value) {
   return out;
 }
 
-void Execute(sqlite3* db, const std::string& sql) {
-  sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
-}
-
 std::string ColumnText(sqlite3_stmt* statement, int column) {
   const unsigned char* text = sqlite3_column_text(statement, column);
   return text ? reinterpret_cast<const char*>(text) : "";
@@ -104,38 +104,14 @@ sqlite3* OpenDatabase() {
   if (initialized) {
     return cached;
   }
-  std::filesystem::create_directories(ProfilePath());
-  if (sqlite3_open(DatabasePath().string().c_str(), &cached) != SQLITE_OK) {
+  if (sqlite3_open_v2(DatabasePath().string().c_str(), &cached,
+                      SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
     cached = nullptr;
     return nullptr;
   }
   // Only mark as initialized after a successful open so retries are possible.
   initialized = true;
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS bookmarks(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL "
-          "UNIQUE,favicon_url TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,title TEXT NOT NULL,url TEXT NOT NULL,created_at "
-          "TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS downloads(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,download_id TEXT,url TEXT,path TEXT,state TEXT,"
-          "percent INTEGER DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT)");
-  // Migration for existing databases that lack download_id column.
-  // This will error harmlessly on fresh DBs (column already exists in CREATE TABLE).
-  Execute(cached, "ALTER TABLE downloads ADD COLUMN download_id TEXT");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY "
-          "AUTOINCREMENT,level TEXT,message TEXT,created_at TEXT NOT NULL)");
-  Execute(cached,
-          "CREATE TABLE IF NOT EXISTS site_permissions(origin TEXT NOT "
-          "NULL,permission TEXT NOT NULL,value TEXT NOT NULL,updated_at "
-          "TEXT NOT NULL,PRIMARY KEY(origin,permission))");
+  sqlite3_busy_timeout(cached, 2500);
   return cached;
 }
 
@@ -250,6 +226,25 @@ int ClampPercent(int percent) {
   return std::max(0, std::min(100, percent));
 }
 
+std::string FormatRecordTime(const std::string& value, bool dayOnly) {
+  try {
+    size_t parsed = 0;
+    const auto epoch = static_cast<std::time_t>(std::stoll(value, &parsed));
+    if (parsed == value.size()) {
+      std::tm local{};
+      localtime_r(&epoch, &local);
+      char buffer[32]{};
+      std::strftime(buffer, sizeof(buffer), dayOnly ? "%Y-%m-%d" : "%Y-%m-%d %H:%M", &local);
+      return buffer;
+    }
+  } catch (...) {
+  }
+  if (dayOnly && value.size() >= 10) {
+    return value.substr(0, 10);
+  }
+  return value;
+}
+
 std::string NormalizedDownloadState(const Record& record) {
   if (record.state == "in_progress" && record.percent >= 100) {
     return "completed";
@@ -283,7 +278,7 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
 
   const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at "
                                                  "FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history" ? "SELECT title,url,'','','',0,created_at FROM "
+                          : table == "history" ? "SELECT title,url,favicon_url,'','',0,created_at FROM "
                                                  "history ORDER BY id DESC LIMIT ?"
                           : table == "logs"
                               ? "SELECT message,'','',level,'',0,created_at FROM logs ORDER BY id "
@@ -347,11 +342,14 @@ std::string PageChrome(const std::string& title, const std::string& body) {
        << HtmlEscape(appearance) << "\"><head><meta charset=\"utf-8\"><title>"
        << HtmlEscape(Label(title)) << "</title>" << FubukiFaviconLink() << R"(<style>
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Helvetica Neue",sans-serif;letter-spacing:0;--bg:#f5f6f8;--surface:#fff;--surface-2:#eef1f4;--text:#15171a;--muted:#66707c;--line:rgb(22 28 36/.12);--hover:rgb(22 28 36/.055);--active:rgb(28 101 242/.1);--accent:#1f6feb;--danger:#b42318;--shadow:0 1px 2px rgb(18 24 32/.06)}
+.download-status{grid-column:1/-1}
+.title,.meta{display:block}.row>a{overflow:hidden}
 html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}
 @media(prefers-color-scheme:dark){html[data-appearance=system] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}}
 @keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 25%,transparent)}100%{box-shadow:0 0 0 6px transparent}}
-main{width:min(1040px,calc(100vw - 48px));margin:0 auto;padding:34px 0 56px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px}h1{font-size:30px;line-height:1.08;margin:0;font-weight:720}h2{font-size:13px;margin:14px 0 5px;color:var(--muted);font-weight:680}a{color:inherit}.list{display:grid;gap:7px}.row{min-height:48px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);text-decoration:none;animation:rowIn .28s cubic-bezier(.2,.8,.2,1);transition:background .16s ease,border-color .16s ease,transform .16s ease}.row:hover{background:var(--hover);border-color:color-mix(in srgb,var(--line) 55%,var(--accent));transform:translateY(-1px)}.row>a{min-width:0;text-decoration:none}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#25a8d7,#6d7edc 58%,#f08072)}.favicon img{width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:640}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;line-height:1.45}.download-main{display:grid;gap:5px;min-width:0}.download-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;line-height:1.35}.download-bar{position:relative;overflow:hidden;width:min(260px,42vw);height:4px;border-radius:999px;background:var(--surface-2)}.download-bar span{position:absolute;inset:0 auto 0 0;width:var(--progress);border-radius:inherit;background:var(--accent);transition:width .18s ease}.button,.chip{min-height:30px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}.button:hover,.chip:hover{background:var(--hover);transform:translateY(-1px)}.danger{color:var(--danger)}.disabled{color:var(--muted);opacity:.55;cursor:not-allowed}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:14px}.field{display:grid;gap:11px;padding:14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);animation:rowIn .28s cubic-bezier(.2,.8,.2,1);scroll-margin-top:18px}.field>span{font-weight:680}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));background:var(--active);color:var(--accent)}input{height:34px;min-width:220px;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);font:inherit;outline:0;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}input:focus{border-color:var(--accent);animation:focusPulse .5s ease}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}.settings-nav{position:sticky;top:20px;display:grid;gap:4px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow)}.settings-nav a{min-height:34px;display:flex;align-items:center;padding:0 10px;border-radius:6px;color:var(--muted);font-weight:640;text-decoration:none;transition:background .16s ease,color .16s ease,transform .16s ease}.settings-nav a:hover{background:var(--hover);color:var(--text);transform:translateX(2px)}.settings-content{display:grid;gap:14px}.settings-search{margin-bottom:0}.section-kicker{color:var(--muted);font-size:12px}.switch-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}@media(max-width:760px){main{width:min(100% - 28px,1040px);padding-top:24px}.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}input{min-width:0;width:100%}.row{grid-template-columns:20px minmax(0,1fr)}.download-bar{width:100%}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+main{width:min(1040px,calc(100vw - 48px));margin:0 auto;padding:34px 0 56px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px;flex:0 0 auto}h1{font-size:30px;line-height:1.08;margin:0;font-weight:720;overflow-wrap:anywhere}h2{font-size:13px;margin:14px 0 5px;color:var(--muted);font-weight:680}a{color:inherit}.list{display:grid;gap:7px}.row{min-height:48px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);text-decoration:none;animation:rowIn .28s cubic-bezier(.2,.8,.2,1);transition:background .16s ease,border-color .16s ease,transform .16s ease}.row:hover{background:var(--hover);border-color:color-mix(in srgb,var(--line) 55%,var(--accent));transform:translateY(-1px)}.row>a{display:block;min-width:0;text-decoration:none}.row>form{justify-self:end}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#25a8d7,#6d7edc 58%,#f08072)}.favicon img{display:block;width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:640}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;line-height:1.45}.download-main{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}.download-main>div{min-width:0}.download-actions{justify-content:flex-end}.download-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;line-height:1.35}.download-bar{position:relative;overflow:hidden;width:min(260px,42vw);height:4px;border-radius:999px;background:var(--surface-2)}.download-bar span{position:absolute;inset:0 auto 0 0;width:var(--progress);border-radius:inherit;background:var(--accent);transition:width .18s ease}.button,.chip{min-height:30px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620;white-space:nowrap;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}.button:hover,.chip:hover{background:var(--hover);transform:translateY(-1px)}.danger{color:var(--danger)}.disabled{color:var(--muted);opacity:.55;cursor:not-allowed}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:14px}.field{display:grid;gap:11px;padding:14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);animation:rowIn .28s cubic-bezier(.2,.8,.2,1);scroll-margin-top:18px;min-width:0}.field>span{font-weight:680}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));background:var(--active);color:var(--accent)}input{height:34px;min-width:220px;max-width:100%;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);font:inherit;outline:0;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}input:focus{border-color:var(--accent);animation:focusPulse .5s ease}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}.settings-nav{position:sticky;top:20px;display:grid;gap:4px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow)}.settings-nav a{min-height:34px;display:flex;align-items:center;padding:0 10px;border-radius:6px;color:var(--muted);font-weight:640;text-decoration:none;transition:background .16s ease,color .16s ease,transform .16s ease}.settings-nav a:hover{background:var(--hover);color:var(--text);transform:translateX(2px)}.settings-content{display:grid;gap:14px;min-width:0}.settings-search{margin-bottom:0}.section-kicker{color:var(--muted);font-size:12px}.switch-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}@media(max-width:760px){main{width:min(calc(100% - 28px),1040px);padding-top:24px}.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}input{min-width:0;width:100%}.row{grid-template-columns:20px minmax(0,1fr)}.row>form{grid-column:2;justify-self:start}.download-main{grid-template-columns:1fr}.download-actions{justify-content:flex-start}.download-bar{width:100%}}@media(max-width:420px){main{width:calc(100% - 20px)}header{align-items:flex-start}h1{font-size:25px}.settings-nav{grid-template-columns:1fr}.button,.chip{white-space:normal;text-align:center}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}
+@media(min-width:481px){.row{grid-template-columns:22px minmax(0,1fr) auto}.row>form{grid-column:auto;justify-self:end}}
 </style></head><body><main><header>)"
        << FubukiLogoSvg() << "<h1>" << HtmlEscape(Label(title)) << "</h1></header>" << body
        << "</main></body></html>";
@@ -366,11 +364,33 @@ std::string HiddenInput(const std::string &name, const std::string &value) {
 std::string ActionForm(const std::string &key, const std::string &value,
                        const std::string &returnUrl, const std::string &label,
                        const std::string &classes) {
-  return "<form method=\"post\" action=\"fubuki://settings/set\" "
+  // Keep destructive actions as POST, but duplicate the encoded form data in
+  // the action URL because some CEF custom-scheme versions omit POST elements
+  // before OnBeforeBrowse. The client accepts this fallback only for POSTs
+  // originating from a trusted internal page; the scheme handler always 403s.
+  const std::string query =
+      "key=" + CefURIEncode(key, false).ToString() +
+      "&value=" + CefURIEncode(value, false).ToString() +
+      "&return=" + CefURIEncode(returnUrl, false).ToString();
+  return "<form method=\"post\" action=\"fubuki://settings/set?" + query + "\" "
          "style=\"display:inline\">" +
          HiddenInput("key", key) + HiddenInput("value", value) +
          HiddenInput("return", returnUrl) + "<button class=\"" +
          HtmlEscape(classes) + "\">" + HtmlEscape(label) + "</button></form>";}
+
+std::string SettingForm(const std::string &key, const std::string &value,
+                        const std::string &returnUrl, const std::string &label,
+                        const std::string &classes) {
+  // Non-destructive setting selection uses a user-gesture-gated GET which is
+  // intercepted by FubukiClient. The scheme handler still rejects direct
+  // fubuki://settings/set navigation. CEF drops urlencoded POST bodies for
+  // these custom-scheme navigations on some versions.
+  return "<form method=\"get\" action=\"fubuki://settings/set\" "
+         "style=\"display:inline\">" +
+         HiddenInput("key", key) + HiddenInput("value", value) +
+         HiddenInput("return", returnUrl) + "<button class=\"" +
+         HtmlEscape(classes) + "\">" + HtmlEscape(label) + "</button></form>";
+}
 
 std::string FileName(const std::string& path, const std::string& url) {
   const std::string source = path.empty() ? url : path;
@@ -424,17 +444,16 @@ std::string DownloadsHtml() {
               "aria-hidden=\"true\">↓</span><div class=\"download-main\"><div><div class=\"title\">"
            << HtmlEscape(FileName(record.path, record.url)) << "</div><div class=\"meta\">"
            << HtmlEscape(record.path.empty() ? record.url : record.path)
-           << "</div></div><span class=\"segmented\">"
+           << "</div></div><span class=\"segmented download-actions\">"
            << ActionForm("openDownload", record.path, "fubuki://downloads/",
                          Label("Open"), "chip")
            << ActionForm("revealDownload", record.path, "fubuki://downloads/",
                          Label("Reveal"), "chip")
            << ActionForm("removeDownload", record.path, "fubuki://downloads/",
                          Label("Remove"), "chip danger")
-           << "</span></article><div class=\"meta\" style=\"padding:0 10px 6px "
-              "42px\">"
-           << HtmlEscape(record.state.empty() ? "unknown" : record.state) << " "
-           << record.percent << "%</div>";    }
+           << "</span><div class=\"download-status\"><span>"
+           << HtmlEscape(status) << "</span><div class=\"download-bar\" style=\"--progress:"
+           << percent << "%\"><span></span></div></div></div></article>";    }
     body << "</div>";
   }
   return PageChrome("Downloads", body.str());
@@ -463,8 +482,9 @@ std::string HistoryHtml() {
     body << "<div class=\"list\">";
     std::string currentDate;
     for (const auto& record : records) {
-      const std::string day =
-          record.createdAt.size() >= 10 ? record.createdAt.substr(0, 10) : Label("Earlier");
+      const std::string day = record.createdAt.empty()
+                                  ? Label("Earlier")
+                                  : FormatRecordTime(record.createdAt, true);
       if (day != currentDate) {
         currentDate = day;
         body << "<h2 style=\"font-size:13px;margin:12px 0 "
@@ -477,7 +497,7 @@ std::string HistoryHtml() {
            << "\"><span class=\"title\">"
            << HtmlEscape(record.title.empty() ? record.url : record.title)
            << "</span><span class=\"meta\">"
-           << HtmlEscape(record.createdAt + " · " + record.url)
+           << HtmlEscape(FormatRecordTime(record.createdAt, false) + " · " + record.url)
            << "</span></a>"
            << ActionForm("removeHistory", record.url, "fubuki://history/",
                          Label("Delete"), "button danger")
@@ -500,8 +520,8 @@ std::string SettingsHtml() {
 
   auto chip = [](const std::string &key, const std::string &current,
                  const std::string &value, const std::string &label) {
-    return ActionForm(key, value, "fubuki://settings/", label,
-                      "chip" + std::string(current == value ? " selected" : ""));
+    return SettingForm(key, value, "fubuki://settings/", label,
+                       "chip" + std::string(current == value ? " selected" : ""));
   };
 
   std::ostringstream body;
@@ -885,10 +905,10 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
   offset_ = 0;
   auto& cache = PageCache::Instance();
 
-  // Destructive internal-page actions must never execute from a URL GET.
-  // `fubuki://settings/set?...` is only honored when submitted as a POST form
-  // body (see SettingsHtml), never from a navigation/link click. Reject any
-  // GET-style query-string invocation to avoid CSRF-style state changes.
+  // State-changing internal-page actions are intercepted by FubukiClient only
+  // after it verifies the HTTP method, user gesture where required, and trusted
+  // source page. The scheme handler itself never executes a mutation, so direct
+  // fubuki://settings/set navigation cannot become a destructive GET endpoint.
   if (url.rfind("fubuki://settings/set", 0) == 0) {
     const std::string html =
         "<!doctype html><meta charset=\"utf-8\"><title>Rejected</title>"

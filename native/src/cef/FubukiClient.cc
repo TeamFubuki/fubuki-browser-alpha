@@ -414,13 +414,22 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
   }
   const std::string url = request->GetURL().ToString();
   if (StartsWith(url, "fubuki://settings/set")) {
-    if (!user_gesture || is_redirect ||
-        !IsTrustedSettingsActionSource(frame->GetURL().ToString())) {
+    const std::string method = request->GetMethod().ToString();
+    // CEF does not consistently mark HTML form POST navigations as a user
+    // gesture. Authenticity comes from a trusted internal-page source plus a
+    // POST request; requiring user_gesture here silently discarded every form
+    // submission. GET remains gesture-gated and destructive keys are rejected.
+    if (is_redirect || !IsTrustedSettingsActionSource(frame->GetURL().ToString()) ||
+        (method != "POST" && !user_gesture)) {
       return true;
     }
-    const std::string method = request->GetMethod().ToString();
-    const std::string query =
-        method == "POST" ? PostBody(request) : QueryString(url);
+    std::string query = method == "POST" ? PostBody(request) : QueryString(url);
+    if (method == "POST" && query.empty()) {
+      // CEF can omit POST elements for custom-scheme form navigation. Action
+      // forms duplicate the same encoded fields in their URL; this branch is
+      // still POST-only and retains the trusted-source check above.
+      query = QueryString(url);
+    }
     const std::string key = FormParam(query, "key");
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
       if (!window_->IsPrivate()) {

@@ -8,6 +8,7 @@
 #include "include/cef_task.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
+#include "utils/JsonUtils.h"
 
 namespace fubuki {
 
@@ -89,17 +90,8 @@ void BrowserAppController::StartHostCommandPoller() {
 }
 
 void BrowserAppController::DispatchHostCommands() {
-  for (const auto &context : windows_) {
-    BrowserWindow *window = context->window.get();
-    if (!window) {
-      continue;
-    }
-    NativeBridge *bridge = window->Bridge();
-    if (!bridge) {
-      continue;
-    }
-    std::string commandJson;
-    while (bridge->PollHostCommandJson(commandJson)) {
+  std::string commandJson;
+  while (engine_.PollHostCommandJson(commandJson)) {
       if (commandJson.empty()) {
         continue;
       }
@@ -114,34 +106,76 @@ void BrowserAppController::DispatchHostCommands() {
                                       : "";
       const std::string commandId =
           envelope->HasKey("id") ? envelope->GetString("id").ToString() : "";
+      CefRefPtr<CefDictionaryValue> payload =
+          envelope->HasKey("payload") && envelope->GetType("payload") == VTYPE_DICTIONARY
+              ? envelope->GetDictionary("payload")
+              : CefDictionaryValue::Create();
 
       if (command == "window.create") {
-        CefRefPtr<CefDictionaryValue> payload =
-            envelope->HasKey("payload")
-                ? envelope->GetDictionary("payload")
-                : CefDictionaryValue::Create();
         const bool isPrivate =
             payload->HasKey("isPrivate") && payload->GetBool("isPrivate");
-        const bool ok = NewWindow(isPrivate, nullptr) != nullptr;
-        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
-                                                                ok ? "" : "failed to create window"));
+        const std::string windowId = payload->GetString("windowId").ToString();
+        const bool ok = !windowId.empty() && NewWindow(isPrivate, nullptr, windowId) != nullptr;
+        engine_.PushHostCommandResultJson(HostCommandResultJson(
+            commandId, ok, ok ? "" : "failed to create window"));
       } else if (command == "window.close") {
-        CefRefPtr<CefDictionaryValue> payload =
-            envelope->HasKey("payload")
-                ? envelope->GetDictionary("payload")
-                : CefDictionaryValue::Create();
         const std::string targetWindowId =
             payload->HasKey("windowId") ? payload->GetString("windowId").ToString() : "";
-        const bool ok = (targetWindowId == window->WindowId())
-                            ? window->CloseWindow()
-                            : true;
-        bridge->PushHostCommandResultJson(HostCommandResultJson(commandId, ok,
-                                                                ok ? "" : "failed to close window"));
+        BrowserWindow *target = FindWindow(targetWindowId);
+        const bool ok = target && target->CloseWindow();
+        engine_.PushHostCommandResultJson(HostCommandResultJson(
+            commandId, ok, ok ? "" : "failed to close window"));
       } else {
-        // Page/overlay/permission commands are owned by the window itself.
-        // Forward the already-polled command instead of re-draining the queue,
-        // so the specific command we just read is not discarded.
-        window->ExecuteHostCommand(commandJson);
+        BrowserWindow *target = nullptr;
+        if (command == "page.create") {
+          target = FindWindow(payload->GetString("windowId").ToString());
+        } else if (payload->HasKey("tabId")) {
+          target = FindWindowForTab(payload->GetString("tabId").ToString());
+        }
+        if (!target) {
+          target = activeWindow_;
+        }
+        if (target) {
+          target->ExecuteHostCommand(commandJson);
+        } else {
+          engine_.PushHostCommandResultJson(
+              HostCommandResultJson(commandId, false, "no target window"));
+        }
+      }
+  }
+
+  // Drain differential engine events every tick. Leaving this unbounded queue
+  // unread caused memory growth during long sessions and meant external/core
+  // mutations never reached the UI.
+  std::string eventJson;
+  while (engine_.PollEventJson(eventJson)) {
+    auto value = CefParseJSON(eventJson, JSON_PARSER_RFC);
+    if (!value || value->GetType() != VTYPE_DICTIONARY) {
+      continue;
+    }
+    auto envelope = value->GetDictionary();
+    const std::string eventName = envelope->GetString("event").ToString();
+    if (eventName.empty()) {
+      continue;
+    }
+    auto payload = envelope->HasKey("payload") &&
+                           envelope->GetType("payload") == VTYPE_DICTIONARY
+                       ? envelope->GetDictionary("payload")
+                       : CefDictionaryValue::Create();
+    BrowserWindow *target = nullptr;
+    if (payload->HasKey("windowId")) {
+      target = FindWindow(payload->GetString("windowId").ToString());
+    }
+    if (!target && payload->HasKey("tabId")) {
+      target = FindWindowForTab(payload->GetString("tabId").ToString());
+    }
+    if (target && target->Bridge()) {
+      target->Bridge()->EmitToUi(eventName, payload->Copy(false));
+      continue;
+    }
+    for (const auto &context : windows_) {
+      if (context->window && context->window->Bridge()) {
+        context->window->Bridge()->EmitToUi(eventName, payload->Copy(false));
       }
     }
   }
@@ -149,12 +183,14 @@ void BrowserAppController::DispatchHostCommands() {
 
 BrowserWindow *
 BrowserAppController::NewWindow(bool privateWindow,
-                                CefRefPtr<CefDictionaryValue> restoreState) {
+                                CefRefPtr<CefDictionaryValue> restoreState,
+                                const std::string &engineWindowId) {
   CEF_REQUIRE_UI_THREAD();
   auto context = std::make_unique<WindowContext>();
   context->tabManager = std::make_unique<TabManager>(eventBus_);
   BrowserWindow *raw = nullptr;
-  const std::string windowId = NextWindowId();
+  const std::string windowId =
+      engineWindowId.empty() ? NextWindowId() : engineWindowId;
   context->window = std::make_unique<BrowserWindow>(*this, *context->tabManager,
                                                     windowId, privateWindow);
   raw = context->window.get();
@@ -220,12 +256,41 @@ void BrowserAppController::NotifyWindowFocused(BrowserWindow *window) {
                        window->WindowId(),
                        "",
                        ""});
+    engine_.PushHostEventJson(
+        "{\"version\":0,\"event\":\"window.focused\",\"payload\":{\"windowId\":" +
+        JsonEscape(window->WindowId()) + "}}");
   }
 }
 
 void BrowserAppController::NotifyWindowClosed(BrowserWindow *window) {
   CEF_REQUIRE_UI_THREAD();
   if (!window) {
+    return;
+  }
+  // NSWindow invokes windowWillClose synchronously from performClose:. Erasing
+  // the owning unique_ptr in that callback destroyed BrowserWindow while its
+  // CloseWindow() stack frame was still active. Defer ownership teardown until
+  // Cocoa has unwound the close callback.
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](BrowserAppController *app, BrowserWindow *closed) {
+                            if (app && app == GetBrowserAppController()) {
+                              app->FinalizeWindowClosed(closed);
+                            }
+                          },
+                          this, window));
+}
+
+void BrowserAppController::FinalizeWindowClosed(BrowserWindow *window) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window) {
+    return;
+  }
+  const auto existing = std::find_if(
+      windows_.begin(), windows_.end(),
+      [&](const std::unique_ptr<WindowContext> &context) {
+        return context->window.get() == window;
+      });
+  if (existing == windows_.end()) {
     return;
   }
   const std::string windowId = window->WindowId();
@@ -235,13 +300,7 @@ void BrowserAppController::NotifyWindowClosed(BrowserWindow *window) {
       closedWindows_.erase(closedWindows_.begin());
     }
   }
-  auto it = std::find_if(windows_.begin(), windows_.end(),
-                         [&](const std::unique_ptr<WindowContext> &context) {
-                           return context->window.get() == window;
-                         });
-  if (it != windows_.end()) {
-    windows_.erase(it);
-  }
+  windows_.erase(existing);
   activeWindow_ = windows_.empty() ? nullptr : windows_.back()->window.get();
   eventBus_.Publish(
       {EventType::WindowClosed, "window.closed", {}, windowId, "", ""});
@@ -268,6 +327,29 @@ void BrowserAppController::PersistSession() {
 
 BrowserWindow *BrowserAppController::ActiveWindow() const {
   return activeWindow_;
+}
+
+BrowserWindow *BrowserAppController::FindWindow(const std::string &windowId) const {
+  for (const auto &context : windows_) {
+    if (context->window && context->window->WindowId() == windowId) {
+      return context->window.get();
+    }
+  }
+  return nullptr;
+}
+
+BrowserWindow *BrowserAppController::FindWindowForTab(const std::string &tabId) const {
+  for (const auto &context : windows_) {
+    if (!context->window) {
+      continue;
+    }
+    for (const auto &tab : context->window->Tabs().GetTabs()) {
+      if (tab.id == tabId) {
+        return context->window.get();
+      }
+    }
+  }
+  return nullptr;
 }
 
 std::vector<BrowserWindow *> BrowserAppController::Windows() const {

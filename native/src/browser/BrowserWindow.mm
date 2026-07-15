@@ -15,6 +15,7 @@
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
 #include "include/wrapper/cef_helpers.h"
+#include "utils/JsonUtils.h"
 #include "utils/UrlUtils.h"
 
 namespace {
@@ -446,6 +447,10 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
                                                    Store().GetSetting("searchEngine"),
                                                    Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active);
+  PushHostEventJson(
+      "{\"version\":0,\"event\":\"page.created\",\"payload\":{\"tabId\":" +
+      JsonEscape(tab.id) + ",\"windowId\":" + JsonEscape(windowId_) +
+      ",\"url\":" + JsonEscape(tab.url) + "}}");
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
@@ -461,6 +466,10 @@ bool BrowserWindow::CreateTabWithId(const std::string& input,
                                                    Store().GetSetting("searchEngine"),
                                                    Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active, tabId);
+  PushHostEventJson(
+      "{\"version\":0,\"event\":\"page.created\",\"payload\":{\"tabId\":" +
+      JsonEscape(tab.id) + ",\"windowId\":" + JsonEscape(windowId_) +
+      ",\"url\":" + JsonEscape(tab.url) + "}}");
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
@@ -590,7 +599,8 @@ bool BrowserWindow::MoveTab(const std::string& tabId, int toIndex) {
   return ok;
 }
 
-bool BrowserWindow::MoveTabToNewWindow(const std::string& tabId) {
+bool BrowserWindow::MoveTabToNewWindow(const std::string& tabId,
+                                       const std::string& engineWindowId) {
   Tab* tab = tabManager_.GetTab(tabId);
   if (!tab) {
     return false;
@@ -598,6 +608,7 @@ bool BrowserWindow::MoveTabToNewWindow(const std::string& tabId) {
   auto windowState = CefDictionaryValue::Create();
   auto tabs = CefListValue::Create();
   auto item = CefDictionaryValue::Create();
+  item->SetString("id", tab->id);
   item->SetString("title", tab->title);
   item->SetString("url", tab->url);
   item->SetString("faviconUrl", tab->faviconUrl);
@@ -605,7 +616,11 @@ bool BrowserWindow::MoveTabToNewWindow(const std::string& tabId) {
   item->SetBool("active", true);
   tabs->SetDictionary(0, item);
   windowState->SetList("tabs", tabs);
-  app_.RequestNewWindow(privateWindow_, windowState);
+  if (engineWindowId.empty()) {
+    app_.RequestNewWindow(privateWindow_, windowState);
+  } else {
+    app_.NewWindow(privateWindow_, windowState, engineWindowId);
+  }
   CloseTab(tabId);
   return true;
 }
@@ -977,7 +992,9 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
       savedValue = std::to_string(static_cast<int>(kDefaultSidebarWidth));
     }
   }
-  Store().SetSetting(key, savedValue);
+  if (!Store().SetSetting(key, savedValue)) {
+    return false;
+  }
   if (key == "sidebarWidth") {
     liveSidebarWidth_ = 0.0;
   }
@@ -997,7 +1014,9 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
 }
 
 bool BrowserWindow::ResetSetting(const std::string& key) {
-  Store().ResetSetting(key);
+  if (!Store().ResetSetting(key)) {
+    return false;
+  }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://settings");
@@ -1162,6 +1181,16 @@ bool JsonBool(const CefRefPtr<CefDictionaryValue>& dict, const std::string& key)
   return dict->HasKey(key) && dict->GetBool(key);
 }
 
+double JsonNumber(const CefRefPtr<CefDictionaryValue>& dict,
+                  const std::string& key, double fallback) {
+  if (!dict->HasKey(key)) {
+    return fallback;
+  }
+  return dict->GetType(key) == VTYPE_INT
+             ? static_cast<double>(dict->GetInt(key))
+             : dict->GetDouble(key);
+}
+
 }  // namespace
 
 bool BrowserWindow::PushHostEventJson(const std::string& eventJson) {
@@ -1188,18 +1217,34 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     const std::string url = JsonString(payload, "url");
     ok = !tabId.empty() &&
          CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
-    if (ok) {
-      PushHostEventJson(HostEventJson("page.created",
-                                      {{ "tabId", JsonStringValue(tabId) },
-                                       { "windowId", JsonStringValue(windowId_) },
-                                       { "url", JsonStringValue(url) }}));
-    } else {
+    if (!ok) {
       error = "failed to create page";
     }
   } else if (command == "page.close") {
     ok = CloseTab(JsonString(payload, "tabId"));
     if (!ok) {
       error = "unknown tab";
+    }
+  } else if (command == "page.activate") {
+    ok = ActivateTab(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.pin") {
+    ok = PinTab(JsonString(payload, "tabId"), JsonBool(payload, "pinned"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.move") {
+    ok = MoveTab(JsonString(payload, "tabId"), payload->GetInt("toIndex"));
+    if (!ok) {
+      error = "unknown tab";
+    }
+  } else if (command == "page.moveToWindow") {
+    ok = MoveTabToNewWindow(JsonString(payload, "tabId"),
+                            JsonString(payload, "windowId"));
+    if (!ok) {
+      error = "failed to move tab";
     }
   } else if (command == "page.navigate") {
     ok = Navigate(JsonString(payload, "tabId"), JsonString(payload, "url"));
@@ -1239,10 +1284,8 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
     }
   } else if (command == "ui.overlay.set") {
     const bool active = JsonBool(payload, "active");
-    const double width =
-        payload->HasKey("width") ? payload->GetDouble("width") : 392.0;
-    const double height =
-        payload->HasKey("height") ? payload->GetDouble("height") : 560.0;
+    const double width = JsonNumber(payload, "width", 392.0);
+    const double height = JsonNumber(payload, "height", 560.0);
     ok = SetUiOverlayActive(active, width, height);
     if (!ok) {
       error = "failed to set overlay";
@@ -1549,7 +1592,12 @@ bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bo
   }
   const std::string url =
       tabState->HasKey("url") ? tabState->GetString("url").ToString() : "fubuki://newtab/";
-  const bool ok = CreateTab(url.empty() ? "fubuki://newtab/" : url, active);
+  const std::string restoredId =
+      tabState->HasKey("id") ? tabState->GetString("id").ToString() : "";
+  const bool ok = restoredId.empty()
+                      ? CreateTab(url.empty() ? "fubuki://newtab/" : url, active)
+                      : CreateTabWithId(url.empty() ? "fubuki://newtab/" : url,
+                                        restoredId, active);
   if (ok) {
     if (Tab* tab = active ? tabManager_.GetActiveTab() : nullptr) {
       const std::string restoredTitle = tabState->GetString("title").ToString();

@@ -70,6 +70,33 @@ impl EngineAdapter for HostCommandAdapter {
         })
     }
 
+    fn activate_page(&mut self, tab_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageActivate {
+            tab_id: tab_id.to_owned(),
+        })
+    }
+
+    fn pin_page(&mut self, tab_id: &str, pinned: bool) -> EngineResult<()> {
+        self.send(HostCommand::PagePin {
+            tab_id: tab_id.to_owned(),
+            pinned,
+        })
+    }
+
+    fn move_page(&mut self, tab_id: &str, to_index: usize) -> EngineResult<()> {
+        self.send(HostCommand::PageMove {
+            tab_id: tab_id.to_owned(),
+            to_index,
+        })
+    }
+
+    fn move_page_to_window(&mut self, tab_id: &str, window_id: &str) -> EngineResult<()> {
+        self.send(HostCommand::PageMoveToWindow {
+            tab_id: tab_id.to_owned(),
+            window_id: window_id.to_owned(),
+        })
+    }
+
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()> {
         self.send(HostCommand::PageNavigate {
             tab_id: tab_id.to_owned(),
@@ -224,6 +251,9 @@ where
                 let activated = self.tabs.activate_tab(&tab_id);
                 if activated {
                     self.windows.set_active_tab(&tab_id);
+                    self.adapter
+                        .activate_page(&tab_id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabActivated(TabActivated { tab_id }));
                 }
                 Ok(Response::Bool(activated))
@@ -248,6 +278,9 @@ where
             Request::TabsPin { tab_id, pinned } => {
                 let ok = self.tabs.pin_tab(&tab_id, pinned);
                 if ok {
+                    self.adapter
+                        .pin_page(&tab_id, pinned)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         is_pinned: Some(pinned),
@@ -293,6 +326,9 @@ where
                 let closed = self.tabs.close_other_tabs(&tab_id);
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
+                    self.adapter
+                        .close_page(&tab.id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabClosed(TabClosed {
                         tab_id: tab.id.clone(),
                     }));
@@ -305,6 +341,9 @@ where
                 let closed = self.tabs.close_tabs_to_right(&tab_id);
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
+                    self.adapter
+                        .close_page(&tab.id)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabClosed(TabClosed {
                         tab_id: tab.id.clone(),
                     }));
@@ -316,6 +355,9 @@ where
             Request::TabsMove { tab_id, to_index } => {
                 let ok = self.tabs.move_tab(&tab_id, to_index);
                 if ok {
+                    self.adapter
+                        .move_page(&tab_id, to_index)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
                     self.emit(Event::TabUpdated(TabPatch {
                         tab_id,
                         ..Default::default()
@@ -331,7 +373,7 @@ where
                 let window_id = self.windows.create_window(false);
                 self.tabs.move_tab_to_window(&tab_id, &window_id);
                 self.windows.move_tab_to_window(&tab_id, &window_id);
-                if let Err(e) = self.adapter.create_window(&window_id, false) {
+                if let Err(e) = self.adapter.move_page_to_window(&tab_id, &window_id) {
                     self.tabs
                         .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
                     self.windows
@@ -673,12 +715,30 @@ where
                 window_id,
                 url,
             } => {
+                self.windows.ensure_window(&window_id, false);
                 if let Some(mut tab) = self.tabs.get_tab(&tab_id) {
                     tab.window_id = window_id.clone();
                     tab.url = url;
+                    tab.is_active = true;
                     self.tabs.upsert_tab(tab);
-                    self.windows.attach_tab(&window_id, &tab_id, false);
+                } else {
+                    self.tabs.upsert_tab(frost_protocol::TabState {
+                        id: tab_id.clone(),
+                        window_id: window_id.clone(),
+                        title: "New Tab".into(),
+                        url,
+                        favicon_url: String::new(),
+                        error_text: String::new(),
+                        zoom_level: 0.0,
+                        is_loading: false,
+                        can_go_back: false,
+                        can_go_forward: false,
+                        is_active: true,
+                        is_pinned: false,
+                    });
                 }
+                self.tabs.activate_tab(&tab_id);
+                self.windows.attach_tab(&window_id, &tab_id, true);
                 Ok(())
             }
             HostEvent::PageClosed { tab_id } => {
@@ -856,7 +916,10 @@ where
 
     fn build_settings_snapshot(&self) -> serde_json::Value {
         let keys = [
+            "homepage",
+            "downloadDirectory",
             "searchEngine",
+            "startupBehavior",
             "customSearchUrl",
             "theme",
             "appearance",
@@ -866,6 +929,7 @@ where
             "homeUrl",
             "language",
             "defaultZoomLevel",
+            "askBeforeDownload",
         ];
         let mut map = serde_json::Map::new();
         for key in keys {
@@ -1278,6 +1342,29 @@ mod tests {
     }
 
     #[test]
+    fn adopts_host_created_startup_tab_without_phantom_window() {
+        let mut core = BrowserCore::new();
+
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+            tab_id: "host-tab-1".into(),
+            window_id: "host-window-1".into(),
+            url: "fubuki://newtab/".into(),
+        }))
+        .unwrap();
+
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(state.active_window_id.as_deref(), Some("host-window-1"));
+        assert_eq!(state.windows.len(), 1);
+        assert_eq!(state.windows[0].tab_ids, vec!["host-tab-1"]);
+        assert_eq!(state.tabs.len(), 1);
+        assert_eq!(state.tabs[0].window_id, "host-window-1");
+        assert!(state.tabs[0].is_active);
+    }
+
+    #[test]
     fn host_command_result_ok_is_noop() {
         let mut core = BrowserCore::new();
         let result = HostCommandResultEnvelope {
@@ -1316,6 +1403,43 @@ mod tests {
             key: "theme".into(),
         }));
         assert_eq!(get.response, Response::Setting(Some("dark".into())));
+
+        let startup = core.process(ProtocolRequest::new(Request::SettingsSet {
+            key: "startupBehavior".into(),
+            value: "restore".into(),
+        }));
+        assert_eq!(startup.response, Response::Bool(true));
+    }
+
+    #[test]
+    fn close_other_tabs_emits_page_close_for_every_removed_host_page() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+        for index in 0..3 {
+            core.process(ProtocolRequest::new(Request::TabsCreate {
+                url: Some(format!("https://{index}.example")),
+                active: true,
+            }));
+        }
+        while host_rx.try_recv().is_ok() {}
+
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        let keep = state.tabs[1].id.clone();
+        core.process(ProtocolRequest::new(Request::TabsCloseOther {
+            tab_id: keep,
+        }));
+
+        let close_count = host_rx
+            .try_iter()
+            .filter(|command| matches!(command.command, HostCommand::PageClose { .. }))
+            .count();
+        assert_eq!(close_count, 2);
     }
 
     #[test]

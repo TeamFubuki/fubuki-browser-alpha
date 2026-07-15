@@ -48,6 +48,18 @@ void InstallWebAuthnGuard(CefRefPtr<CefFrame> frame) {
 FubukiCefApp::FubukiCefApp(std::string uiDistPath)
     : uiDistPath_(std::move(uiDistPath)) {}
 
+void FubukiCefApp::OnBeforeCommandLineProcessing(
+    const CefString &, CefRefPtr<CefCommandLine> commandLine) {
+  // Locally rebuilt/ad-hoc-signed app bundles receive a new designated code
+  // requirement and macOS asks for the Chromium Safe Storage item again. Alpha
+  // builds use Chromium's supported non-blocking development key storage. A
+  // signed distribution can opt into the system keychain explicitly.
+  const char *systemKeychain = std::getenv("FUBUKI_USE_SYSTEM_KEYCHAIN");
+  if (!systemKeychain || std::string(systemKeychain) != "1") {
+    commandLine->AppendSwitch("use-mock-keychain");
+  }
+}
+
 void FubukiCefApp::OnRegisterCustomSchemes(
     CefRawPtr<CefSchemeRegistrar> registrar) {
   registrar->AddCustomScheme("fubuki", CEF_SCHEME_OPTION_STANDARD |

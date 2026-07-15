@@ -28,7 +28,8 @@ public:
   void Start();
   BrowserWindow *
   NewWindow(bool privateWindow = false,
-            CefRefPtr<CefDictionaryValue> restoreState = nullptr);
+            CefRefPtr<CefDictionaryValue> restoreState = nullptr,
+            const std::string &engineWindowId = "");
   bool NewPrivateWindow();
   bool RequestNewWindow(bool privateWindow = false,
                         CefRefPtr<CefDictionaryValue> restoreState = nullptr);
@@ -46,6 +47,8 @@ public:
   void PersistSession();
 
   BrowserWindow *ActiveWindow() const;
+  BrowserWindow *FindWindow(const std::string &windowId) const;
+  BrowserWindow *FindWindowForTab(const std::string &tabId) const;
   std::vector<BrowserWindow *> Windows() const;
   FrostStore &Store() {
     return store_;
@@ -68,6 +71,7 @@ private:
 
   std::string NextWindowId();
   CefRefPtr<CefListValue> RestoredWindows() const;
+  void FinalizeWindowClosed(BrowserWindow *window);
 
   std::filesystem::path profilePath_;
   FrostBridge engine_;

@@ -47,7 +47,8 @@ class BrowserWindow {
   bool CloseOtherTabs(const std::string& tabId);
   bool CloseTabsToRight(const std::string& tabId);
   bool MoveTab(const std::string& tabId, int toIndex);
-  bool MoveTabToNewWindow(const std::string& tabId);
+  bool MoveTabToNewWindow(const std::string& tabId,
+                          const std::string& engineWindowId = "");
   bool Navigate(const std::string& tabId, const std::string& input);
   bool Reload(const std::string& tabId);
   bool Stop(const std::string& tabId);

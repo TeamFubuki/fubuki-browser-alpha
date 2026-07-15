@@ -26,6 +26,29 @@ impl WindowService {
         id
     }
 
+    /// Registers a window created by the host during startup/session restore.
+    /// The initial empty placeholder is adopted instead of leaving a phantom
+    /// window in snapshots.
+    pub fn ensure_window(&mut self, window_id: &str, is_private: bool) {
+        if let Some(window) = self.windows.iter_mut().find(|w| w.id == window_id) {
+            window.is_private = is_private;
+            self.active_window_id = Some(window_id.to_owned());
+            return;
+        }
+        if self.windows.len() == 1 && self.windows[0].tab_ids.is_empty() {
+            self.windows[0].id = window_id.to_owned();
+            self.windows[0].is_private = is_private;
+        } else {
+            self.windows.push(WindowState {
+                id: window_id.to_owned(),
+                active_tab_id: None,
+                is_private,
+                tab_ids: Vec::new(),
+            });
+        }
+        self.active_window_id = Some(window_id.to_owned());
+    }
+
     pub fn close_window(&mut self, window_id: &str) -> bool {
         let Some(index) = self.windows.iter().position(|w| w.id == window_id) else {
             return false;

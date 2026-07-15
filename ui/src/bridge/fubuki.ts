@@ -336,7 +336,21 @@ async function invoke<T = unknown>(
         method,
         params,
       }),
-      onSuccess: (response) => resolve(JSON.parse(response) as T),
+      onSuccess: (response) => {
+        const parsed = JSON.parse(response) as T & {
+          ok?: boolean;
+          error?: string;
+        };
+        if (
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          parsed.ok === false
+        ) {
+          reject(new Error(parsed.error || 'Native bridge request failed'));
+          return;
+        }
+        resolve(parsed as T);
+      },
       onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });
   });
