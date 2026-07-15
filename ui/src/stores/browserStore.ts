@@ -274,8 +274,11 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.updated', (patch) => {
-      const existingTab = browserState.tabs.find((tab) => tab.id === patch.tabId);
-      if (!existingTab || existingTab.windowId !== browserState.windowId) return;
+      const existingTab = browserState.tabs.find(
+        (tab) => tab.id === patch.tabId,
+      );
+      if (!existingTab || existingTab.windowId !== browserState.windowId)
+        return;
       const tabPatch = toTabPatch(patch);
       if (tabPatch) {
         setBrowserState(
@@ -291,7 +294,9 @@ export function bindNativeEvents() {
 
     onBridgeEvent('tab.closed', ({ tabId }) => {
       if (!browserState.tabs.some((tab) => tab.id === tabId)) return;
-      const closedIndex = browserState.tabs.findIndex((tab) => tab.id === tabId);
+      const closedIndex = browserState.tabs.findIndex(
+        (tab) => tab.id === tabId,
+      );
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
       setBrowserState('tabs', remaining);
       if (browserState.activeTabId === tabId) {

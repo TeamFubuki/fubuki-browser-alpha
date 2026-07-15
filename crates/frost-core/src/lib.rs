@@ -374,12 +374,12 @@ where
                         tab_id: tab_id.clone(),
                     }));
                     // If the closed tab was active, emit tab.activated for the newly selected tab
-                    if let Some(new_active_id) = new_active_id {
-                        if was_active {
-                            self.emit(Event::TabActivated(TabActivated {
-                                tab_id: new_active_id,
-                            }));
-                        }
+                    if let Some(new_active_id) = new_active_id
+                        && was_active
+                    {
+                        self.emit(Event::TabActivated(TabActivated {
+                            tab_id: new_active_id,
+                        }));
                     }
                     if let Some(wid) = window_id
                         && self.tabs.tabs_in_window(&wid).is_empty()
@@ -763,7 +763,10 @@ where
                 self.record_pending(PendingOperation::StateSnapshot(snapshot.clone()));
                 for tab in &closed.tabs {
                     if let Err(e) = self.adapter.create_page(
-                        &tab.id, &closed.window.id, &tab.url, tab.is_active,
+                        &tab.id,
+                        &closed.window.id,
+                        &tab.url,
+                        tab.is_active,
                     ) {
                         self.restore_from_snapshot(&snapshot);
                         return Err(CoreError::Message(e.to_string()));
@@ -1036,17 +1039,17 @@ where
                 windows.push(closed.window.clone());
                 self.windows
                     .replace_all(windows, Some(closed.window.id.clone()));
-                if let Err(e) = self
-                    .adapter
-                    .create_window(&closed.window.id, true)
-                {
+                if let Err(e) = self.adapter.create_window(&closed.window.id, true) {
                     self.restore_from_snapshot(&snapshot);
                     return Err(CoreError::Message(e.to_string()));
                 }
                 self.record_pending(PendingOperation::StateSnapshot(snapshot.clone()));
                 for tab in &closed.tabs {
                     if let Err(e) = self.adapter.create_page(
-                        &tab.id, &closed.window.id, &tab.url, tab.is_active,
+                        &tab.id,
+                        &closed.window.id,
+                        &tab.url,
+                        tab.is_active,
                     ) {
                         self.restore_from_snapshot(&snapshot);
                         return Err(CoreError::Message(e.to_string()));
@@ -1438,10 +1441,10 @@ where
         let expired: Vec<String> = self
             .pending_since
             .iter()
-            .filter_map(|(id, started)| {
-                (now.duration_since(*started).unwrap_or_default() >= HOST_COMMAND_TIMEOUT)
-                    .then(|| id.clone())
+            .filter(|(_id, started)| {
+                now.duration_since(**started).unwrap_or_default() >= HOST_COMMAND_TIMEOUT
             })
+            .map(|(id, _started)| id.clone())
             .collect();
         for id in expired {
             self.pending_since.remove(&id);

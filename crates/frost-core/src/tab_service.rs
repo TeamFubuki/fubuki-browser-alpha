@@ -113,10 +113,10 @@ impl TabService {
                         .map(|t| t.id.clone())
                 });
 
-            if let Some(previous_id) = previous_id {
-                if let Some(previous) = self.tabs.iter_mut().find(|t| t.id == previous_id) {
-                    previous.is_active = true;
-                }
+            if let Some(previous_id) = previous_id
+                && let Some(previous) = self.tabs.iter_mut().find(|t| t.id == previous_id)
+            {
+                previous.is_active = true;
             }
         }
         true

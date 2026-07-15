@@ -24,7 +24,10 @@
 .top-bar.private {
   background: color-mix(in srgb, var(--topbar-bg) 72%, #17151f);
   border-bottom: 2px solid #a855f7;
-  grid-template-columns: max-content repeat(3, var(--button-size)) minmax(160px, 1fr) var(--button-size);
+  grid-template-columns: max-content repeat(3, var(--button-size)) minmax(
+      160px,
+      1fr
+    ) var(--button-size);
 }
 
 .private-badge {
