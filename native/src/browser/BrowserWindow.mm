@@ -447,10 +447,12 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
                                                    Store().GetSetting("searchEngine"),
                                                    Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active);
-  PushHostEventJson(
-      "{\"version\":0,\"event\":\"page.created\",\"payload\":{\"tabId\":" +
-      JsonEscape(tab.id) + ",\"windowId\":" + JsonEscape(windowId_) +
-      ",\"url\":" + JsonEscape(tab.url) + "\",\"active\":\" + (active ? "true" : "false") + "}}");
+  PushHostEventJson(HostEventJson("page.created",
+                                  {{ "tabId", JsonStringValue(tab.id) },
+                                   { "windowId", JsonStringValue(windowId_) },
+                                   { "url", JsonStringValue(tab.url) },
+                                   { "active", JsonBoolValue(active) },
+                                   { "isPrivate", JsonBoolValue(privateWindow_) }}));
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
@@ -466,10 +468,12 @@ bool BrowserWindow::CreateTabWithId(const std::string& input,
                                                    Store().GetSetting("searchEngine"),
                                                    Store().GetSetting("customSearchUrl"));
   Tab& tab = tabManager_.CreateTab(url, active, tabId);
-  PushHostEventJson(
-      "{\"version\":0,\"event\":\"page.created\",\"payload\":{\"tabId\":" +
-      JsonEscape(tab.id) + ",\"windowId\":" + JsonEscape(windowId_) +
-      ",\"url\":" + JsonEscape(tab.url) + "\",\"active\":\" + (active ? "true" : "false") + "}}");
+  PushHostEventJson(HostEventJson("page.created",
+                                  {{ "tabId", JsonStringValue(tab.id) },
+                                   { "windowId", JsonStringValue(windowId_) },
+                                   { "url", JsonStringValue(tab.url) },
+                                   { "active", JsonBoolValue(active) },
+                                   { "isPrivate", JsonBoolValue(privateWindow_) }}));
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
@@ -1215,8 +1219,9 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
   if (command == "page.create") {
     const std::string tabId = JsonString(payload, "tabId");
     const std::string url = JsonString(payload, "url");
+    const bool active = JsonBool(payload, "active");
     ok = !tabId.empty() &&
-         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, true);
+         CreateTabWithId(url.empty() ? "fubuki://newtab/" : url, tabId, active);
     if (!ok) {
       error = "failed to create page";
     }

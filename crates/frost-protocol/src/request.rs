@@ -106,6 +106,12 @@ pub enum Request {
     TabsMove { tab_id: String, to_index: usize },
     #[serde(rename = "tabs.moveToNewWindow", rename_all = "camelCase")]
     TabsMoveToNewWindow { tab_id: String },
+    #[serde(rename = "tabs.unpin", rename_all = "camelCase")]
+    TabsUnpin { tab_id: String },
+    #[serde(rename = "tabs.activateNext")]
+    TabsActivateNext,
+    #[serde(rename = "tabs.activatePrevious")]
+    TabsActivatePrevious,
     #[serde(rename = "tabs.navigate", rename_all = "camelCase")]
     TabsNavigate { tab_id: String, input: String },
     #[serde(rename = "tabs.reload", rename_all = "camelCase")]
@@ -128,6 +134,8 @@ pub enum Request {
     WindowsClose { window_id: Option<String> },
     #[serde(rename = "windows.reopenClosed")]
     WindowsReopenClosed,
+    #[serde(rename = "windows.reopenClosedPrivate")]
+    WindowsReopenClosedPrivate,
     #[serde(rename = "settings.get", rename_all = "camelCase")]
     SettingsGet { key: String },
     #[serde(rename = "settings.set", rename_all = "camelCase")]

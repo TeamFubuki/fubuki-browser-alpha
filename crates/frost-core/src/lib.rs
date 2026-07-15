@@ -87,11 +87,18 @@ impl HostCommandAdapter {
 }
 
 impl EngineAdapter for HostCommandAdapter {
-    fn create_page(&mut self, tab_id: &str, window_id: &str, url: &str) -> EngineResult<()> {
+    fn create_page(
+        &mut self,
+        tab_id: &str,
+        window_id: &str,
+        url: &str,
+        active: bool,
+    ) -> EngineResult<()> {
         self.send(HostCommand::PageCreate {
             tab_id: tab_id.to_owned(),
             window_id: window_id.to_owned(),
             url: url.to_owned(),
+            active,
         })
     }
 
@@ -269,17 +276,28 @@ where
                 let window_id = window_id
                     .or_else(|| self.windows.active_window_id().map(ToOwned::to_owned))
                     .ok_or_else(|| CoreError::Message("No active window".into()))?;
+                // Validate that the target window exists
+                if self.windows.get_window(&window_id).is_none() {
+                    return Err(CoreError::Message(format!(
+                        "Window '{}' does not exist",
+                        window_id
+                    )));
+                }
                 let tab = self.tabs.create_tab(
                     window_id.clone(),
                     url.unwrap_or_else(|| "fubuki://newtab/".into()),
                     active,
                 );
-                self.windows.attach_tab(&window_id, &tab.id, true);
+                // Only update WindowState.active_tab_id when creating an active tab
+                self.windows.attach_tab(&window_id, &tab.id, active);
                 self.pending_operations.push(PendingOperation::TabCreated {
                     tab_id: tab.id.clone(),
                     window_id: window_id.clone(),
                 });
-                if let Err(e) = self.adapter.create_page(&tab.id, &window_id, &tab.url) {
+                if let Err(e) = self
+                    .adapter
+                    .create_page(&tab.id, &window_id, &tab.url, active)
+                {
                     self.windows.detach_tab(&tab.id);
                     self.tabs.remove_tab(&tab.id);
                     self.pending_operations.pop();
@@ -300,6 +318,13 @@ where
                 Ok(Response::Bool(activated))
             }
             Request::TabsClose { tab_id } => {
+                // Capture the tab state before closing
+                let was_active = self
+                    .tabs
+                    .get_tab(&tab_id)
+                    .map(|t| t.is_active)
+                    .unwrap_or(false);
+                let window_id = self.tabs.get_tab(&tab_id).map(|t| t.window_id.clone());
                 if let Some(tab) = self.tabs.get_tab(&tab_id) {
                     self.closed_tabs.push(tab);
                     if self.closed_tabs.len() > 50 {
@@ -312,7 +337,19 @@ where
                     self.adapter
                         .close_page(&tab_id)
                         .map_err(|e| CoreError::Message(e.to_string()))?;
-                    self.emit(Event::TabClosed(TabClosed { tab_id }));
+                    self.emit(Event::TabClosed(TabClosed {
+                        tab_id: tab_id.clone(),
+                    }));
+                    // If the closed tab was active, emit tab.activated for the newly selected tab
+                    if was_active
+                        && let Some(ref wid) = window_id
+                        && let Some(new_active) =
+                            self.tabs.tabs_in_window(wid).iter().find(|t| t.is_active)
+                    {
+                        self.emit(Event::TabActivated(TabActivated {
+                            tab_id: new_active.id.clone(),
+                        }));
+                    }
                 }
                 Ok(Response::Bool(closed))
             }
@@ -334,8 +371,12 @@ where
                 let Some(tab) = self.tabs.duplicate_tab(&tab_id) else {
                     return Ok(Response::Bool(false));
                 };
-                self.windows.attach_tab(&tab.window_id, &tab.id, true);
-                if let Err(e) = self.adapter.create_page(&tab.id, &tab.window_id, &tab.url) {
+                // Duplicate always creates a background tab
+                self.windows.attach_tab(&tab.window_id, &tab.id, false);
+                if let Err(e) = self
+                    .adapter
+                    .create_page(&tab.id, &tab.window_id, &tab.url, false)
+                {
                     self.windows.detach_tab(&tab.id);
                     self.tabs.remove_tab(&tab.id);
                     return Err(CoreError::Message(e.to_string()));
@@ -348,13 +389,21 @@ where
                     return Ok(Response::Bool(false));
                 };
                 tab.is_active = true;
-                let window_id = tab.window_id.clone();
+                // Ensure the original window still exists; fall back to active window
+                let target_window = if self.windows.get_window(&tab.window_id).is_some() {
+                    tab.window_id.clone()
+                } else if let Some(active) = self.windows.active_window_id() {
+                    active.to_owned()
+                } else {
+                    return Ok(Response::Bool(false));
+                };
+                tab.window_id = target_window.clone();
                 let created = tab.clone();
                 self.tabs.upsert_tab(tab);
-                self.windows.attach_tab(&window_id, &created.id, true);
-                if let Err(e) = self
-                    .adapter
-                    .create_page(&created.id, &window_id, &created.url)
+                self.windows.attach_tab(&target_window, &created.id, true);
+                if let Err(e) =
+                    self.adapter
+                        .create_page(&created.id, &target_window, &created.url, true)
                 {
                     self.windows.detach_tab(&created.id);
                     self.tabs.remove_tab(&created.id);
@@ -374,6 +423,9 @@ where
                         tab_id: tab.id.clone(),
                     }));
                 }
+                // Sync WindowState.active_tab_id with the kept tab
+                self.tabs.activate_tab(&tab_id);
+                self.windows.set_active_tab(&tab_id);
                 self.closed_tabs.extend(closed);
                 self.trim_closed_tabs();
                 Ok(Response::Bool(true))
@@ -389,6 +441,11 @@ where
                         tab_id: tab.id.clone(),
                     }));
                 }
+                // Ensure a non-empty window still has an active tab
+                if self.tabs.get_tab(&tab_id).is_some() {
+                    self.tabs.activate_tab(&tab_id);
+                    self.windows.set_active_tab(&tab_id);
+                }
                 self.closed_tabs.extend(closed);
                 self.trim_closed_tabs();
                 Ok(Response::Bool(true))
@@ -396,6 +453,8 @@ where
             Request::TabsMove { tab_id, to_index } => {
                 let ok = self.tabs.move_tab(&tab_id, to_index);
                 if ok {
+                    // Also update WindowState.tab_ids order
+                    self.windows.move_tab_in_window(&tab_id, to_index);
                     self.adapter
                         .move_page(&tab_id, to_index)
                         .map_err(|e| CoreError::Message(e.to_string()))?;
@@ -411,45 +470,52 @@ where
                     return Ok(Response::Bool(false));
                 }
                 let previous_window = self.tabs.get_tab(&tab_id).map(|tab| tab.window_id.clone());
-                let window_id = self.windows.create_window(false);
-                self.tabs.move_tab_to_window(&tab_id, &window_id);
-                self.windows.move_tab_to_window(&tab_id, &window_id);
+                // Preserve private flag from the source window
+                let is_private = previous_window
+                    .as_ref()
+                    .and_then(|wid| self.windows.get_window(wid))
+                    .map(|w| w.is_private)
+                    .unwrap_or(false);
+                let new_window_id = self.windows.create_window(is_private);
+                self.tabs.move_tab_to_window(&tab_id, &new_window_id);
+                self.windows.move_tab_to_window(&tab_id, &new_window_id);
                 self.pending_operations.push(PendingOperation::TabMoved {
                     tab_id: tab_id.clone(),
                     from_window_id: previous_window.clone().unwrap_or_default(),
-                    to_window_id: window_id.clone(),
+                    to_window_id: new_window_id.clone(),
                 });
-                if let Err(e) = self.adapter.move_page_to_window(&tab_id, &window_id) {
+                if let Err(e) = self.adapter.move_page_to_window(&tab_id, &new_window_id) {
                     self.tabs
                         .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
                     self.windows
                         .move_tab_to_window(&tab_id, &previous_window.clone().unwrap_or_default());
-                    self.windows.close_window(&window_id);
+                    self.windows.close_window(&new_window_id);
                     self.pending_operations.pop();
                     return Err(CoreError::Message(e.to_string()));
                 }
-                // If the source window is now empty, create an empty tab there
+                // If the source window is now empty, create an active empty tab there
                 if let Some(ref prev_window_id) = previous_window
                     && self.tabs.tabs_in_window(prev_window_id).is_empty()
                 {
                     let empty_tab = self.tabs.create_tab(
                         prev_window_id.clone(),
                         "fubuki://newtab/".into(),
-                        false,
+                        true,
                     );
-                    self.windows
-                        .attach_tab(prev_window_id, &empty_tab.id, false);
-                    if let Err(e) =
-                        self.adapter
-                            .create_page(&empty_tab.id, prev_window_id, &empty_tab.url)
-                    {
+                    self.windows.attach_tab(prev_window_id, &empty_tab.id, true);
+                    if let Err(e) = self.adapter.create_page(
+                        &empty_tab.id,
+                        prev_window_id,
+                        &empty_tab.url,
+                        true,
+                    ) {
                         self.windows.detach_tab(&empty_tab.id);
                         self.tabs.remove_tab(&empty_tab.id);
                         return Err(CoreError::Message(e.to_string()));
                     }
                     self.emit(Event::TabCreated(empty_tab));
                 }
-                if let Some(window) = self.windows.get_window(&window_id) {
+                if let Some(window) = self.windows.get_window(&new_window_id) {
                     self.emit(Event::WindowCreated(window));
                 }
                 self.emit(Event::TabUpdated(TabPatch {
@@ -773,6 +839,78 @@ where
                     })))
                 }
             }
+            Request::TabsUnpin { tab_id } => {
+                let ok = self.tabs.pin_tab(&tab_id, false);
+                if ok {
+                    self.adapter
+                        .pin_page(&tab_id, false)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        is_pinned: Some(false),
+                        ..Default::default()
+                    }));
+                }
+                Ok(Response::Bool(ok))
+            }
+            Request::TabsActivateNext => {
+                let Some(current) = self.tabs.active_tab() else {
+                    return Ok(Response::Bool(false));
+                };
+                let window_id = current.window_id.clone();
+                let tabs_in_window = self.tabs.tabs_in_window(&window_id);
+                let pos = tabs_in_window.iter().position(|t| t.id == current.id);
+                if let Some(pos) = pos {
+                    let next = (pos + 1) % tabs_in_window.len();
+                    self.process_inner(Request::TabsActivate {
+                        tab_id: tabs_in_window[next].id.clone(),
+                    })
+                } else {
+                    Ok(Response::Bool(false))
+                }
+            }
+            Request::TabsActivatePrevious => {
+                let Some(current) = self.tabs.active_tab() else {
+                    return Ok(Response::Bool(false));
+                };
+                let window_id = current.window_id.clone();
+                let tabs_in_window = self.tabs.tabs_in_window(&window_id);
+                let pos = tabs_in_window.iter().position(|t| t.id == current.id);
+                if let Some(pos) = pos {
+                    let prev = if pos == 0 {
+                        tabs_in_window.len() - 1
+                    } else {
+                        pos - 1
+                    };
+                    self.process_inner(Request::TabsActivate {
+                        tab_id: tabs_in_window[prev].id.clone(),
+                    })
+                } else {
+                    Ok(Response::Bool(false))
+                }
+            }
+            Request::WindowsReopenClosedPrivate => {
+                let Some(idx) = self
+                    .closed_windows
+                    .iter()
+                    .rposition(|cw| cw.window.is_private)
+                else {
+                    return Ok(Response::Bool(false));
+                };
+                let closed = self.closed_windows.remove(idx);
+                for tab in &closed.tabs {
+                    self.tabs.upsert_tab(tab.clone());
+                }
+                let mut windows = self.windows.list();
+                windows.push(closed.window.clone());
+                self.windows
+                    .replace_all(windows, Some(closed.window.id.clone()));
+                for tab in &closed.tabs {
+                    self.emit(Event::TabCreated(tab.clone()));
+                }
+                self.emit(Event::WindowCreated(closed.window));
+                Ok(Response::Bool(true))
+            }
         }
     }
 
@@ -783,13 +921,19 @@ where
                 window_id,
                 url,
                 active,
+                is_private,
             } => {
-                self.windows.ensure_window(&window_id, false);
+                self.windows.ensure_window(&window_id, is_private);
                 if let Some(mut tab) = self.tabs.get_tab(&tab_id) {
+                    let old_window_id = tab.window_id.clone();
                     tab.window_id = window_id.clone();
                     tab.url = url;
                     tab.is_active = active;
                     self.tabs.upsert_tab(tab);
+                    // Detach from old window if it changed
+                    if old_window_id != window_id {
+                        self.windows.detach_tab(&tab_id);
+                    }
                 } else {
                     self.tabs.upsert_tab(frost_protocol::TabState {
                         id: tab_id.clone(),
@@ -920,6 +1064,38 @@ where
             }
             HostEvent::WindowFocused { window_id } => {
                 self.windows.set_active_window(&window_id);
+                Ok(())
+            }
+            HostEvent::PageMoved {
+                tab_id,
+                from_window_id,
+                to_window_id,
+                to_index,
+            } => {
+                self.tabs.move_tab_to_window(&tab_id, &to_window_id);
+                self.windows.move_tab_to_window(&tab_id, &to_window_id);
+                self.tabs.move_tab(&tab_id, to_index);
+                // If the source window is now empty, create an active empty tab
+                if self.tabs.tabs_in_window(&from_window_id).is_empty() {
+                    let empty_tab = self.tabs.create_tab(
+                        from_window_id.clone(),
+                        "fubuki://newtab/".into(),
+                        true,
+                    );
+                    self.windows
+                        .attach_tab(&from_window_id, &empty_tab.id, true);
+                    if let Err(e) = self.adapter.create_page(
+                        &empty_tab.id,
+                        &from_window_id,
+                        &empty_tab.url,
+                        true,
+                    ) {
+                        self.windows.detach_tab(&empty_tab.id);
+                        self.tabs.remove_tab(&empty_tab.id);
+                        return Err(CoreError::Message(e.to_string()));
+                    }
+                    self.emit(Event::TabCreated(empty_tab));
+                }
                 Ok(())
             }
             HostEvent::WindowClosed { window_id } => {
@@ -1482,6 +1658,7 @@ mod tests {
             window_id: "host-window-1".into(),
             url: "fubuki://newtab/".into(),
             active: true,
+            is_private: false,
         }))
         .unwrap();
 
@@ -1952,6 +2129,7 @@ mod tests {
                 _: &str,
                 _: &str,
                 _: &str,
+                _: bool,
             ) -> frost_engine_api::EngineResult<()> {
                 Err(frost_engine_api::EngineError::Message(
                     "host failure".into(),
@@ -2058,6 +2236,7 @@ mod tests {
             window_id: "host-window-1".into(),
             url: "https://inactive.com".into(),
             active: false,
+            is_private: false,
         }))
         .unwrap();
 
@@ -2148,6 +2327,7 @@ mod tests {
             window_id: "window-1".into(),
             url: "https://popup.example.com".into(),
             active: true,
+            is_private: false,
         }))
         .unwrap();
 
@@ -2192,5 +2372,499 @@ mod tests {
         };
         let active_tab = s.tabs.iter().find(|t| t.is_active).unwrap();
         assert_eq!(active_tab.url, "https://home.example.com");
+    }
+
+    // ── Comprehensive PR #56 tests ──────────────────────────────────────
+
+    /// page.created JSON round-trip: Rust can deserialize what the host sends.
+    #[test]
+    fn page_created_json_roundtrip() {
+        let json = r#"{
+            "version": 0,
+            "event": "page.created",
+            "payload": {
+                "tabId": "host-tab-1",
+                "windowId": "host-window-1",
+                "url": "https://example.com",
+                "active": true,
+                "isPrivate": false
+            }
+        }"#;
+        let envelope: HostEventEnvelope = serde_json::from_str(json).unwrap();
+        match envelope.event {
+            HostEvent::PageCreated {
+                tab_id,
+                window_id,
+                url,
+                active,
+                is_private,
+            } => {
+                assert_eq!(tab_id, "host-tab-1");
+                assert_eq!(window_id, "host-window-1");
+                assert_eq!(url, "https://example.com");
+                assert!(active);
+                assert!(!is_private);
+            }
+            _ => panic!("expected PageCreated"),
+        }
+    }
+
+    /// window.closed JSON round-trip.
+    #[test]
+    fn window_closed_json_roundtrip() {
+        let json = r#"{
+            "version": 0,
+            "event": "window.closed",
+            "payload": {
+                "windowId": "window-abc"
+            }
+        }"#;
+        let envelope: HostEventEnvelope = serde_json::from_str(json).unwrap();
+        match envelope.event {
+            HostEvent::WindowClosed { window_id } => {
+                assert_eq!(window_id, "window-abc");
+            }
+            _ => panic!("expected WindowClosed"),
+        }
+    }
+
+    /// active:false tab creation does NOT change WindowState.activeTabId.
+    #[test]
+    fn active_false_does_not_change_window_active_tab() {
+        let mut core = BrowserCore::new();
+        // Create initial active tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://active.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // Get the initial active tab id
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let initial_active_id = s.windows[0].active_tab_id.clone().unwrap();
+
+        // Create background tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://background.com".into()),
+            active: false,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // WindowState.active_tab_id should NOT change
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert_eq!(
+            s.windows[0].active_tab_id.as_deref(),
+            Some(initial_active_id.as_str())
+        );
+    }
+
+    /// Background tab creation does not emit tab.activated.
+    #[test]
+    fn background_tab_no_activation_event() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::new();
+        core.set_event_sender(tx);
+
+        // Create initial active tab
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://active.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        // Drain events
+        while rx.try_recv().is_ok() {}
+
+        // Create background tab
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://background.com".into()),
+            active: false,
+            window_id: None,
+        }));
+
+        // Should only emit tab.created, NOT tab.activated
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0].event, Event::TabCreated(_)));
+    }
+
+    /// Closing the active tab emits tab.activated for the newly selected tab.
+    #[test]
+    fn close_active_tab_emits_activation() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::new();
+        core.set_event_sender(tx);
+
+        // Create two tabs
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://tab1.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://tab2.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        while rx.try_recv().is_ok() {}
+
+        // Get the active tab id
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let active_id = s.tabs.iter().find(|t| t.is_active).unwrap().id.clone();
+
+        // Close the active tab
+        core.process(ProtocolRequest::new(Request::TabsClose {
+            tab_id: active_id,
+        }));
+
+        // Should emit tab.closed AND tab.activated
+        let events: Vec<_> = rx.try_iter().collect();
+        let has_closed = events
+            .iter()
+            .any(|e| matches!(&e.event, Event::TabClosed(_)));
+        let has_activated = events
+            .iter()
+            .any(|e| matches!(&e.event, Event::TabActivated(_)));
+        assert!(has_closed, "should emit tab.closed");
+        assert!(
+            has_activated,
+            "should emit tab.activated for newly selected tab"
+        );
+    }
+
+    /// Moving the last tab to a new window creates an active empty tab in the source.
+    #[test]
+    fn move_last_tab_creates_active_empty_tab() {
+        let mut core = BrowserCore::new();
+        let (w2_id, w2_tabs) = create_window_with_tabs(&mut core, 1);
+
+        // Move the only tab from w2 to a new window
+        let resp = core.process(ProtocolRequest::new(Request::TabsMoveToNewWindow {
+            tab_id: w2_tabs[0].clone(),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // The empty tab in w2 should be active
+        let w2_tabs_now: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
+        assert_eq!(w2_tabs_now.len(), 1);
+        assert!(w2_tabs_now[0].is_active, "empty tab should be active");
+        assert_eq!(w2_tabs_now[0].url, "fubuki://newtab/");
+    }
+
+    /// TabsMove updates WindowState.tabIds order.
+    #[test]
+    fn tabs_move_updates_window_tab_ids() {
+        let mut core = BrowserCore::new();
+        let (w_id, tabs) = create_window_with_tabs(&mut core, 3);
+        let first_tab = tabs[0].clone();
+
+        // Move first tab to index 2
+        let resp = core.process(ProtocolRequest::new(Request::TabsMove {
+            tab_id: first_tab.clone(),
+            to_index: 2,
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let window = s.windows.iter().find(|w| w.id == w_id).unwrap();
+        // The moved tab should be last in the window's tab_ids
+        assert_eq!(window.tab_ids.last().unwrap(), &first_tab);
+    }
+
+    /// Invalid window_id produces an error.
+    #[test]
+    fn invalid_window_id_errors() {
+        let mut core = BrowserCore::new();
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+            window_id: Some("nonexistent-window".into()),
+        }));
+        assert!(!resp.ok);
+        match resp.response {
+            Response::Error(msg) => assert!(msg.contains("does not exist")),
+            _ => panic!("expected error response"),
+        }
+    }
+
+    /// TabsActivateNext cycles through tabs in the window.
+    #[test]
+    fn activate_next_cycles_tabs() {
+        let mut core = BrowserCore::new();
+        let (_, w_tabs) = create_window_with_tabs(&mut core, 3);
+
+        // Activate first tab
+        core.process(ProtocolRequest::new(Request::TabsActivate {
+            tab_id: w_tabs[0].clone(),
+        }));
+
+        // Activate next
+        let resp = core.process(ProtocolRequest::new(Request::TabsActivateNext));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let active = s.tabs.iter().find(|t| t.is_active).unwrap();
+        assert_eq!(active.id, w_tabs[1]);
+    }
+
+    /// TabsActivatePrevious cycles backwards.
+    #[test]
+    fn activate_previous_cycles_tabs() {
+        let mut core = BrowserCore::new();
+        let (_, w_tabs) = create_window_with_tabs(&mut core, 3);
+
+        // Activate first tab
+        core.process(ProtocolRequest::new(Request::TabsActivate {
+            tab_id: w_tabs[0].clone(),
+        }));
+
+        // Activate previous (should wrap to last)
+        let resp = core.process(ProtocolRequest::new(Request::TabsActivatePrevious));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let active = s.tabs.iter().find(|t| t.is_active).unwrap();
+        assert_eq!(active.id, w_tabs[2]);
+    }
+
+    /// TabsUnpin works through FrostEngine.
+    #[test]
+    fn unpin_tab_through_engine() {
+        let mut core = BrowserCore::new();
+        let (_, w_tabs) = create_window_with_tabs(&mut core, 1);
+
+        // Pin the tab
+        core.process(ProtocolRequest::new(Request::TabsPin {
+            tab_id: w_tabs[0].clone(),
+            pinned: true,
+        }));
+
+        // Unpin via TabsUnpin
+        let resp = core.process(ProtocolRequest::new(Request::TabsUnpin {
+            tab_id: w_tabs[0].clone(),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert!(!s.tabs[0].is_pinned);
+    }
+
+    /// MoveToNewWindow preserves private flag.
+    #[test]
+    fn move_to_new_window_preserves_private() {
+        let mut core = BrowserCore::new();
+        // Create a private window
+        let resp = core.process(ProtocolRequest::new(Request::WindowsCreatePrivate));
+        assert!(resp.ok);
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let private_w = s.windows.iter().find(|w| w.is_private).unwrap();
+        let private_w_id = private_w.id.clone();
+
+        // Create a tab in the private window
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://private.example.com".into()),
+            active: true,
+            window_id: Some(private_w_id),
+        }));
+        assert!(resp.ok);
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let private_w = s.windows.iter().find(|w| w.is_private).unwrap();
+        let tab_id = private_w.tab_ids[0].clone();
+
+        // Move the tab to a new window
+        let resp = core.process(ProtocolRequest::new(Request::TabsMoveToNewWindow {
+            tab_id: tab_id.clone(),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // The new window should also be private
+        let moved_tab = s.tabs.iter().find(|t| t.id == tab_id).unwrap();
+        let new_window = s
+            .windows
+            .iter()
+            .find(|w| w.id == moved_tab.window_id)
+            .unwrap();
+        assert!(
+            new_window.is_private,
+            "new window should preserve private flag"
+        );
+    }
+
+    /// Duplicate tab creates a background tab (not active).
+    #[test]
+    fn duplicate_creates_background_tab() {
+        let mut core = BrowserCore::new();
+        let (_, w_tabs) = create_window_with_tabs(&mut core, 1);
+
+        // Duplicate the tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsDuplicate {
+            tab_id: w_tabs[0].clone(),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // Only one tab should be active (the original)
+        let active_tabs: Vec<_> = s.tabs.iter().filter(|t| t.is_active).collect();
+        assert_eq!(active_tabs.len(), 1);
+        assert_eq!(active_tabs[0].id, w_tabs[0]);
+    }
+
+    /// closeOther and closeToRight maintain active tab consistency.
+    #[test]
+    fn close_other_maintains_active() {
+        let mut core = BrowserCore::new();
+        let (w_id, w_tabs) = create_window_with_tabs(&mut core, 3);
+
+        // Keep the middle tab
+        core.process(ProtocolRequest::new(Request::TabsCloseOther {
+            tab_id: w_tabs[1].clone(),
+        }));
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // The kept tab should be active
+        let active = s.tabs.iter().find(|t| t.is_active).unwrap();
+        assert_eq!(active.id, w_tabs[1]);
+        // WindowState.activeTabId should match
+        let window = s.windows.iter().find(|w| w.id == w_id).unwrap();
+        assert_eq!(window.active_tab_id.as_deref(), Some(w_tabs[1].as_str()));
+    }
+
+    /// closeToRight maintains active tab consistency.
+    #[test]
+    fn close_to_right_maintains_active() {
+        let mut core = BrowserCore::new();
+        let (w_id, w_tabs) = create_window_with_tabs(&mut core, 3);
+
+        // Close tabs to right of the first tab
+        core.process(ProtocolRequest::new(Request::TabsCloseToRight {
+            tab_id: w_tabs[0].clone(),
+        }));
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let active = s.tabs.iter().find(|t| t.is_active).unwrap();
+        assert_eq!(active.id, w_tabs[0]);
+        let window = s.windows.iter().find(|w| w.id == w_id).unwrap();
+        assert_eq!(window.active_tab_id.as_deref(), Some(w_tabs[0].as_str()));
+    }
+
+    /// Private window popup preserves is_private.
+    #[test]
+    fn private_popup_preserves_is_private() {
+        let mut core = BrowserCore::new();
+        // Create a private window
+        let resp = core.process(ProtocolRequest::new(Request::WindowsCreatePrivate));
+        assert!(resp.ok);
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let private_w = s.windows.iter().find(|w| w.is_private).unwrap();
+        let private_w_id = private_w.id.clone();
+
+        // Simulate a popup in the private window
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+            tab_id: "popup-in-private".into(),
+            window_id: private_w_id.clone(),
+            url: "https://popup.example.com".into(),
+            active: true,
+            is_private: true,
+        }))
+        .unwrap();
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // The window should still be private
+        let w = s.windows.iter().find(|w| w.id == private_w_id).unwrap();
+        assert!(w.is_private);
+    }
+
+    /// Multiple windows with independent active tabs.
+    #[test]
+    fn multiple_windows_independent_active_tabs() {
+        let mut core = BrowserCore::new();
+        // Create window 1 with a tab
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://w1.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // Create window 2 with a tab
+        let (w2_id, _w2_tabs) = create_window_with_tabs(&mut core, 1);
+
+        // Both windows should have an active tab
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let active_count = s.tabs.iter().filter(|t| t.is_active).count();
+        assert_eq!(active_count, 2, "each window should have one active tab");
+
+        // Activate a different tab in window 2
+        // First add another tab to w2
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://w2-tab2.com".into()),
+            active: true,
+            window_id: Some(w2_id.clone()),
+        }));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        // Window 2 should still have exactly one active tab
+        let w2_tabs: Vec<_> = s.tabs.iter().filter(|t| t.window_id == w2_id).collect();
+        let w2_active: Vec<_> = w2_tabs.iter().filter(|t| t.is_active).collect();
+        assert_eq!(w2_active.len(), 1);
     }
 }
