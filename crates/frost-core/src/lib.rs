@@ -437,9 +437,11 @@ where
                         "fubuki://newtab/".into(),
                         false,
                     );
-                    self.windows.attach_tab(prev_window_id, &empty_tab.id, false);
+                    self.windows
+                        .attach_tab(prev_window_id, &empty_tab.id, false);
                     if let Err(e) =
-                        self.adapter.create_page(&empty_tab.id, prev_window_id, &empty_tab.url)
+                        self.adapter
+                            .create_page(&empty_tab.id, prev_window_id, &empty_tab.url)
                     {
                         self.windows.detach_tab(&empty_tab.id);
                         self.tabs.remove_tab(&empty_tab.id);
@@ -1945,27 +1947,60 @@ mod tests {
         // Create a core with an adapter that always fails
         struct FailingAdapter;
         impl frost_engine_api::EngineAdapter for FailingAdapter {
-            fn create_page(&mut self, _: &str, _: &str, _: &str) -> frost_engine_api::EngineResult<()> {
-                Err(frost_engine_api::EngineError::Message("host failure".into()))
+            fn create_page(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> frost_engine_api::EngineResult<()> {
+                Err(frost_engine_api::EngineError::Message(
+                    "host failure".into(),
+                ))
             }
-            fn close_page(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn activate_page(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn pin_page(&mut self, _: &str, _: bool) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn move_page(&mut self, _: &str, _: usize) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn move_page_to_window(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn navigate(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn reload(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn stop(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn go_back(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn go_forward(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn create_window(&mut self, _: &str, _: bool) -> frost_engine_api::EngineResult<()> { Ok(()) }
-            fn close_window(&mut self, _: &str) -> frost_engine_api::EngineResult<()> { Ok(()) }
+            fn close_page(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn activate_page(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn pin_page(&mut self, _: &str, _: bool) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn move_page(&mut self, _: &str, _: usize) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn move_page_to_window(
+                &mut self,
+                _: &str,
+                _: &str,
+            ) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn navigate(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn reload(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn stop(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn go_back(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn go_forward(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn create_window(&mut self, _: &str, _: bool) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
+            fn close_window(&mut self, _: &str) -> frost_engine_api::EngineResult<()> {
+                Ok(())
+            }
         }
 
-        let mut core = BrowserCore::with_adapter_and_settings(
-            FailingAdapter,
-            InMemoryStore::default(),
-        );
+        let mut core =
+            BrowserCore::with_adapter_and_settings(FailingAdapter, InMemoryStore::default());
 
         let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
         let Response::AppSnapshot(s) = snap.response else {
