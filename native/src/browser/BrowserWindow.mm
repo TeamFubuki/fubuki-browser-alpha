@@ -450,7 +450,7 @@ bool BrowserWindow::CreateTab(const std::string& input, bool active) {
   PushHostEventJson(
       "{\"version\":0,\"event\":\"page.created\",\"payload\":{\"tabId\":" +
       JsonEscape(tab.id) + ",\"windowId\":" + JsonEscape(windowId_) +
-      ",\"url\":" + JsonEscape(tab.url) + "}}");
+      ",\"url\":" + JsonEscape(tab.url) + "\",\"active\":\" + (active ? "true" : "false") + "}}");
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();
@@ -469,7 +469,7 @@ bool BrowserWindow::CreateTabWithId(const std::string& input,
   PushHostEventJson(
       "{\"version\":0,\"event\":\"page.created\",\"payload\":{\"tabId\":" +
       JsonEscape(tab.id) + ",\"windowId\":" + JsonEscape(windowId_) +
-      ",\"url\":" + JsonEscape(tab.url) + "}}");
+      ",\"url\":" + JsonEscape(tab.url) + "\",\"active\":\" + (active ? "true" : "false") + "}}");
   CreateTabBrowser(tab);
   ResizeViews();
   SetActiveContentView();

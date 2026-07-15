@@ -294,6 +294,10 @@ void BrowserAppController::FinalizeWindowClosed(BrowserWindow *window) {
     return;
   }
   const std::string windowId = window->WindowId();
+  // Notify FrostEngine before removing the window
+  engine_.PushHostEventJson(
+      "{\"version\":0,\"event\":\"window.closed\",\"payload\":{\"windowId\":\"" +
+      JsonEscape(windowId) + "\"}}");
   if (!window->IsPrivate()) {
     closedWindows_.push_back(window->SessionSnapshot());
     if (closedWindows_.size() > 10) {

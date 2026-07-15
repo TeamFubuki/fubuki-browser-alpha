@@ -2040,4 +2040,122 @@ mod tests {
         let host_tab = s.tabs.iter().find(|t| t.id == "host-tab-1").unwrap();
         assert!(!host_tab.is_active);
     }
+
+    #[test]
+    fn multiple_windows_operation() {
+        let mut core = BrowserCore::new();
+
+        // Create window 1 with 2 tabs
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://w1-tab1.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://w1-tab2.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // Create window 2 with 1 tab
+        let (w2_id, _) = create_window_with_tabs(&mut core, 1);
+
+        // Verify initial state
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert_eq!(s.windows.len(), 2);
+        assert_eq!(s.tabs.len(), 3);
+
+        // Close window 2
+        let resp = core.process(ProtocolRequest::new(Request::WindowsClose {
+            window_id: Some(w2_id.clone()),
+        }));
+        assert!(resp.ok);
+
+        // Verify window 2 is gone
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        assert_eq!(s.windows.len(), 1);
+        assert_eq!(s.tabs.len(), 2);
+    }
+
+    #[test]
+    fn private_window_preserves_private_flag() {
+        let mut core = BrowserCore::new();
+
+        // Create a private window
+        let resp = core.process(ProtocolRequest::new(Request::WindowsCreatePrivate));
+        assert!(resp.ok);
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // The private window should be marked as private
+        let private_windows: Vec<_> = s.windows.iter().filter(|w| w.is_private).collect();
+        assert_eq!(private_windows.len(), 1);
+    }
+
+    #[test]
+    fn popup_tab_registration() {
+        let mut core = BrowserCore::new();
+
+        // Simulate a popup tab being created
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+            tab_id: "popup-tab-1".into(),
+            window_id: "window-1".into(),
+            url: "https://popup.example.com".into(),
+            active: true,
+        }))
+        .unwrap();
+
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+
+        // The popup tab should be registered
+        let popup_tab = s.tabs.iter().find(|t| t.id == "popup-tab-1");
+        assert!(popup_tab.is_some());
+        assert_eq!(popup_tab.unwrap().url, "https://popup.example.com");
+    }
+
+    #[test]
+    fn tabs_home_navigates_active_tab() {
+        let mut core = BrowserCore::new();
+
+        // Create a tab with a URL
+        let resp = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+            window_id: None,
+        }));
+        assert!(resp.ok);
+
+        // Set homeUrl setting
+        let resp = core.process(ProtocolRequest::new(Request::SettingsSet {
+            key: "homeUrl".into(),
+            value: "https://home.example.com".into(),
+        }));
+        assert!(resp.ok);
+
+        // Execute tabs.home
+        let resp = core.process(ProtocolRequest::new(Request::TabsHome));
+        assert!(resp.ok);
+
+        // Verify the tab URL changed to home
+        let snap = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(s) = snap.response else {
+            panic!()
+        };
+        let active_tab = s.tabs.iter().find(|t| t.is_active).unwrap();
+        assert_eq!(active_tab.url, "https://home.example.com");
+    }
 }

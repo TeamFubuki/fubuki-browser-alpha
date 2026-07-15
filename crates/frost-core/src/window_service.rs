@@ -31,7 +31,8 @@ impl WindowService {
     /// window in snapshots.
     pub fn ensure_window(&mut self, window_id: &str, is_private: bool) {
         if let Some(window) = self.windows.iter_mut().find(|w| w.id == window_id) {
-            window.is_private = is_private;
+            // Preserve existing private flag - don't overwrite with false
+            window.is_private = window.is_private || is_private;
             self.active_window_id = Some(window_id.to_owned());
             return;
         }
