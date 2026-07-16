@@ -20,7 +20,7 @@ frost-core = { path = "crates/frost-core" }
 frost-engine-api = { path = "crates/frost-engine-api" }
 frost-protocol = { path = "crates/frost-protocol" }
 frost-store = { path = "crates/frost-store" }
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

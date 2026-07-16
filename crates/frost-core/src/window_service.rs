@@ -26,6 +26,35 @@ impl WindowService {
         id
     }
 
+    /// Registers a window created by the host during startup/session restore.
+    /// The initial empty placeholder is adopted instead of leaving a phantom
+    /// window in snapshots.
+    /// NOTE: Only updates active_window_id when adopting the initial placeholder
+    /// window (startup scenario). For additional windows, the active window
+    /// should only change on explicit user focus (WindowFocused event).
+    pub fn ensure_window(&mut self, window_id: &str, is_private: bool) {
+        if let Some(window) = self.windows.iter_mut().find(|w| w.id == window_id) {
+            // Preserve existing private flag - don't overwrite with false
+            window.is_private = window.is_private || is_private;
+            return;
+        }
+        if self.windows.len() == 1 && self.windows[0].tab_ids.is_empty() {
+            // Adopt the initial placeholder window (startup scenario)
+            self.windows[0].id = window_id.to_owned();
+            self.windows[0].is_private = is_private;
+            self.active_window_id = Some(window_id.to_owned());
+        } else {
+            self.windows.push(WindowState {
+                id: window_id.to_owned(),
+                active_tab_id: None,
+                is_private,
+                tab_ids: Vec::new(),
+            });
+            // Do NOT update active_window_id for additional windows —
+            // focus changes should only happen via WindowFocused events.
+        }
+    }
+
     pub fn close_window(&mut self, window_id: &str) -> bool {
         let Some(index) = self.windows.iter().position(|w| w.id == window_id) else {
             return false;
@@ -70,6 +99,16 @@ impl WindowService {
             }
             if activate {
                 window.active_tab_id = Some(tab_id.to_owned());
+            } else if window.active_tab_id.as_deref() == Some(tab_id) {
+                window.active_tab_id = window
+                    .tab_ids
+                    .iter()
+                    .find(|id| id.as_str() != tab_id)
+                    .cloned();
+            }
+            // Ensure a non-empty window always has exactly one active tab
+            if window.active_tab_id.is_none() && !window.tab_ids.is_empty() {
+                window.active_tab_id = window.tab_ids.last().cloned();
             }
         }
     }
@@ -96,6 +135,18 @@ impl WindowService {
             if window.tab_ids.iter().any(|id| id == tab_id) {
                 window.active_tab_id = Some(tab_id.to_owned());
                 self.active_window_id = Some(window.id.clone());
+                return;
+            }
+        }
+    }
+
+    /// Moves a tab to a new position within its window's tab_ids list.
+    pub fn move_tab_in_window(&mut self, tab_id: &str, to_index: usize) {
+        for window in &mut self.windows {
+            if let Some(pos) = window.tab_ids.iter().position(|id| id == tab_id) {
+                let tab_id = window.tab_ids.remove(pos);
+                let new_pos = to_index.min(window.tab_ids.len());
+                window.tab_ids.insert(new_pos, tab_id);
                 return;
             }
         }

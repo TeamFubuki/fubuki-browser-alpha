@@ -357,7 +357,7 @@ impl LogRepository for SqliteStore {
         let mut stmt = self
             .conn
             .prepare("SELECT level,message,created_at FROM logs ORDER BY id DESC LIMIT ?")?;
-        let rows = stmt.query_map(params![limit], |row| {
+        let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(LogRecord {
                 level: row.get(0)?,
                 message: row.get(1)?,

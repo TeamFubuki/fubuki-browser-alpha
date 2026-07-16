@@ -55,7 +55,10 @@ private:
   std::string WriteValue(CefRefPtr<CefValue> value) const;
 
   BrowserWindow &window_;
-  FrostBridge frostBridge_;
+  // BrowserAppController owns the single FrostEngine instance. Every window
+  // must talk to that instance; per-window engines split the source of truth
+  // and cause the same mutation to be applied more than once.
+  FrostBridge &frostBridge_;
   std::unordered_map<std::string, MethodHandler> methods_;
 };
 

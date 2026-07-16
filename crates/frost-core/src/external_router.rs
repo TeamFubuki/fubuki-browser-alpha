@@ -230,6 +230,7 @@ where
                     frost_protocol::ProtocolRequest::new(frost_protocol::Request::TabsCreate {
                         url,
                         active,
+                        window_id: None,
                     });
                 Self::bool_response_or_error(self.process(request), "tab create failed")
             }

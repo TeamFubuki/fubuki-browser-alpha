@@ -82,7 +82,12 @@ pub enum Request {
     #[serde(rename = "tabs.list")]
     TabsList,
     #[serde(rename = "tabs.create", rename_all = "camelCase")]
-    TabsCreate { url: Option<String>, active: bool },
+    TabsCreate {
+        url: Option<String>,
+        active: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+    },
     #[serde(rename = "tabs.activate", rename_all = "camelCase")]
     TabsActivate { tab_id: String },
     #[serde(rename = "tabs.close", rename_all = "camelCase")]
@@ -101,6 +106,12 @@ pub enum Request {
     TabsMove { tab_id: String, to_index: usize },
     #[serde(rename = "tabs.moveToNewWindow", rename_all = "camelCase")]
     TabsMoveToNewWindow { tab_id: String },
+    #[serde(rename = "tabs.unpin", rename_all = "camelCase")]
+    TabsUnpin { tab_id: String },
+    #[serde(rename = "tabs.activateNext")]
+    TabsActivateNext,
+    #[serde(rename = "tabs.activatePrevious")]
+    TabsActivatePrevious,
     #[serde(rename = "tabs.navigate", rename_all = "camelCase")]
     TabsNavigate { tab_id: String, input: String },
     #[serde(rename = "tabs.reload", rename_all = "camelCase")]
@@ -111,8 +122,13 @@ pub enum Request {
     TabsGoBack { tab_id: String },
     #[serde(rename = "tabs.goForward", rename_all = "camelCase")]
     TabsGoForward { tab_id: String },
-    #[serde(rename = "tabs.home")]
-    TabsHome,
+    #[serde(rename = "tabs.home", rename_all = "camelCase")]
+    TabsHome {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tab_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+    },
     #[serde(rename = "windows.list")]
     WindowsList,
     #[serde(rename = "windows.create")]
@@ -123,6 +139,8 @@ pub enum Request {
     WindowsClose { window_id: Option<String> },
     #[serde(rename = "windows.reopenClosed")]
     WindowsReopenClosed,
+    #[serde(rename = "windows.reopenClosedPrivate")]
+    WindowsReopenClosedPrivate,
     #[serde(rename = "settings.get", rename_all = "camelCase")]
     SettingsGet { key: String },
     #[serde(rename = "settings.set", rename_all = "camelCase")]

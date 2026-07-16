@@ -397,9 +397,11 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   }
   const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0;
   const bool altDown = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
+  const bool shiftDown = (event.modifiers & EVENTFLAG_SHIFT_DOWN) != 0;
   const char character = static_cast<char>(event.unmodified_character);
   const bool handled =
-      window_->HandleShortcut(commandDown, altDown, event.windows_key_code, character);
+      window_->HandleShortcut(commandDown, altDown, shiftDown,
+                              event.windows_key_code, character, tabId_);
   if (handled && is_keyboard_shortcut) {
     *is_keyboard_shortcut = true;
   }
@@ -414,13 +416,22 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
   }
   const std::string url = request->GetURL().ToString();
   if (StartsWith(url, "fubuki://settings/set")) {
-    if (!user_gesture || is_redirect ||
-        !IsTrustedSettingsActionSource(frame->GetURL().ToString())) {
+    const std::string method = request->GetMethod().ToString();
+    // CEF does not consistently mark HTML form POST navigations as a user
+    // gesture. Authenticity comes from a trusted internal-page source plus a
+    // POST request; requiring user_gesture here silently discarded every form
+    // submission. GET remains gesture-gated and destructive keys are rejected.
+    if (is_redirect || !IsTrustedSettingsActionSource(frame->GetURL().ToString()) ||
+        (method != "POST" && !user_gesture)) {
       return true;
     }
-    const std::string method = request->GetMethod().ToString();
-    const std::string query =
-        method == "POST" ? PostBody(request) : QueryString(url);
+    std::string query = method == "POST" ? PostBody(request) : QueryString(url);
+    if (method == "POST" && query.empty()) {
+      // CEF can omit POST elements for custom-scheme form navigation. Action
+      // forms duplicate the same encoded fields in their URL; this branch is
+      // still POST-only and retains the trusted-source check above.
+      query = QueryString(url);
+    }
     const std::string key = FormParam(query, "key");
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
       if (!window_->IsPrivate()) {

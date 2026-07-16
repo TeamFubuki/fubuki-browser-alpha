@@ -1,5 +1,6 @@
 export type Tab = {
   id: string;
+  windowId: string;
   title: string;
   url: string;
   faviconUrl: string;
@@ -36,6 +37,8 @@ export type FrostWindowState = {
 
 export type FrostAppState = {
   protocolVersion: number;
+  /** Native bridge local context; unlike activeWindowId this is per BrowserWindow. */
+  currentWindowId?: string;
   activeWindowId: string | null;
   windows: FrostWindowState[];
   tabs: FrostTabState[];
@@ -122,6 +125,10 @@ export type Settings = {
   homeUrl: string;
   language: string;
   defaultZoomLevel: string;
+  startupBehavior: string;
+  downloadDirectory: string;
+  askBeforeDownload: string;
+  closeWindowWithLastTab: string;
 };
 
 export type BrowserState = {
@@ -194,15 +201,18 @@ export type BridgeMethodMap = {
     result: unknown;
   };
   'tabs.create': {
-    params: { url?: string; active?: boolean };
+    params: { url?: string; active?: boolean; windowId?: string };
     result: boolean;
   };
   'tabs.pin': { params: { tabId: string; pinned: boolean }; result: boolean };
+  'tabs.unpin': { params: { tabId: string }; result: boolean };
   'tabs.duplicate': { params: { tabId: string }; result: boolean };
   'tabs.reopenClosed': { params: Record<string, never>; result: boolean };
   'tabs.closeOther': { params: { tabId: string }; result: boolean };
   'tabs.closeToRight': { params: { tabId: string }; result: boolean };
   'tabs.moveToNewWindow': { params: { tabId: string }; result: boolean };
+  'tabs.activateNext': { params: Record<string, never>; result: boolean };
+  'tabs.activatePrevious': { params: Record<string, never>; result: boolean };
   'tabs.list': {
     params: Record<string, never>;
     result: FrostTabState[] | Tab[];
@@ -218,6 +228,10 @@ export type BridgeMethodMap = {
   'tabs.goBack': { params: { tabId: string }; result: boolean };
   'tabs.goForward': { params: { tabId: string }; result: boolean };
   'tabs.move': { params: { tabId: string; toIndex: number }; result: boolean };
+  'tabs.home': {
+    params: { tabId?: string; windowId?: string };
+    result: boolean;
+  };
   'windows.list': {
     params: Record<string, never>;
     result: FrostWindowState[] | WindowSnapshot[];
@@ -226,23 +240,30 @@ export type BridgeMethodMap = {
   'windows.createPrivate': { params: Record<string, never>; result: boolean };
   'windows.close': { params: { windowId?: string }; result: boolean };
   'windows.reopenClosed': { params: Record<string, never>; result: boolean };
+  'windows.reopenClosedPrivate': {
+    params: Record<string, never>;
+    result: boolean;
+  };
   'bookmarks.save': {
     params: { title: string; url: string; faviconUrl: string };
     result: boolean;
   };
   'bookmarks.list': { params: Record<string, never>; result: BookmarkRecord[] };
   'bookmarks.remove': { params: { url: string }; result: boolean };
+  'bookmarks.clear': { params: Record<string, never>; result: boolean };
   'history.list': { params: Record<string, never>; result: HistoryRecord[] };
   'history.remove': { params: { url: string }; result: boolean };
   'history.clearRange': {
     params: { range: 'lastHour' | 'today' | 'all' };
     result: boolean;
   };
+  'history.clear': { params: Record<string, never>; result: boolean };
   'downloads.list': { params: Record<string, never>; result: DownloadRecord[] };
   'downloads.remove': {
     params: { url?: string; path?: string };
     result: boolean;
   };
+  'downloads.clear': { params: Record<string, never>; result: boolean };
   'downloads.open': { params: { path: string }; result: boolean };
   'downloads.reveal': { params: { path: string }; result: boolean };
   'settings.get': { params: { key: string }; result: string | null };
@@ -260,6 +281,12 @@ export type EventMap = {
   'tab.updated': Partial<FrostTabState> & { tabId: string };
   'tab.closed': { tabId: string };
   'tab.activated': { tabId: string };
+  'tab.moved': {
+    tabId: string;
+    fromWindowId: string;
+    toWindowId: string;
+    toIndex: number;
+  };
   'tabs.created': void;
   'tabs.updated': void;
   'tabs.closed': void;
@@ -274,8 +301,8 @@ export type EventMap = {
   'setting.changed': { key: string; value: string };
   'permission.changed': void;
   'window.created': FrostWindowState | void;
-  'window.closed': void;
-  'window.focused': void;
+  'window.closed': { windowId: string } | void;
+  'window.focused': { windowId: string } | void;
   'app.stateChanged': void;
 };
 
@@ -336,7 +363,21 @@ async function invoke<T = unknown>(
         method,
         params,
       }),
-      onSuccess: (response) => resolve(JSON.parse(response) as T),
+      onSuccess: (response) => {
+        const parsed = JSON.parse(response) as T & {
+          ok?: boolean;
+          error?: string;
+        };
+        if (
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          parsed.ok === false
+        ) {
+          reject(new Error(parsed.error || 'Native bridge request failed'));
+          return;
+        }
+        resolve(parsed as T);
+      },
       onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
     });
   });
@@ -389,12 +430,17 @@ function defaultSettings(): Settings {
     homeUrl: 'https://example.com',
     language: 'system',
     defaultZoomLevel: '0',
+    startupBehavior: 'lastSession',
+    downloadDirectory: '',
+    askBeforeDownload: 'false',
+    closeWindowWithLastTab: 'false',
   };
 }
 
 export function fromFrostTab(tab: FrostTabState): Tab {
   return {
     id: tab.id,
+    windowId: tab.windowId,
     title: tab.title,
     url: tab.url,
     faviconUrl: tab.faviconUrl,
@@ -436,22 +482,23 @@ export function normalizeAppState(
     return snapshot;
   }
 
+  const currentWindowId = snapshot.currentWindowId ?? snapshot.activeWindowId;
   const activeWindow = snapshot.windows.find(
-    (windowState) => windowState.id === snapshot.activeWindowId,
+    (windowState) => windowState.id === currentWindowId,
   );
   const tabById = new Map(snapshot.tabs.map((tab) => [tab.id, tab]));
   const currentWindowTabs = activeWindow
     ? activeWindow.tabIds
         .map((tabId) => tabById.get(tabId))
         .filter((tab): tab is FrostTabState => Boolean(tab))
-    : snapshot.tabs;
+    : [];
   const activeTab =
     currentWindowTabs.find((tab) => tab.id === activeWindow?.activeTabId) ??
     currentWindowTabs.find((tab) => tab.isActive);
 
   return {
     bridgeVersion: `frost-${snapshot.protocolVersion}`,
-    windowId: activeWindow?.id ?? '',
+    windowId: activeWindow?.id ?? currentWindowId ?? '',
     isPrivate: activeWindow?.isPrivate ?? false,
     activeTabId: activeWindow?.activeTabId ?? activeTab?.id ?? '',
     tabs: currentWindowTabs.map((tab) => ({
@@ -482,6 +529,7 @@ function developmentState(): BrowserState {
     tabs: [
       {
         id: 'dev-tab-1',
+        windowId: 'dev-window',
         title: 'Fubuki Start',
         url: 'fubuki://newtab/',
         faviconUrl: '',
@@ -495,6 +543,7 @@ function developmentState(): BrowserState {
       },
       {
         id: 'dev-tab-2',
+        windowId: 'dev-window',
         title: 'Architecture',
         url: 'fubuki://settings/',
         faviconUrl: '',
@@ -578,8 +627,15 @@ export const commands = {
 };
 
 export const tabs = {
-  create: (url = 'fubuki://newtab/') =>
-    invokeBridge('tabs.create', { url, active: true }),
+  create: (
+    url = 'fubuki://newtab/',
+    options?: { active?: boolean; windowId?: string },
+  ) =>
+    invokeBridge('tabs.create', {
+      url,
+      active: options?.active ?? true,
+      windowId: options?.windowId,
+    }),
   navigate: (tabId: string, input: string) =>
     invokeBridge('tabs.navigate', { tabId, input }),
   activate: (tabId: string) => invokeBridge('tabs.activate', { tabId }),
@@ -590,14 +646,19 @@ export const tabs = {
   goForward: (tabId: string) => invokeBridge('tabs.goForward', { tabId }),
   move: (tabId: string, toIndex: number) =>
     invokeBridge('tabs.move', { tabId, toIndex }),
+  home: (tabId?: string, windowId?: string) =>
+    invokeBridge('tabs.home', { tabId, windowId }),
   pin: (tabId: string, pinned: boolean) =>
     invokeBridge('tabs.pin', { tabId, pinned }),
+  unpin: (tabId: string) => invokeBridge('tabs.unpin', { tabId }),
   duplicate: (tabId: string) => invokeBridge('tabs.duplicate', { tabId }),
   reopenClosed: () => invokeBridge('tabs.reopenClosed'),
   closeOther: (tabId: string) => invokeBridge('tabs.closeOther', { tabId }),
   closeToRight: (tabId: string) => invokeBridge('tabs.closeToRight', { tabId }),
   moveToNewWindow: (tabId: string) =>
     invokeBridge('tabs.moveToNewWindow', { tabId }),
+  activateNext: () => invokeBridge('tabs.activateNext'),
+  activatePrevious: () => invokeBridge('tabs.activatePrevious'),
 };
 
 export const page = {

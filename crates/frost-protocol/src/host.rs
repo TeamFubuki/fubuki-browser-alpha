@@ -17,9 +17,19 @@ pub enum HostCommand {
         tab_id: String,
         window_id: String,
         url: String,
+        #[serde(default = "default_true")]
+        active: bool,
     },
     #[serde(rename = "page.close", rename_all = "camelCase")]
     PageClose { tab_id: String },
+    #[serde(rename = "page.activate", rename_all = "camelCase")]
+    PageActivate { tab_id: String },
+    #[serde(rename = "page.pin", rename_all = "camelCase")]
+    PagePin { tab_id: String, pinned: bool },
+    #[serde(rename = "page.move", rename_all = "camelCase")]
+    PageMove { tab_id: String, to_index: usize },
+    #[serde(rename = "page.moveToWindow", rename_all = "camelCase")]
+    PageMoveToWindow { tab_id: String, window_id: String },
     #[serde(rename = "page.navigate", rename_all = "camelCase")]
     PageNavigate { tab_id: String, url: String },
     #[serde(rename = "page.reload", rename_all = "camelCase")]
@@ -76,6 +86,17 @@ pub enum HostEvent {
         tab_id: String,
         window_id: String,
         url: String,
+        #[serde(default = "default_true")]
+        active: bool,
+        #[serde(default)]
+        is_private: bool,
+    },
+    #[serde(rename = "page.moved", rename_all = "camelCase")]
+    PageMoved {
+        tab_id: String,
+        from_window_id: String,
+        to_window_id: String,
+        to_index: usize,
     },
     #[serde(rename = "page.closed", rename_all = "camelCase")]
     PageClosed { tab_id: String },
@@ -124,6 +145,10 @@ impl HostCommandEnvelope {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl HostEventEnvelope {
     pub fn new(event: HostEvent) -> Self {
         Self {
@@ -154,5 +179,99 @@ mod tests {
         assert_eq!(json["command"], "page.navigate");
         assert_eq!(json["payload"]["tabId"], "tab-1");
         assert_eq!(json["payload"]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn page_create_includes_active_field() {
+        let envelope = HostCommandEnvelope::new(
+            "cmd-2",
+            HostCommand::PageCreate {
+                tab_id: "tab-2".into(),
+                window_id: "win-1".into(),
+                url: "https://example.com".into(),
+                active: false,
+            },
+        );
+        let json = serde_json::to_value(envelope).unwrap();
+        assert_eq!(json["payload"]["active"], false);
+    }
+
+    #[test]
+    fn page_created_includes_is_private() {
+        let json = r#"{
+            "version": 0,
+            "event": "page.created",
+            "payload": {
+                "tabId": "t1",
+                "windowId": "w1",
+                "url": "https://example.com",
+                "active": true,
+                "isPrivate": true
+            }
+        }"#;
+        let envelope: HostEventEnvelope = serde_json::from_str(json).unwrap();
+        match envelope.event {
+            HostEvent::PageCreated {
+                tab_id,
+                window_id,
+                url,
+                active,
+                is_private,
+            } => {
+                assert_eq!(tab_id, "t1");
+                assert_eq!(window_id, "w1");
+                assert_eq!(url, "https://example.com");
+                assert!(active);
+                assert!(is_private);
+            }
+            _ => panic!("expected PageCreated"),
+        }
+    }
+
+    #[test]
+    fn window_closed_roundtrip() {
+        let json = r#"{
+            "version": 0,
+            "event": "window.closed",
+            "payload": {
+                "windowId": "win-abc"
+            }
+        }"#;
+        let envelope: HostEventEnvelope = serde_json::from_str(json).unwrap();
+        match envelope.event {
+            HostEvent::WindowClosed { window_id } => {
+                assert_eq!(window_id, "win-abc");
+            }
+            _ => panic!("expected WindowClosed"),
+        }
+    }
+
+    #[test]
+    fn page_moved_roundtrip() {
+        let json = r#"{
+            "version": 0,
+            "event": "page.moved",
+            "payload": {
+                "tabId": "t1",
+                "fromWindowId": "w1",
+                "toWindowId": "w2",
+                "toIndex": 0
+            }
+        }"#;
+        let envelope: HostEventEnvelope = serde_json::from_str(json).unwrap();
+        match envelope.event {
+            HostEvent::PageMoved {
+                tab_id,
+                from_window_id,
+                to_window_id,
+                to_index,
+            } => {
+                assert_eq!(tab_id, "t1");
+                assert_eq!(from_window_id, "w1");
+                assert_eq!(to_window_id, "w2");
+                assert_eq!(to_index, 0);
+            }
+            _ => panic!("expected PageMoved"),
+        }
     }
 }
