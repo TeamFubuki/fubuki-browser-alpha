@@ -27,6 +27,7 @@ public:
 private:
   bool LoadRequest(const std::string &url);
   bool LoadFile(const std::string &path, const std::string &mimeType);
+  bool LoadInternalPage();
   void LoadText(std::string body, std::string mimeType, int status);
   std::string ResolveAppPath(const std::string &url) const;
 

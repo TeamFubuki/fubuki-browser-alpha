@@ -398,7 +398,8 @@ std::string FileName(const std::string& path, const std::string& url) {
   return slash == std::string::npos ? source : source.substr(slash + 1);
 }
 
-std::string BookmarksHtml() {
+// Legacy server-rendered pages kept for compatibility with pre-Solid builds.
+[[maybe_unused]] std::string BookmarksHtml() {
   std::ostringstream body;
   const auto records = QueryRecords("bookmarks", 500);
   if (records.empty()) {
@@ -423,7 +424,7 @@ std::string BookmarksHtml() {
   return PageChrome("Bookmarks", body.str());
 }
 
-std::string DownloadsHtml() {
+[[maybe_unused]] std::string DownloadsHtml() {
   std::ostringstream body;
   const auto records = QueryRecords("downloads", 50);
   body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
@@ -459,7 +460,7 @@ std::string DownloadsHtml() {
   return PageChrome("Downloads", body.str());
 }
 
-std::string HistoryHtml() {
+[[maybe_unused]] std::string HistoryHtml() {
   std::ostringstream body;
   const auto records = QueryRecords("history", 500);
   body << "<form class=\"inline-form\" style=\"margin-bottom:12px\"><input "
@@ -507,7 +508,7 @@ std::string HistoryHtml() {
   return PageChrome("History", body.str());
 }
 
-std::string SettingsHtml() {
+[[maybe_unused]] std::string SettingsHtml() {
   const std::string appearance = Setting("appearance", "system");
   const std::string searchEngine = Setting("searchEngine", "google");
   const std::string customSearchUrl =
@@ -684,7 +685,7 @@ std::string SettingsHtml() {
       << "</section></div>";  return PageChrome("Settings", body.str());
 }
 
-std::string DebugHtml() {
+[[maybe_unused]] std::string DebugHtml() {
   std::ostringstream body;
   BrowserAppController* app = GetBrowserAppController();
   body << "<section class=\"section\">";
@@ -752,7 +753,7 @@ std::string DebugHtml() {
   return PageChrome("Debug", body.str());
 }
 
-std::string NewTabHtml() {
+[[maybe_unused]] std::string NewTabHtml() {
   const std::string appearance = BrowserAppearance();
   const std::string lang = BrowserLanguage();
   std::ostringstream html;
@@ -903,7 +904,6 @@ std::string SearchRedirectUrl(const std::string& query) {
 
 bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
   offset_ = 0;
-  auto& cache = PageCache::Instance();
 
   // State-changing internal-page actions are intercepted by FubukiClient only
   // after it verifies the HTTP method, user gesture where required, and trusted
@@ -933,64 +933,34 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     // Empty query — just show new tab
   }
 
-  if (url.rfind("fubuki://newtab/", 0) == 0) {
-    std::string html;
-    if (cache.Get(url, html)) {
-      LoadText(std::move(html), "text/html", 200);
-    } else {
-      html = NewTabHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+  // Internal routes are SolidJS multi-page output.  Keep their fubuki://
+  // origins (and therefore the existing constrained action policy) while
+  // resolving Vite's shared assets from the same dist directory.
+  const size_t assetPath = url.find("/assets/");
+  if (assetPath != std::string::npos && url.find("..") == std::string::npos) {
+    const std::string path = uiDistPath_ + url.substr(assetPath);
+    if (LoadFile(path, MimeForPath(path))) {
+      return true;
     }
-    return true;
+  }
+
+  if (url.rfind("fubuki://newtab/", 0) == 0) {
+    return LoadInternalPage();
   }
   if (url.rfind("fubuki://bookmarks/", 0) == 0) {
-    std::string html;
-    if (cache.Get(url, html)) {
-      LoadText(std::move(html), "text/html", 200);
-    } else {
-      html = BookmarksHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
-    }
-    return true;
+    return LoadInternalPage();
   }
   if (url.rfind("fubuki://downloads/", 0) == 0) {
-    std::string html;
-    if (cache.Get(url, html)) {
-      LoadText(std::move(html), "text/html", 200);
-    } else {
-      html = DownloadsHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
-    }
-    return true;
+    return LoadInternalPage();
   }
   if (url.rfind("fubuki://history/", 0) == 0) {
-    std::string html;
-    if (cache.Get(url, html)) {
-      LoadText(std::move(html), "text/html", 200);
-    } else {
-      html = HistoryHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
-    }
-    return true;
+    return LoadInternalPage();
   }
   if (url.rfind("fubuki://settings", 0) == 0) {
-    std::string html;
-    if (cache.Get(url, html)) {
-      LoadText(std::move(html), "text/html", 200);
-    } else {
-      html = SettingsHtml();
-      cache.Set(url, html, std::chrono::seconds{2});
-      LoadText(std::move(html), "text/html", 200);
-    }
-    return true;
+    return LoadInternalPage();
   }
   if (url.rfind("fubuki://debug/", 0) == 0) {
-    LoadText(DebugHtml(), "text/html", 200);
-    return true;
+    return LoadInternalPage();
   }
   if (url.rfind("fubuki://app/", 0) == 0) {
     const std::string path = ResolveAppPath(url);
@@ -1001,6 +971,15 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     return true;
   }
   LoadText("Not found", "text/plain", 404);
+  return true;
+}
+
+bool FubukiSchemeHandler::LoadInternalPage() {
+  if (LoadFile(uiDistPath_ + "/internal.html", "text/html")) {
+    return true;
+  }
+  LoadText("Fubuki internal UI build not found. Run `pnpm build` in ui/.",
+           "text/plain", 404);
   return true;
 }
 
