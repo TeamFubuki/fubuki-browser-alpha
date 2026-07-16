@@ -6,7 +6,13 @@ import HistoryPage from './internal/HistoryPage';
 import NewTabPage from './internal/NewTabPage';
 import SettingsPage from './internal/SettingsPage';
 
-type Page = 'newtab' | 'bookmarks' | 'downloads' | 'history' | 'settings' | 'debug';
+type Page =
+  | 'newtab'
+  | 'bookmarks'
+  | 'downloads'
+  | 'history'
+  | 'settings'
+  | 'debug';
 
 const pages = {
   newtab: { title: 'New Tab', component: NewTabPage },
@@ -19,12 +25,21 @@ const pages = {
 
 function pageFromHost(): Page {
   const host = window.location.hostname;
+  const preview = new URLSearchParams(window.location.search).get('page');
+  if (
+    (host === 'localhost' || host === '127.0.0.1') &&
+    preview &&
+    preview in pages
+  ) {
+    return preview as Page;
+  }
   return host in pages ? (host as Page) : 'newtab';
 }
 
 export default function InternalPages() {
   const page = pages[pageFromHost()];
   document.title = page.title;
+  document.documentElement.dataset.page = pageFromHost();
   const PageComponent = page.component;
   return <PageComponent />;
 }

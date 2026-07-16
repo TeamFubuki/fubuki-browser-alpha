@@ -94,6 +94,31 @@ std::string ColumnText(sqlite3_stmt* statement, int column) {
   return text ? reinterpret_cast<const char*>(text) : "";
 }
 
+std::string JsonString(const std::string& value) {
+  std::ostringstream out;
+  out << '"';
+  static constexpr char kHex[] = "0123456789abcdef";
+  for (const unsigned char c : value) {
+    switch (c) {
+      case '"': out << "\\\""; break;
+      case '\\': out << "\\\\"; break;
+      case '\b': out << "\\b"; break;
+      case '\f': out << "\\f"; break;
+      case '\n': out << "\\n"; break;
+      case '\r': out << "\\r"; break;
+      case '\t': out << "\\t"; break;
+      default:
+        if (c < 0x20) {
+          out << "\\u00" << kHex[c >> 4] << kHex[c & 0x0f];
+        } else {
+          out << static_cast<char>(c);
+        }
+    }
+  }
+  out << '"';
+  return out.str();
+}
+
 sqlite3* OpenDatabase() {
   // Cache a single process-lifetime connection. Opening the database (and
   // running the DDL) on every Setting()/QueryRecords() call was a major source
@@ -306,6 +331,84 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
 
   sqlite3_finalize(statement);
   return records;
+}
+
+std::string RecordsJson(const std::string& table, int limit) {
+  const auto records = QueryRecords(table, limit);
+  std::ostringstream json;
+  json << '[';
+  for (size_t index = 0; index < records.size(); ++index) {
+    if (index > 0) json << ',';
+    const auto& record = records[index];
+    if (table == "downloads") {
+      json << "{\"url\":" << JsonString(record.url)
+           << ",\"path\":" << JsonString(record.path)
+           << ",\"state\":" << JsonString(NormalizedDownloadState(record))
+           << ",\"percent\":" << ClampPercent(record.percent)
+           << ",\"createdAt\":" << JsonString(record.createdAt) << '}';
+    } else if (table == "logs") {
+      json << "{\"message\":" << JsonString(record.title)
+           << ",\"level\":" << JsonString(record.path)
+           << ",\"createdAt\":" << JsonString(record.createdAt) << '}';
+    } else {
+      json << "{\"title\":" << JsonString(record.title)
+           << ",\"url\":" << JsonString(record.url)
+           << ",\"faviconUrl\":" << JsonString(record.faviconUrl)
+           << ",\"createdAt\":" << JsonString(record.createdAt) << '}';
+    }
+  }
+  json << ']';
+  return json.str();
+}
+
+std::string SettingsJson() {
+  sqlite3* db = OpenDatabase();
+  std::ostringstream json;
+  json << '{';
+  if (db) {
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT key,value FROM settings ORDER BY key", -1,
+                           &statement, nullptr) == SQLITE_OK) {
+      bool first = true;
+      while (sqlite3_step(statement) == SQLITE_ROW) {
+        if (!first) json << ',';
+        first = false;
+        json << JsonString(ColumnText(statement, 0)) << ':'
+             << JsonString(ColumnText(statement, 1));
+      }
+    }
+    sqlite3_finalize(statement);
+  }
+  json << '}';
+  return json.str();
+}
+
+std::string InternalDataJson(const std::string& host) {
+  std::ostringstream json;
+  json << "{\"locale\":" << JsonString(BrowserLanguage())
+       << ",\"appearance\":" << JsonString(BrowserAppearance());
+  if (host == "bookmarks") {
+    json << ",\"records\":" << RecordsJson("bookmarks", 500);
+  } else if (host == "history") {
+    json << ",\"records\":" << RecordsJson("history", 500);
+  } else if (host == "downloads") {
+    json << ",\"records\":" << RecordsJson("downloads", 200);
+  } else if (host == "settings") {
+    json << ",\"settings\":" << SettingsJson();
+  } else if (host == "debug") {
+    json << ",\"profilePath\":" << JsonString(ProfilePath().string())
+         << ",\"logs\":" << RecordsJson("logs", 80);
+  }
+  json << '}';
+  return json.str();
+}
+
+std::string InternalHost(const std::string& url) {
+  static constexpr char kPrefix[] = "fubuki://";
+  if (url.rfind(kPrefix, 0) != 0) return "";
+  const size_t start = sizeof(kPrefix) - 1;
+  const size_t end = url.find('/', start);
+  return url.substr(start, end == std::string::npos ? std::string::npos : end - start);
 }
 
 std::string FubukiLogoSvg(const std::string& className = "logo") {
@@ -931,6 +1034,18 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
       return true;
     }
     // Empty query — just show new tab
+  }
+
+  // Internal pages do not receive the privileged Frost Protocol bridge. They
+  // can only read this same-origin projection of engine-owned persisted state.
+  // Mutations continue to use the separately guarded settings action route.
+  if (url.find("/data.json") != std::string::npos) {
+    const std::string host = InternalHost(url);
+    if (host == "bookmarks" || host == "downloads" || host == "history" ||
+        host == "settings" || host == "debug" || host == "newtab") {
+      LoadText(InternalDataJson(host), "application/json", 200);
+      return true;
+    }
   }
 
   // Internal routes are SolidJS multi-page output.  Keep their fubuki://
