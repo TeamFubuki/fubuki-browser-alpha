@@ -1,0 +1,95 @@
+name: バグ報告
+description: 不具合や予期しない動作を報告します
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        バグ報告ありがとうございます。
+        重複するIssueがないか、事前に検索してください。
+
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: 重複確認
+      options:
+        - label: 既存のIssueを検索しました
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 発生した問題
+      description: 実際に何が起きたか説明してください
+      placeholder: ボタンを押すとアプリが終了します
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+      description: 本来どのように動作するべきか説明してください
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. アプリを起動する
+        2. 設定画面を開く
+        3. 保存ボタンを押す
+        4. アプリが終了する
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 発生頻度
+      options:
+        - 毎回
+        - 高確率
+        - ときどき
+        - 一度だけ
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: バージョン
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      multiple: true
+      options:
+        - macOS Apple Silicon
+        - macOS Intel
+        - Windows
+        - Linux
+        - その他
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ
+      description: 個人情報やトークンを削除して貼り付けてください
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: その他
+      description: スクリーンショットや補足情報があれば追加してください
