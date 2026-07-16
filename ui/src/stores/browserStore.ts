@@ -10,6 +10,8 @@ import {
   type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
+import { reorderTab } from './tabUtils';
+export { reorderTab } from './tabUtils';
 
 const initialState: BrowserState & { status: string } = {
   bridgeVersion: '1',
@@ -315,6 +317,32 @@ export function bindNativeEvents() {
       setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
       setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
       setBrowserState('activeTabId', tabId);
+    }),
+
+    onBridgeEvent('tab.moved', ({ tabId, fromWindowId, toWindowId, toIndex }) => {
+      if (fromWindowId === toWindowId) {
+        if (browserState.windowId !== toWindowId) return;
+        setBrowserState('tabs', reorderTab(browserState.tabs, tabId, toIndex));
+        return;
+      }
+
+      if (browserState.windowId === fromWindowId) {
+        const movedIndex = browserState.tabs.findIndex((tab) => tab.id === tabId);
+        if (movedIndex < 0) return;
+        const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
+        setBrowserState('tabs', remaining);
+        if (browserState.activeTabId === tabId) {
+          const nextActive = remaining[movedIndex === 0 ? 0 : movedIndex - 1];
+          setBrowserState('activeTabId', nextActive?.id ?? '');
+        }
+        return;
+      }
+
+      if (browserState.windowId === toWindowId) {
+        // TabMoved intentionally carries only identity and position. Refresh
+        // the destination window to obtain the complete tab state.
+        void refreshFullState('tab.moved');
+      }
     }),
 
     // --- Window lifecycle (direct patches) ---

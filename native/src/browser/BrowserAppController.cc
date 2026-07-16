@@ -167,6 +167,31 @@ void BrowserAppController::DispatchHostCommands() {
                            envelope->GetType("payload") == VTYPE_DICTIONARY
                        ? envelope->GetDictionary("payload")
                        : CefDictionaryValue::Create();
+
+    // A tab move changes ownership. Route the differential event to both
+    // windows so the source can remove the tab and the destination can load
+    // it, even though tabId now resolves to the destination window.
+    if (eventName == "tab.moved" && payload->HasKey("fromWindowId") &&
+        payload->HasKey("toWindowId")) {
+      const std::string fromWindowId =
+          payload->GetString("fromWindowId").ToString();
+      const std::string toWindowId = payload->GetString("toWindowId").ToString();
+      BrowserWindow *from = FindWindow(fromWindowId);
+      BrowserWindow *to = FindWindow(toWindowId);
+      bool delivered = false;
+      if (from && from->Bridge()) {
+        from->Bridge()->EmitToUi(eventName, payload->Copy(false));
+        delivered = true;
+      }
+      if (to && to != from && to->Bridge()) {
+        to->Bridge()->EmitToUi(eventName, payload->Copy(false));
+        delivered = true;
+      }
+      if (delivered) {
+        continue;
+      }
+    }
+
     BrowserWindow *target = nullptr;
     if (payload->HasKey("windowId")) {
       target = FindWindow(payload->GetString("windowId").ToString());

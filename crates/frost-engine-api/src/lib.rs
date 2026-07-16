@@ -7,33 +7,29 @@ pub enum EngineError {
 }
 
 pub type EngineResult<T> = Result<T, EngineError>;
+pub type HostCommandId = String;
 
 pub trait EngineAdapter {
-    /// Returns the id of the most recently queued asynchronous host command,
-    /// when this adapter exposes command correlation.
-    fn last_command_id(&self) -> Option<&str> {
-        None
-    }
-
     fn create_page(
         &mut self,
         tab_id: &str,
         window_id: &str,
         url: &str,
         active: bool,
-    ) -> EngineResult<()>;
-    fn close_page(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn activate_page(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn pin_page(&mut self, tab_id: &str, pinned: bool) -> EngineResult<()>;
-    fn move_page(&mut self, tab_id: &str, to_index: usize) -> EngineResult<()>;
-    fn move_page_to_window(&mut self, tab_id: &str, window_id: &str) -> EngineResult<()>;
-    fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<()>;
-    fn reload(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn stop(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn go_back(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn go_forward(&mut self, tab_id: &str) -> EngineResult<()>;
-    fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<()>;
-    fn close_window(&mut self, window_id: &str) -> EngineResult<()>;
+    ) -> EngineResult<HostCommandId>;
+    fn close_page(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn activate_page(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn pin_page(&mut self, tab_id: &str, pinned: bool) -> EngineResult<HostCommandId>;
+    fn move_page(&mut self, tab_id: &str, to_index: usize) -> EngineResult<HostCommandId>;
+    fn move_page_to_window(&mut self, tab_id: &str, window_id: &str)
+    -> EngineResult<HostCommandId>;
+    fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<HostCommandId>;
+    fn reload(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn stop(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn go_back(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn go_forward(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<HostCommandId>;
+    fn close_window(&mut self, window_id: &str) -> EngineResult<HostCommandId>;
 }
 
 pub trait PageAdapter {
@@ -57,55 +53,55 @@ pub trait WindowHost {
 pub struct NoopEngineAdapter;
 
 impl EngineAdapter for NoopEngineAdapter {
-    fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<()> {
-        Ok(())
+    fn create_page(&mut self, _: &str, _: &str, _: &str, _: bool) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn close_page(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn close_page(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn activate_page(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn activate_page(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn pin_page(&mut self, _: &str, _: bool) -> EngineResult<()> {
-        Ok(())
+    fn pin_page(&mut self, _: &str, _: bool) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn move_page(&mut self, _: &str, _: usize) -> EngineResult<()> {
-        Ok(())
+    fn move_page(&mut self, _: &str, _: usize) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn move_page_to_window(&mut self, _: &str, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn move_page_to_window(&mut self, _: &str, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn navigate(&mut self, _: &str, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn navigate(&mut self, _: &str, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn reload(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn reload(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn stop(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn stop(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn go_back(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn go_back(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn go_forward(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn go_forward(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn create_window(&mut self, _: &str, _: bool) -> EngineResult<()> {
-        Ok(())
+    fn create_window(&mut self, _: &str, _: bool) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 
-    fn close_window(&mut self, _: &str) -> EngineResult<()> {
-        Ok(())
+    fn close_window(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
     }
 }

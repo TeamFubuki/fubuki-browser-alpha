@@ -854,7 +854,9 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDow
     return false;
   }
   if (commandDown && (character == 'r' || character == 'R')) {
-    auto value = ExecuteCommand("tabs.reload", CefDictionaryValue::Create());
+    auto args = CefDictionaryValue::Create();
+    args->SetString("tabId", tabId);
+    auto value = ExecuteCommand("tabs.reload", args);
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && character == 't') {
@@ -864,15 +866,21 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDow
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if (commandDown && (character == 'w' || character == 'W')) {
-    auto value = ExecuteCommand("tabs.close", CefDictionaryValue::Create());
+    auto args = CefDictionaryValue::Create();
+    args->SetString("tabId", tabId);
+    auto value = ExecuteCommand("tabs.close", args);
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if ((commandDown && character == '[') || (altDown && keyCode == 0x25)) {
-    auto value = ExecuteCommand("tabs.goBack", CefDictionaryValue::Create());
+    auto args = CefDictionaryValue::Create();
+    args->SetString("tabId", tabId);
+    auto value = ExecuteCommand("tabs.goBack", args);
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   if ((commandDown && character == ']') || (altDown && keyCode == 0x27)) {
-    auto value = ExecuteCommand("tabs.goForward", CefDictionaryValue::Create());
+    auto args = CefDictionaryValue::Create();
+    args->SetString("tabId", tabId);
+    auto value = ExecuteCommand("tabs.goForward", args);
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
   return false;
