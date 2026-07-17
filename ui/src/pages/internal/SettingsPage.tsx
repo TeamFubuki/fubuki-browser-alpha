@@ -138,12 +138,7 @@ function Section(props: {
   const selected = (key: string, fallback: string) =>
     props.settings[key] || fallback;
   const reset = (key: string) => (
-    <ActionButton
-      keyName="resetSetting"
-      value={key}
-      returnUrl="fubuki://settings/"
-      post
-    >
+    <ActionButton keyName="resetSetting" value={key}>
       {c('resetValue')}
     </ActionButton>
   );
@@ -319,7 +314,6 @@ function Section(props: {
           <ActionButton
             keyName="clearData"
             value="history"
-            returnUrl="fubuki://settings/"
             danger
             confirm={t(props.locale, 'confirmAction')}
           >
@@ -328,7 +322,6 @@ function Section(props: {
           <ActionButton
             keyName="clearData"
             value="cookies"
-            returnUrl="fubuki://settings/"
             danger
             confirm={t(props.locale, 'confirmAction')}
           >
@@ -337,7 +330,6 @@ function Section(props: {
           <ActionButton
             keyName="clearData"
             value="cache"
-            returnUrl="fubuki://settings/"
             danger
             confirm={t(props.locale, 'confirmAction')}
           >
@@ -346,7 +338,6 @@ function Section(props: {
           <ActionButton
             keyName="clearData"
             value="all"
-            returnUrl="fubuki://settings/"
             danger
             confirm={t(props.locale, 'confirmAction')}
           >
@@ -400,7 +391,10 @@ export default function SettingsPage() {
   return (
     <main class="internal-main">
       <PageHeader title={t(locale(), 'settings')} eyebrow="Fubuki" />
-      <Show when={!data.loading} fallback={<LoadingState locale={locale()} />}>
+      <Show
+        when={!data.loading || data() !== undefined}
+        fallback={<LoadingState locale={locale()} />}
+      >
         <Show
           when={!data.error}
           fallback={<LoadingState locale={locale()} error />}

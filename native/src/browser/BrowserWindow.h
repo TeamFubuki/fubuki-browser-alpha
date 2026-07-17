@@ -87,6 +87,10 @@ class BrowserWindow {
   bool SetUiOverlayActive(bool active, double overlayWidth = 392.0,
                           double overlayHeight = 560.0);
   bool HandleSettingsUrl(const std::string &tabId, const std::string &url);
+  // Executes a capability-limited action requested by a trusted internal page
+  // without navigating that page. This keeps scroll, focus, and local UI state.
+  bool HandleInternalPageAction(const std::string &key,
+                                const std::string &value);
   bool HandleNewTabSearchUrl(const std::string &tabId, const std::string &url);
   // Polls pending HostCommands from FrostEngine and executes them, routing
   // host side effects (page/window I/O) back as HostEvents/results.

@@ -10,10 +10,11 @@ The UI talks to native code through `window.fubuki`.
   `app.snapshot` first and falls back to `app.getState` when running against an
   older host.
 
-Native bridge access is intended for `fubuki://app/` only. Internal content pages such as
-`fubuki://settings/` may use trusted `fubuki://settings/set` actions handled by native code,
-but destructive actions are POST-only. The host rejects destructive `fubuki://settings/set?...`
-GET requests.
+Native Frost Protocol bridge access is intended for `fubuki://app/` only. Internal content pages
+receive a different, capability-limited action channel. Native verifies the source page and action
+key, performs the action through FrostEngine, and returns without page navigation. The legacy
+`fubuki://settings/set` form route remains for compatibility, destructive actions are POST-only,
+and direct destructive GET requests are rejected.
 
 FrostEngine-to-host side effects use a separate versioned JSON boundary:
 

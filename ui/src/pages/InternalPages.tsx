@@ -5,6 +5,7 @@ import DownloadsPage from './internal/DownloadsPage';
 import HistoryPage from './internal/HistoryPage';
 import NewTabPage from './internal/NewTabPage';
 import SettingsPage from './internal/SettingsPage';
+import { ActionFeedback } from './internal/components';
 
 type Page =
   | 'newtab'
@@ -41,5 +42,12 @@ export default function InternalPages() {
   document.title = page.title;
   document.documentElement.dataset.page = pageFromHost();
   const PageComponent = page.component;
-  return <PageComponent />;
+  return (
+    <>
+      <PageComponent />
+      <ActionFeedback
+        locale={document.documentElement.lang === 'ja' ? 'ja' : 'en'}
+      />
+    </>
+  );
 }

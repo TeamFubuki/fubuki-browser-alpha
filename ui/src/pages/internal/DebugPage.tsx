@@ -15,17 +15,15 @@ export default function DebugPage() {
         title={t(locale(), 'debug')}
         eyebrow="Fubuki"
         actions={
-          <ActionButton
-            keyName="openDevTools"
-            value="1"
-            returnUrl="fubuki://debug/"
-            post
-          >
+          <ActionButton keyName="openDevTools" value="1">
             {t(locale(), 'openDevTools')}
           </ActionButton>
         }
       />
-      <Show when={!data.loading} fallback={<LoadingState locale={locale()} />}>
+      <Show
+        when={!data.loading || data() !== undefined}
+        fallback={<LoadingState locale={locale()} />}
+      >
         <Show
           when={!data.error}
           fallback={<LoadingState locale={locale()} error />}

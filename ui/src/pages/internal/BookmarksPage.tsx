@@ -19,7 +19,10 @@ export default function BookmarksPage() {
   return (
     <main class="internal-main">
       <PageHeader title={t(locale(), 'bookmarks')} eyebrow="Fubuki" />
-      <Show when={!data.loading} fallback={<LoadingState locale={locale()} />}>
+      <Show
+        when={!data.loading || data() !== undefined}
+        fallback={<LoadingState locale={locale()} />}
+      >
         <Show
           when={!data.error}
           fallback={<LoadingState locale={locale()} error />}
@@ -53,7 +56,6 @@ export default function BookmarksPage() {
                     <ActionButton
                       keyName="removeBookmark"
                       value={record.url}
-                      returnUrl="fubuki://bookmarks/"
                       danger
                       confirm={t(locale(), 'confirmAction')}
                     >

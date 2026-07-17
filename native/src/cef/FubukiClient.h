@@ -19,7 +19,8 @@ class FubukiClient : public CefClient,
                      public CefKeyboardHandler,
                      public CefRequestHandler,
                      public CefDragHandler,
-                     public CefPermissionHandler {
+                     public CefPermissionHandler,
+                     public CefMessageRouterBrowserSide::Handler {
 public:
   FubukiClient(BrowserWindow *window, std::string tabId, bool isUi);
 
@@ -99,6 +100,12 @@ public:
       CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
       const CefString &requesting_origin, uint32_t requested_permissions,
       CefRefPtr<CefPermissionPromptCallback> callback) override;
+
+  bool OnQuery(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+               int64_t query_id, const CefString &request, bool persistent,
+               CefRefPtr<Callback> callback) override;
+  void OnQueryCanceled(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame, int64_t query_id) override;
 
 private:
   BrowserWindow *window_;

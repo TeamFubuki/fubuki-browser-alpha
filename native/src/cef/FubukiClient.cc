@@ -52,6 +52,11 @@ bool IsTrustedSettingsActionSource(const std::string& url) {
          url == "fubuki://debug" || StartsWith(url, "fubuki://debug/");
 }
 
+bool IsTrustedInternalActionFrame(CefRefPtr<CefFrame> frame) {
+  return frame && frame->IsMain() &&
+         IsTrustedSettingsActionSource(frame->GetURL().ToString());
+}
+
 bool IsBlankPopupUrl(const std::string& url) {
   return url.empty() || url == "about:blank";
 }
@@ -105,6 +110,39 @@ bool IsDestructiveSettingsAction(const std::string &key) {
          key == "resetSetting";
 }
 
+bool IsAllowedInternalPageAction(const std::string& sourceUrl,
+                                 const std::string& key,
+                                 const std::string& value) {
+  if (sourceUrl == "fubuki://bookmarks" ||
+      StartsWith(sourceUrl, "fubuki://bookmarks/")) {
+    return key == "removeBookmark";
+  }
+  if (sourceUrl == "fubuki://history" ||
+      StartsWith(sourceUrl, "fubuki://history/")) {
+    return key == "removeHistory" ||
+           (key == "clearHistoryRange" &&
+            (value == "lastHour" || value == "today" || value == "all"));
+  }
+  if (sourceUrl == "fubuki://downloads" ||
+      StartsWith(sourceUrl, "fubuki://downloads/")) {
+    return key == "removeDownload" || key == "openDownload" ||
+           key == "revealDownload" ||
+           (key == "clearData" && value == "downloads");
+  }
+  if (sourceUrl == "fubuki://debug" ||
+      StartsWith(sourceUrl, "fubuki://debug/")) {
+    return key == "openDevTools";
+  }
+  if (sourceUrl == "fubuki://settings" ||
+      StartsWith(sourceUrl, "fubuki://settings/")) {
+    return !IsDestructiveSettingsAction(key) || key == "resetSetting" ||
+           (key == "clearData" &&
+            (value == "history" || value == "cookies" || value == "cache" ||
+             value == "all"));
+  }
+  return false;
+}
+
 std::string PostBody(CefRefPtr<CefRequest> request) {
   if (!request || !request->GetPostData()) {
     return "";
@@ -143,12 +181,14 @@ std::string BrowserAppearance(BrowserWindow *window) {
 
 FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
     : window_(window), tabId_(std::move(tabId)), isUi_(isUi) {
+  CefMessageRouterConfig config;
+  config.js_query_function = "cefQuery";
+  config.js_cancel_function = "cefQueryCancel";
+  messageRouter_ = CefMessageRouterBrowserSide::Create(config);
   if (isUi_) {
-    CefMessageRouterConfig config;
-    config.js_query_function = "cefQuery";
-    config.js_cancel_function = "cefQueryCancel";
-    messageRouter_ = CefMessageRouterBrowserSide::Create(config);
     messageRouter_->AddHandler(window_->Bridge(), false);
+  } else {
+    messageRouter_->AddHandler(this, false);
   }
 }
 
@@ -252,7 +292,11 @@ bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
   return false;
 }
 
-void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {}
+void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {
+  if (messageRouter_ && !isUi_) {
+    messageRouter_->RemoveHandler(this);
+  }
+}
 
 void FubukiClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack,
                                         bool canGoForward) {
@@ -450,6 +494,50 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
   }
   return false;
 }
+
+bool FubukiClient::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                           int64_t, const CefString& request, bool,
+                           CefRefPtr<Callback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window_ || isUi_ || !IsTrustedInternalActionFrame(frame)) {
+    callback->Failure(403, "Internal actions are only available to trusted internal pages");
+    return true;
+  }
+
+  auto parsed = CefParseJSON(request, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+    callback->Failure(400, "Request must be a JSON object");
+    return true;
+  }
+  auto dictionary = parsed->GetDictionary();
+  if (!dictionary->HasKey("channel") ||
+      dictionary->GetType("channel") != VTYPE_STRING ||
+      dictionary->GetString("channel").ToString() != "internal.action" ||
+      !dictionary->HasKey("key") || dictionary->GetType("key") != VTYPE_STRING ||
+      !dictionary->HasKey("value") || dictionary->GetType("value") != VTYPE_STRING) {
+    callback->Failure(400, "Invalid internal action request");
+    return true;
+  }
+
+  const std::string key = dictionary->GetString("key").ToString();
+  const std::string value = dictionary->GetString("value").ToString();
+  if (!IsAllowedInternalPageAction(frame->GetURL().ToString(), key, value)) {
+    callback->Failure(403, "This action is not available on the current page");
+    return true;
+  }
+
+  const bool ok = window_->HandleInternalPageAction(
+      key, value);
+  if (!ok) {
+    callback->Failure(422, "Internal action was rejected");
+    return true;
+  }
+  callback->Success("{\"ok\":true}");
+  return true;
+}
+
+void FubukiClient::OnQueryCanceled(CefRefPtr<CefBrowser>,
+                                   CefRefPtr<CefFrame>, int64_t) {}
 
 void FubukiClient::OnDraggableRegionsChanged(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                              const std::vector<CefDraggableRegion>& regions) {

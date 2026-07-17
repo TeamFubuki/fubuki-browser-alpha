@@ -8,6 +8,21 @@ bool IsFubukiAppFrame(CefRefPtr<CefFrame> frame) {
   return frame && frame->GetURL().ToString().rfind("fubuki://app/", 0) == 0;
 }
 
+bool IsFubukiInternalFrame(CefRefPtr<CefFrame> frame) {
+  if (!frame) {
+    return false;
+  }
+  const std::string url = frame->GetURL().ToString();
+  for (const char* host : {"newtab", "settings", "bookmarks", "downloads",
+                           "history", "debug"}) {
+    const std::string origin = std::string("fubuki://") + host;
+    if (url == origin || url.rfind(origin + "/", 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void InstallWebAuthnGuard(CefRefPtr<CefFrame> frame) {
   if (!frame || IsFubukiAppFrame(frame)) {
     return;
@@ -56,7 +71,9 @@ void FubukiRenderApp::OnWebKitInitialized() {
 void FubukiRenderApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefFrame> frame,
                                        CefRefPtr<CefV8Context> context) {
-  if (!IsFubukiAppFrame(frame)) {
+  const bool isAppFrame = IsFubukiAppFrame(frame);
+  const bool isInternalFrame = IsFubukiInternalFrame(frame);
+  if (!isAppFrame && !isInternalFrame) {
     InstallWebAuthnGuard(frame);
     return;
   }
@@ -67,13 +84,15 @@ void FubukiRenderApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
   CefRefPtr<CefV8Value> global = context->GetGlobal();
   auto attrs = static_cast<cef_v8_propertyattribute_t>(
       V8_PROPERTY_ATTRIBUTE_READONLY | V8_PROPERTY_ATTRIBUTE_DONTDELETE);
-  global->SetValue("fubukiNativeMarker", CefV8Value::CreateBool(true), attrs);
+  global->SetValue(isAppFrame ? "fubukiNativeMarker" : "fubukiInternalMarker",
+                   CefV8Value::CreateBool(true), attrs);
 }
 
 void FubukiRenderApp::OnContextReleased(CefRefPtr<CefBrowser> browser,
                                         CefRefPtr<CefFrame> frame,
                                         CefRefPtr<CefV8Context> context) {
-  if (rendererRouter_ && IsFubukiAppFrame(frame)) {
+  if (rendererRouter_ &&
+      (IsFubukiAppFrame(frame) || IsFubukiInternalFrame(frame))) {
     rendererRouter_->OnContextReleased(browser, frame, context);
   }
 }

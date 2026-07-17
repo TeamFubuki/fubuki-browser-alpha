@@ -39,7 +39,6 @@ export default function HistoryPage() {
             <ActionButton
               keyName="clearHistoryRange"
               value="lastHour"
-              returnUrl="fubuki://history/"
               danger
               confirm={t(locale(), 'confirmAction')}
             >
@@ -48,7 +47,6 @@ export default function HistoryPage() {
             <ActionButton
               keyName="clearHistoryRange"
               value="today"
-              returnUrl="fubuki://history/"
               danger
               confirm={t(locale(), 'confirmAction')}
             >
@@ -57,7 +55,6 @@ export default function HistoryPage() {
             <ActionButton
               keyName="clearHistoryRange"
               value="all"
-              returnUrl="fubuki://history/"
               danger
               confirm={t(locale(), 'confirmAction')}
             >
@@ -71,7 +68,10 @@ export default function HistoryPage() {
         onInput={setQuery}
         placeholder={t(locale(), 'searchHistory')}
       />
-      <Show when={!data.loading} fallback={<LoadingState locale={locale()} />}>
+      <Show
+        when={!data.loading || data() !== undefined}
+        fallback={<LoadingState locale={locale()} />}
+      >
         <Show
           when={!data.error}
           fallback={<LoadingState locale={locale()} error />}
@@ -115,7 +115,6 @@ export default function HistoryPage() {
                       <ActionButton
                         keyName="removeHistory"
                         value={record.url}
-                        returnUrl="fubuki://history/"
                         danger
                         confirm={t(locale(), 'confirmAction')}
                       >

@@ -1127,6 +1127,21 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   const std::string key = QueryParam(url, "key");
   const std::string value = QueryParam(url, "value");
   const std::string returnPage = QueryParam(url, "return");
+  const bool ok = HandleInternalPageAction(key, value);
+  if (ok && tabManager_.GetTab(tabId)) {
+    const std::string safeReturnPage = IsSafeSettingsReturnPage(returnPage) ? returnPage : "";
+    if (safeReturnPage.rfind("fubuki://", 0) == 0) {
+      Navigate(tabId, safeReturnPage);
+    } else {
+      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/"
+                                             : "fubuki://settings/" + safeReturnPage);
+    }
+  }
+  return ok;
+}
+
+bool BrowserWindow::HandleInternalPageAction(const std::string& key,
+                                             const std::string& value) {
   bool ok = false;
   if (key == "removeBookmark") {
     ok = RemoveBookmark(value);
@@ -1148,15 +1163,6 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = ResetSetting(value);
   } else {
     ok = SetSetting(key, value);
-  }
-  if (ok && tabManager_.GetTab(tabId)) {
-    const std::string safeReturnPage = IsSafeSettingsReturnPage(returnPage) ? returnPage : "";
-    if (safeReturnPage.rfind("fubuki://", 0) == 0) {
-      Navigate(tabId, safeReturnPage);
-    } else {
-      Navigate(tabId, safeReturnPage.empty() ? "fubuki://settings/"
-                                             : "fubuki://settings/" + safeReturnPage);
-    }
   }
   return ok;
 }

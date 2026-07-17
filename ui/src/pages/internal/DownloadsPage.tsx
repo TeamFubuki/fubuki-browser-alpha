@@ -35,7 +35,6 @@ export default function DownloadsPage() {
           <ActionButton
             keyName="clearData"
             value="downloads"
-            returnUrl="fubuki://downloads/"
             danger
             confirm={t(locale(), 'confirmAction')}
           >
@@ -43,7 +42,10 @@ export default function DownloadsPage() {
           </ActionButton>
         }
       />
-      <Show when={!data.loading} fallback={<LoadingState locale={locale()} />}>
+      <Show
+        when={!data.loading || data() !== undefined}
+        fallback={<LoadingState locale={locale()} />}
+      >
         <Show
           when={!data.error}
           fallback={<LoadingState locale={locale()} error />}
@@ -96,8 +98,6 @@ export default function DownloadsPage() {
                         <ActionButton
                           keyName="openDownload"
                           value={record.path}
-                          returnUrl="fubuki://downloads/"
-                          post
                           disabled={!record.path}
                         >
                           {t(locale(), 'open')}
@@ -105,8 +105,6 @@ export default function DownloadsPage() {
                         <ActionButton
                           keyName="revealDownload"
                           value={record.path}
-                          returnUrl="fubuki://downloads/"
-                          post
                           disabled={!record.path}
                         >
                           {t(locale(), 'reveal')}
@@ -114,7 +112,6 @@ export default function DownloadsPage() {
                         <ActionButton
                           keyName="removeDownload"
                           value={value}
-                          returnUrl="fubuki://downloads/"
                           danger
                           confirm={t(locale(), 'confirmAction')}
                         >

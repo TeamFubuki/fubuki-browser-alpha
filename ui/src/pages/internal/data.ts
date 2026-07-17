@@ -1,4 +1,5 @@
-import { createResource } from 'solid-js';
+import { createResource, onCleanup, onMount } from 'solid-js';
+import { INTERNAL_DATA_CHANGED_EVENT } from './actions';
 
 export type InternalLocale = 'en' | 'ja';
 
@@ -162,10 +163,25 @@ async function loadInternalData(): Promise<InternalPageData> {
 }
 
 export function useInternalData() {
-  const [data] = createResource(loadInternalData);
+  const [data, controls] = createResource(loadInternalData);
+  const reload = async (event: Event) => {
+    const position = (event as CustomEvent<{ x: number; y: number }>).detail;
+    const scrollX = position?.x ?? window.scrollX;
+    const scrollY = position?.y ?? window.scrollY;
+    await controls.refetch();
+    window.requestAnimationFrame(() =>
+      window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY)),
+    );
+  };
+  onMount(() => window.addEventListener(INTERNAL_DATA_CHANGED_EVENT, reload));
+  onCleanup(() =>
+    window.removeEventListener(INTERNAL_DATA_CHANGED_EVENT, reload),
+  );
   return {
     data,
     locale: () => data()?.locale ?? fallback.locale,
+    refetch: controls.refetch,
+    mutate: controls.mutate,
   };
 }
 
@@ -200,6 +216,8 @@ const labels = {
     starting: '開始中',
     earlier: '以前',
     save: '保存',
+    saved: '保存済み',
+    actionFailed: '操作を完了できませんでした',
     reset: 'リセット',
     noSettings: '一致する設定はありません',
     profilePath: 'プロファイルパス',
@@ -238,6 +256,8 @@ const labels = {
     starting: 'Starting',
     earlier: 'Earlier',
     save: 'Save',
+    saved: 'Saved',
+    actionFailed: 'The action could not be completed',
     reset: 'Reset',
     noSettings: 'No matching settings',
     profilePath: 'Profile path',
