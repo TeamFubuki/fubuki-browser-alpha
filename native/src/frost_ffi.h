@@ -8,8 +8,10 @@ extern "C" {
 
 // Engine instance ----------------------------------------------------------
 void *frost_engine_new();
+void *frost_engine_new_in_memory();
 void *frost_engine_new_with_store(const char *path);
 void frost_engine_free(void *handle);
+char *frost_engine_take_last_error_json();
 char *frost_engine_process_json(void *handle, const char *request_json);
 char *frost_engine_poll_event_json(void *handle);
 char *frost_engine_poll_host_command_json(void *handle);
