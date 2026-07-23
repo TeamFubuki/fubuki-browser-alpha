@@ -22,8 +22,8 @@
 }
 
 .top-bar.private {
-  background: color-mix(in srgb, var(--topbar-bg) 72%, #17151f);
-  border-bottom: 2px solid #a855f7;
+  background: var(--private-topbar-bg);
+  border-bottom: 2px solid var(--private-border);
   grid-template-columns: max-content repeat(3, var(--button-size)) minmax(
       160px,
       1fr
@@ -37,8 +37,9 @@
   gap: 4px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: #7e22ce;
-  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--private-border) 38%, transparent);
+  background: var(--private-badge-bg);
+  color: var(--private-badge-text);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -67,7 +68,7 @@
 
 .topbar-button:disabled {
   color: var(--muted);
-  opacity: 0.32;
+  opacity: var(--disabled-opacity);
   pointer-events: none;
 }
 
@@ -100,6 +101,11 @@
 .omnibox-input:focus {
   border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.omnibox-input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .find-bar {

@@ -2,21 +2,22 @@
 
 :root {
   color-scheme: light;
-  --page: #f5f7fa;
-  --page-glow: rgb(138 176 255 / 18%);
-  --surface: rgb(255 255 255 / 88%);
-  --surface-solid: #fff;
-  --surface-muted: #f0f3f7;
+  --page: #e7ecf3;
+  --page-glow: rgb(114 151 220 / 15%);
+  --surface: rgb(248 250 253 / 96%);
+  --surface-solid: #f8fafc;
+  --surface-muted: #e0e6ef;
   --text: #17202b;
-  --muted: #6c7786;
-  --subtle: #697586;
-  --line: rgb(20 31 48 / 10%);
-  --line-strong: rgb(20 31 48 / 17%);
-  --accent: #4b70d7;
-  --accent-soft: rgb(75 112 215 / 11%);
+  --muted: #536071;
+  --subtle: #5b6878;
+  --line: rgb(20 31 48 / 16%);
+  --line-strong: rgb(20 31 48 / 26%);
+  --accent: #3158c8;
+  --accent-soft: rgb(49 88 200 / 13%);
   --danger: #bd3d4f;
   --danger-soft: rgb(189 61 79 / 8%);
-  --shadow: 0 1px 2px rgb(19 31 48 / 5%), 0 8px 28px rgb(19 31 48 / 4%);
+  --disabled-opacity: 0.56;
+  --shadow: 0 1px 2px rgb(19 31 48 / 7%), 0 10px 30px rgb(19 31 48 / 8%);
 }
 
 html {
@@ -48,6 +49,7 @@ body.internal-page {
   --accent-soft: rgb(119 151 246 / 14%);
   --danger: #ff8998;
   --danger-soft: rgb(255 116 134 / 10%);
+  --disabled-opacity: 0.46;
   --shadow: 0 8px 30px rgb(0 0 0 / 16%);
 }
 
@@ -69,6 +71,7 @@ body.internal-page {
     --accent-soft: rgb(119 151 246 / 14%);
     --danger: #ff8998;
     --danger-soft: rgb(255 116 134 / 10%);
+    --disabled-opacity: 0.46;
     --shadow: 0 8px 30px rgb(0 0 0 / 16%);
   }
 }
@@ -228,7 +231,7 @@ a:focus-visible {
   color: var(--danger);
 }
 .internal-button:disabled {
-  opacity: 0.42;
+  opacity: var(--disabled-opacity);
   pointer-events: none;
 }
 .internal-actions {

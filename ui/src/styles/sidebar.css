@@ -54,7 +54,7 @@
 .new-tab-button:disabled,
 .sidebar-actions button:disabled {
   color: var(--muted);
-  opacity: 0.38;
+  opacity: var(--disabled-opacity);
 }
 
 .new-tab-button {
