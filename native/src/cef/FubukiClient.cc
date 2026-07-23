@@ -292,9 +292,12 @@ bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
   return false;
 }
 
-void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {
-  if (messageRouter_ && !isUi_) {
-    messageRouter_->RemoveHandler(this);
+void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
+  if (messageRouter_) {
+    messageRouter_->OnBeforeClose(browser);
+    if (!isUi_) {
+      messageRouter_->RemoveHandler(this);
+    }
   }
 }
 
@@ -452,10 +455,16 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   return handled;
 }
 
-bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request, bool user_gesture,
                                   bool is_redirect) {
-  if (!window_ || isUi_ || !frame || !frame->IsMain() || !request) {
+  if (!frame || !request) {
+    return false;
+  }
+  if (!window_ || isUi_ || !frame->IsMain()) {
+    if (messageRouter_) {
+      messageRouter_->OnBeforeBrowse(browser, frame);
+    }
     return false;
   }
   const std::string url = request->GetURL().ToString();
@@ -492,7 +501,19 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     window_->HandleNewTabSearchUrl(tabId_, url);
     return true;
   }
+  if (messageRouter_) {
+    messageRouter_->OnBeforeBrowse(browser, frame);
+  }
   return false;
+}
+
+void FubukiClient::OnRenderProcessTerminated(
+    CefRefPtr<CefBrowser> browser, TerminationStatus, int,
+    const CefString&) {
+  CEF_REQUIRE_UI_THREAD();
+  if (messageRouter_) {
+    messageRouter_->OnRenderProcessTerminated(browser);
+  }
 }
 
 bool FubukiClient::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,

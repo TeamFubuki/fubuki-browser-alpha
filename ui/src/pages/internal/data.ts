@@ -138,7 +138,7 @@ function previewData(page: string): InternalPageData {
   return common;
 }
 
-async function loadInternalData(): Promise<InternalPageData> {
+export async function loadInternalData(): Promise<InternalPageData> {
   const dataUrl = new URL('/data.json', window.location.href);
   const preview = new URLSearchParams(window.location.search).get('page');
   let data: InternalPageData;

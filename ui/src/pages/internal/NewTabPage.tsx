@@ -32,19 +32,19 @@ export default function NewTabPage() {
       </form>
       <nav class="newtab-links" aria-label="Fubuki">
         <a href="fubuki://bookmarks/">
-          <span>◇</span>
+          <span aria-hidden="true">◇</span>
           {locale() === 'ja' ? 'ブックマーク' : 'Bookmarks'}
         </a>
         <a href="fubuki://history/">
-          <span>◷</span>
+          <span aria-hidden="true">◷</span>
           {locale() === 'ja' ? '履歴' : 'History'}
         </a>
         <a href="fubuki://downloads/">
-          <span>↓</span>
+          <span aria-hidden="true">↓</span>
           {locale() === 'ja' ? 'ダウンロード' : 'Downloads'}
         </a>
         <a href="fubuki://settings/">
-          <span>⚙</span>
+          <span aria-hidden="true">⚙</span>
           {locale() === 'ja' ? '設定' : 'Settings'}
         </a>
       </nav>

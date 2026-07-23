@@ -69,6 +69,9 @@ export default function DownloadsPage() {
                 {(record) => {
                   const value = record.path || record.url;
                   const done = record.state === 'completed';
+                  const percent = done
+                    ? 100
+                    : Math.max(0, Math.min(100, record.percent));
                   return (
                     <article class="download-row">
                       <span
@@ -82,10 +85,18 @@ export default function DownloadsPage() {
                         <span>{record.path || record.url}</span>
                         <div class="progress-line">
                           <span>{status(record)}</span>
-                          <div class="progress-track">
+                          <div
+                            class="progress-track"
+                            role="progressbar"
+                            aria-label={fileName(record)}
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-valuenow={percent}
+                            aria-valuetext={status(record)}
+                          >
                             <i
                               style={{
-                                width: `${done ? 100 : Math.max(0, Math.min(100, record.percent))}%`,
+                                width: `${percent}%`,
                               }}
                             />
                           </div>

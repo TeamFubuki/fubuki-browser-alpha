@@ -774,11 +774,81 @@ pub unsafe extern "C" fn frost_store_get_all_settings(
         "newTabBackgroundColor",
         "newTabBackgroundUrl",
     ] {
-        if let Ok(Some(value)) = store.store.get_setting(key) {
-            map.insert(key.to_string(), serde_json::Value::String(value));
+        match store.store.get_setting(key) {
+            Ok(Some(value)) => {
+                map.insert(key.to_string(), serde_json::Value::String(value));
+            }
+            Ok(None) => {}
+            Err(_) => return ptr::null_mut(),
         }
     }
     into_c_string(serde_json::Value::Object(map).to_string())
+}
+
+/// Returns bookmarks as a JSON array, or null if the read/serialization fails.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_bookmarks(
+    handle: *mut FrostStoreHandle,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &*handle };
+    match store.store.list_bookmarks() {
+        Ok(mut records) => {
+            records.truncate(limit);
+            serde_json::to_string(&records).map_or(ptr::null_mut(), into_c_string)
+        }
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Returns history records as a JSON array, or null if the read/serialization fails.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_history(
+    handle: *mut FrostStoreHandle,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &*handle };
+    match store.store.list_history() {
+        Ok(mut records) => {
+            records.truncate(limit);
+            serde_json::to_string(&records).map_or(ptr::null_mut(), into_c_string)
+        }
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Returns downloads as a JSON array, or null if the read/serialization fails.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_downloads(
+    handle: *mut FrostStoreHandle,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &*handle };
+    match store.store.list_downloads() {
+        Ok(mut records) => {
+            records.truncate(limit);
+            serde_json::to_string(&records).map_or(ptr::null_mut(), into_c_string)
+        }
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 /// Appends a log entry. Returns true on success.
@@ -908,6 +978,34 @@ pub unsafe extern "C" fn frost_store_upsert_download(
         .is_ok()
 }
 
+/// Returns whether `path` belongs to a persisted download record.
+///
+/// This is used by host-only file open/reveal side effects. The host must not
+/// accept an arbitrary filesystem path from an internal page merely because
+/// it is non-empty.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `path` must be a valid null-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_has_download_path(
+    handle: *mut FrostStoreHandle,
+    path: *const c_char,
+) -> bool {
+    if handle.is_null() || path.is_null() {
+        return false;
+    }
+    let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(path) if !path.is_empty() => path,
+        _ => return false,
+    };
+    let store = unsafe { &*handle };
+    store
+        .store
+        .list_downloads()
+        .is_ok_and(|downloads| downloads.iter().any(|download| download.path == path))
+}
+
 /// Frees a string previously returned by a `frost_store_*` function.
 ///
 /// # Safety
@@ -917,5 +1015,65 @@ pub unsafe extern "C" fn frost_store_upsert_download(
 pub unsafe extern "C" fn frost_store_string_free(value: *mut c_char) {
     unsafe {
         frost_engine_string_free(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    #[test]
+    fn download_path_membership_rejects_untracked_paths() {
+        let store = SqliteStore::open(":memory:").expect("open in-memory store");
+        store
+            .upsert_download(
+                "https://example.test/archive.zip",
+                "/tmp/fubuki/archive.zip",
+                "completed",
+                100,
+            )
+            .expect("persist download");
+        let handle = Box::into_raw(Box::new(FrostStoreHandle { store }));
+        let tracked = CString::new("/tmp/fubuki/archive.zip").unwrap();
+        let untracked = CString::new("/etc/passwd").unwrap();
+
+        unsafe {
+            assert!(frost_store_has_download_path(handle, tracked.as_ptr()));
+            assert!(!frost_store_has_download_path(handle, untracked.as_ptr()));
+            assert!(!frost_store_has_download_path(handle, ptr::null()));
+            frost_store_free(handle);
+        }
+    }
+
+    #[test]
+    fn bookmark_projection_is_camel_case_limited_and_reports_invalid_handle() {
+        let store = SqliteStore::open(":memory:").expect("open in-memory store");
+        store
+            .save_bookmark("First", "https://first.example", "first.ico")
+            .expect("persist first bookmark");
+        store
+            .save_bookmark("Second", "https://second.example", "second.ico")
+            .expect("persist second bookmark");
+        let handle = Box::into_raw(Box::new(FrostStoreHandle { store }));
+
+        unsafe {
+            let json = frost_store_get_bookmarks(handle, 1);
+            assert!(!json.is_null());
+            let value: serde_json::Value =
+                serde_json::from_str(CStr::from_ptr(json).to_str().expect("valid UTF-8 JSON"))
+                    .expect("valid JSON projection");
+            frost_store_string_free(json);
+
+            let records = value.as_array().expect("bookmark array");
+            assert_eq!(records.len(), 1, "FFI must honor the requested limit");
+            assert_eq!(records[0]["url"], "https://second.example");
+            assert_eq!(records[0]["faviconUrl"], "second.ico");
+            assert!(records[0].get("createdAt").is_some());
+            assert!(records[0].get("favicon_url").is_none());
+            assert!(frost_store_get_bookmarks(ptr::null_mut(), 1).is_null());
+
+            frost_store_free(handle);
+        }
     }
 }

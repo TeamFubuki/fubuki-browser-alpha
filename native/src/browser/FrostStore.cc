@@ -18,6 +18,15 @@ std::string CStrOrEmpty(char *value) {
   return result;
 }
 
+std::optional<std::string> CStrToOptional(char *value) {
+  if (!value) {
+    return std::nullopt;
+  }
+  std::string result(value);
+  frost_store_string_free(value);
+  return result;
+}
+
 }  // namespace
 
 FrostStore::FrostStore(std::filesystem::path profilePath, void *engineHandle)
@@ -34,6 +43,7 @@ FrostStore::FrostStore(std::filesystem::path profilePath, void *engineHandle)
 }
 
 FrostStore::~FrostStore() {
+  std::lock_guard lock(handleMutex_);
   if (handle_) {
     frost_store_free(handle_);
     handle_ = nullptr;
@@ -41,6 +51,7 @@ FrostStore::~FrostStore() {
 }
 
 std::string FrostStore::GetSetting(const std::string &key) const {
+  std::lock_guard lock(handleMutex_);
   if (!handle_) {
     return "";
   }
@@ -48,9 +59,6 @@ std::string FrostStore::GetSetting(const std::string &key) const {
 }
 
 bool FrostStore::SetSetting(const std::string &key, const std::string &value) {
-  if (!handle_) {
-    return false;
-  }
   // Session restoration is still a host concern and is not part of the public
   // settings protocol. All user-facing settings go through FrostEngine so the
   // core remains the single writer and emits the corresponding diff event.
@@ -59,17 +67,25 @@ bool FrostStore::SetSetting(const std::string &key, const std::string &value) {
                                ",\"value\":" + JsonEscape(value) + "}";
     return ExecRequest("settings.set", params);
   }
+  std::lock_guard lock(handleMutex_);
+  if (!handle_) {
+    return false;
+  }
   return frost_store_set_setting(handle_, key.c_str(), value.c_str());
 }
 
 std::string FrostStore::GetAllSettings() const {
-  if (!handle_) {
-    return "{}";
-  }
-  return CStrOrEmpty(frost_store_get_all_settings(handle_));
+  return TryGetAllSettings().value_or("{}");
+}
+
+std::optional<std::string> FrostStore::TryGetAllSettings() const {
+  std::lock_guard lock(handleMutex_);
+  return handle_ ? CStrToOptional(frost_store_get_all_settings(handle_))
+                 : std::nullopt;
 }
 
 bool FrostStore::AddLog(const std::string &level, const std::string &message) {
+  std::lock_guard lock(handleMutex_);
   if (!handle_) {
     return false;
   }
@@ -77,13 +93,35 @@ bool FrostStore::AddLog(const std::string &level, const std::string &message) {
 }
 
 std::string FrostStore::GetLogs(size_t limit) const {
-  if (!handle_) {
-    return "[]";
-  }
-  return CStrOrEmpty(frost_store_get_logs(handle_, limit));
+  return TryGetLogs(limit).value_or("[]");
+}
+
+std::optional<std::string> FrostStore::TryGetLogs(size_t limit) const {
+  std::lock_guard lock(handleMutex_);
+  return handle_ ? CStrToOptional(frost_store_get_logs(handle_, limit))
+                 : std::nullopt;
+}
+
+std::optional<std::string> FrostStore::GetBookmarks(size_t limit) const {
+  std::lock_guard lock(handleMutex_);
+  return handle_ ? CStrToOptional(frost_store_get_bookmarks(handle_, limit))
+                 : std::nullopt;
+}
+
+std::optional<std::string> FrostStore::GetHistory(size_t limit) const {
+  std::lock_guard lock(handleMutex_);
+  return handle_ ? CStrToOptional(frost_store_get_history(handle_, limit))
+                 : std::nullopt;
+}
+
+std::optional<std::string> FrostStore::GetDownloads(size_t limit) const {
+  std::lock_guard lock(handleMutex_);
+  return handle_ ? CStrToOptional(frost_store_get_downloads(handle_, limit))
+                 : std::nullopt;
 }
 
 bool FrostStore::ClearLogs() {
+  std::lock_guard lock(handleMutex_);
   if (!handle_) {
     return false;
   }
@@ -125,6 +163,7 @@ bool FrostStore::RemoveBookmark(const std::string &url) {
 
 bool FrostStore::AddHistory(const std::string &title, const std::string &url,
                             const std::string &faviconUrl) {
+  std::lock_guard lock(handleMutex_);
   if (!handle_) {
     return false;
   }
@@ -144,6 +183,7 @@ bool FrostStore::AddDownload(const std::string &url, const std::string &path,
 
 bool FrostStore::UpdateDownload(const std::string &url, const std::string &path,
                                 const std::string &state, int percent) {
+  std::lock_guard lock(handleMutex_);
   if (!handle_) {
     return false;
   }
@@ -158,9 +198,9 @@ bool FrostStore::RemoveDownload(const std::string &url,
 }
 
 bool FrostStore::HasDownloadPath(const std::string &path) const {
-  // The host no longer owns download metadata; treat any non-empty path as
-  // valid so file-open/reveal still works for completed downloads.
-  return !path.empty();
+  std::lock_guard lock(handleMutex_);
+  return handle_ && !path.empty() &&
+         frost_store_has_download_path(handle_, path.c_str());
 }
 
 bool FrostStore::SetPermission(const std::string &origin,

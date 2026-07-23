@@ -30,6 +30,9 @@ void frost_store_free(void *handle);
 char *frost_store_get_setting(void *handle, const char *key);
 bool frost_store_set_setting(void *handle, const char *key, const char *value);
 char *frost_store_get_all_settings(void *handle);
+char *frost_store_get_bookmarks(void *handle, unsigned long limit);
+char *frost_store_get_history(void *handle, unsigned long limit);
+char *frost_store_get_downloads(void *handle, unsigned long limit);
 bool frost_store_add_log(void *handle, const char *level, const char *message);
 char *frost_store_get_logs(void *handle, unsigned long limit);
 bool frost_store_clear_logs(void *handle);
@@ -37,6 +40,7 @@ bool frost_store_add_history(void *handle, const char *title, const char *url,
                              const char *favicon_url);
 bool frost_store_upsert_download(void *handle, const char *url, const char *path,
                                  const char *state, long long percent);
+bool frost_store_has_download_path(void *handle, const char *path);
 // Frees a string previously returned by a frost_store_* function.
 void frost_store_string_free(char *value);
 

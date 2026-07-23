@@ -9,7 +9,7 @@
   --surface-muted: #f0f3f7;
   --text: #17202b;
   --muted: #6c7786;
-  --subtle: #929cab;
+  --subtle: #697586;
   --line: rgb(20 31 48 / 10%);
   --line-strong: rgb(20 31 48 / 17%);
   --accent: #4b70d7;
@@ -41,7 +41,7 @@ body.internal-page {
   --surface-muted: #242a35;
   --text: #f1f4f8;
   --muted: #a3adba;
-  --subtle: #788392;
+  --subtle: #818d9d;
   --line: rgb(255 255 255 / 9%);
   --line-strong: rgb(255 255 255 / 16%);
   --accent: #8ca8ff;
@@ -62,7 +62,7 @@ body.internal-page {
     --surface-muted: #242a35;
     --text: #f1f4f8;
     --muted: #a3adba;
-    --subtle: #788392;
+    --subtle: #818d9d;
     --line: rgb(255 255 255 / 9%);
     --line-strong: rgb(255 255 255 / 16%);
     --accent: #8ca8ff;
@@ -840,6 +840,7 @@ a:focus-visible {
   *,
   *::before,
   *::after {
+    animation: none !important;
     scroll-behavior: auto !important;
     transition: none !important;
   }

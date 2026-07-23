@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <mutex>
+#include <optional>
 #include <string>
 
 namespace fubuki {
@@ -28,11 +30,19 @@ public:
   bool SetSetting(const std::string &key, const std::string &value);
   // Returns all known settings as a JSON object string.
   std::string GetAllSettings() const;
+  std::optional<std::string> TryGetAllSettings() const;
 
   // --- Logs -----------------------------------------------------------------
   bool AddLog(const std::string &level, const std::string &message);
   std::string GetLogs(size_t limit) const;
+  std::optional<std::string> TryGetLogs(size_t limit) const;
   bool ClearLogs();
+
+  // Read-only JSON projections for trusted internal pages. A missing value
+  // represents a store/serialization failure, not an empty collection.
+  std::optional<std::string> GetBookmarks(size_t limit) const;
+  std::optional<std::string> GetHistory(size_t limit) const;
+  std::optional<std::string> GetDownloads(size_t limit) const;
 
   // --- Browser data (delegated to FrostEngine services via protocol) -----
   // These exist so the host can perform user-initiated data mutations through
@@ -48,6 +58,8 @@ public:
   bool UpdateDownload(const std::string &url, const std::string &path,
                       const std::string &state, int percent);
   bool RemoveDownload(const std::string &url, const std::string &path);
+  // File-system side effects are allowed only for paths present in the
+  // engine-owned download ledger.
   bool HasDownloadPath(const std::string &path) const;
   bool SetPermission(const std::string &origin, const std::string &permission,
                      const std::string &value);
@@ -65,6 +77,7 @@ private:
   bool ExecRequest(const std::string &method, const std::string &paramsJson);
 
   std::filesystem::path profilePath_;
+  mutable std::mutex handleMutex_;
   void *handle_ = nullptr;
   void *engine_ = nullptr;
 };

@@ -1,13 +1,12 @@
 #include "cef/FubukiSchemeHandler.h"
 
-#include <sqlite3.h>
-
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -36,11 +35,9 @@ std::filesystem::path ProfilePath() {
               : std::filesystem::temp_directory_path() / "Fubuki Browser Alpha";
 }
 
-std::filesystem::path DatabasePath() {
-  // Internal pages are read-only projections of the FrostEngine store. The
-  // legacy fubuki.sqlite3 database split reads from writes, making successful
-  // setting/delete actions appear to do nothing.
-  return ProfilePath() / "frost-engine.sqlite3";
+const FrostStore* EngineStore() {
+  const BrowserAppController* app = GetBrowserAppController();
+  return app ? &app->Store() : nullptr;
 }
 
 std::string MimeForPath(const std::string& path) {
@@ -89,11 +86,6 @@ std::string HtmlEscape(const std::string& value) {
   return out;
 }
 
-std::string ColumnText(sqlite3_stmt* statement, int column) {
-  const unsigned char* text = sqlite3_column_text(statement, column);
-  return text ? reinterpret_cast<const char*>(text) : "";
-}
-
 std::string JsonString(const std::string& value) {
   std::ostringstream out;
   out << '"';
@@ -119,39 +111,9 @@ std::string JsonString(const std::string& value) {
   return out.str();
 }
 
-sqlite3* OpenDatabase() {
-  // Cache a single process-lifetime connection. Opening the database (and
-  // running the DDL) on every Setting()/QueryRecords() call was a major source
-  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
-  // The connection is now opened once and reused for the process lifetime.
-  static sqlite3* cached = nullptr;
-  static bool initialized = false;
-  if (initialized) {
-    return cached;
-  }
-  if (sqlite3_open_v2(DatabasePath().string().c_str(), &cached,
-                      SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
-    cached = nullptr;
-    return nullptr;
-  }
-  // Only mark as initialized after a successful open so retries are possible.
-  initialized = true;
-  sqlite3_busy_timeout(cached, 2500);
-  return cached;
-}
-
 std::string Setting(const std::string& key, const std::string& fallback = "") {
-  sqlite3* db = OpenDatabase();
-  if (!db)
-    return fallback;
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &statement, nullptr);
-  sqlite3_bind_text(statement, 1, key.c_str(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
-  std::string value = fallback;
-  if (sqlite3_step(statement) == SQLITE_ROW) {
-    value = ColumnText(statement, 0);
-  }
-  sqlite3_finalize(statement);
+  const FrostStore* store = EngineStore();
+  const std::string value = store ? store->GetSetting(key) : "";
   return value.empty() ? fallback : value;
 }
 
@@ -297,107 +259,68 @@ std::string DownloadStatusText(const std::string& state, int percent) {
 }
 
 std::vector<Record> QueryRecords(const std::string& table, int limit) {
-  sqlite3* db = OpenDatabase();
-  if (!db)
+  const FrostStore* store = EngineStore();
+  if (!store)
     return {};
-
-  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at "
-                                                 "FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history" ? "SELECT title,url,favicon_url,'','',0,created_at FROM "
-                                                 "history ORDER BY id DESC LIMIT ?"
-                          : table == "logs"
-                              ? "SELECT message,'','',level,'',0,created_at FROM logs ORDER BY id "
-                                "DESC LIMIT ?"
-                              : "SELECT "
-                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at) FROM "
-                                "downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC "
-                                "LIMIT ?";
-  sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
-  sqlite3_bind_int(statement, 1, limit);
-
+  std::optional<std::string> source;
+  if (table == "bookmarks") {
+    source = store->GetBookmarks(limit);
+  } else if (table == "history") {
+    source = store->GetHistory(limit);
+  } else if (table == "downloads") {
+    source = store->GetDownloads(limit);
+  } else if (table == "logs") {
+    source = store->TryGetLogs(limit);
+  }
+  if (!source) return {};
+  auto parsed = CefParseJSON(*source, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_LIST) return {};
+  auto list = parsed->GetList();
   std::vector<Record> records;
-  while (sqlite3_step(statement) == SQLITE_ROW) {
+  records.reserve(list->GetSize());
+  for (size_t index = 0; index < list->GetSize(); ++index) {
+    if (list->GetType(index) != VTYPE_DICTIONARY) continue;
+    auto item = list->GetDictionary(index);
     Record record;
-    record.title = ColumnText(statement, 0);
-    record.url = ColumnText(statement, 1);
-    record.faviconUrl = ColumnText(statement, 2);
-    record.path = ColumnText(statement, 3);
-    record.state = ColumnText(statement, 4);
-    record.percent = sqlite3_column_int(statement, 5);
-    record.createdAt = ColumnText(statement, 6);
+    record.title = item->GetString(table == "logs" ? "message" : "title").ToString();
+    record.url = item->GetString("url").ToString();
+    record.faviconUrl = item->GetString("faviconUrl").ToString();
+    record.path = item->GetString(table == "logs" ? "level" : "path").ToString();
+    record.state = item->GetString("state").ToString();
+    record.percent = item->GetInt("percent");
+    record.createdAt = item->GetString("createdAt").ToString();
     records.push_back(record);
   }
-
-  sqlite3_finalize(statement);
   return records;
 }
 
-std::string RecordsJson(const std::string& table, int limit) {
-  const auto records = QueryRecords(table, limit);
-  std::ostringstream json;
-  json << '[';
-  for (size_t index = 0; index < records.size(); ++index) {
-    if (index > 0) json << ',';
-    const auto& record = records[index];
-    if (table == "downloads") {
-      json << "{\"url\":" << JsonString(record.url)
-           << ",\"path\":" << JsonString(record.path)
-           << ",\"state\":" << JsonString(NormalizedDownloadState(record))
-           << ",\"percent\":" << ClampPercent(record.percent)
-           << ",\"createdAt\":" << JsonString(record.createdAt) << '}';
-    } else if (table == "logs") {
-      json << "{\"message\":" << JsonString(record.title)
-           << ",\"level\":" << JsonString(record.path)
-           << ",\"createdAt\":" << JsonString(record.createdAt) << '}';
-    } else {
-      json << "{\"title\":" << JsonString(record.title)
-           << ",\"url\":" << JsonString(record.url)
-           << ",\"faviconUrl\":" << JsonString(record.faviconUrl)
-           << ",\"createdAt\":" << JsonString(record.createdAt) << '}';
-    }
-  }
-  json << ']';
-  return json.str();
-}
-
-std::string SettingsJson() {
-  sqlite3* db = OpenDatabase();
-  std::ostringstream json;
-  json << '{';
-  if (db) {
-    sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(db, "SELECT key,value FROM settings ORDER BY key", -1,
-                           &statement, nullptr) == SQLITE_OK) {
-      bool first = true;
-      while (sqlite3_step(statement) == SQLITE_ROW) {
-        if (!first) json << ',';
-        first = false;
-        json << JsonString(ColumnText(statement, 0)) << ':'
-             << JsonString(ColumnText(statement, 1));
-      }
-    }
-    sqlite3_finalize(statement);
-  }
-  json << '}';
-  return json.str();
-}
-
-std::string InternalDataJson(const std::string& host) {
+std::optional<std::string> InternalDataJson(const std::string& host) {
+  const FrostStore* store = EngineStore();
+  if (!store) return std::nullopt;
   std::ostringstream json;
   json << "{\"locale\":" << JsonString(BrowserLanguage())
        << ",\"appearance\":" << JsonString(BrowserAppearance());
   if (host == "bookmarks") {
-    json << ",\"records\":" << RecordsJson("bookmarks", 500);
+    const auto records = store->GetBookmarks(500);
+    if (!records) return std::nullopt;
+    json << ",\"records\":" << *records;
   } else if (host == "history") {
-    json << ",\"records\":" << RecordsJson("history", 500);
+    const auto records = store->GetHistory(500);
+    if (!records) return std::nullopt;
+    json << ",\"records\":" << *records;
   } else if (host == "downloads") {
-    json << ",\"records\":" << RecordsJson("downloads", 200);
+    const auto records = store->GetDownloads(200);
+    if (!records) return std::nullopt;
+    json << ",\"records\":" << *records;
   } else if (host == "settings") {
-    json << ",\"settings\":" << SettingsJson();
+    const auto settings = store->TryGetAllSettings();
+    if (!settings) return std::nullopt;
+    json << ",\"settings\":" << *settings;
   } else if (host == "debug") {
-    json << ",\"profilePath\":" << JsonString(ProfilePath().string())
-         << ",\"logs\":" << RecordsJson("logs", 80);
+    const auto logs = store->TryGetLogs(80);
+    if (!logs) return std::nullopt;
+    json << ",\"profilePath\":" << JsonString(store->ProfilePath())
+         << ",\"logs\":" << *logs;
   }
   json << '}';
   return json.str();
@@ -1043,7 +966,13 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     const std::string host = InternalHost(url);
     if (host == "bookmarks" || host == "downloads" || host == "history" ||
         host == "settings" || host == "debug" || host == "newtab") {
-      LoadText(InternalDataJson(host), "application/json", 200);
+      const auto data = InternalDataJson(host);
+      if (!data) {
+        LoadText("{\"error\":\"internal_data_unavailable\"}",
+                 "application/json", 503);
+        return true;
+      }
+      LoadText(*data, "application/json", 200);
       return true;
     }
   }

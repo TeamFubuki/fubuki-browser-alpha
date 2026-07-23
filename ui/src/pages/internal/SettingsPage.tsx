@@ -10,6 +10,7 @@ import {
 } from './components';
 import type { InternalLocale } from './data';
 import { t, useInternalData } from './data';
+import { matchesSearchTerms } from './settingsSearch';
 
 const copy = {
   en: {
@@ -128,6 +129,30 @@ const sectionIds = [
 ] as const;
 type SectionId = (typeof sectionIds)[number];
 type CopyKey = Exclude<keyof (typeof copy)['en'], SectionId>;
+
+const sectionSearchKeys = {
+  general: ['startup', 'newTab', 'restore', 'home', 'homeUrl'],
+  appearance: ['system', 'light', 'dark'],
+  language: ['system', 'japanese', 'english'],
+  tabs: ['newTabDestination', 'blank', 'homeOnNewTab', 'zoom'],
+  windows: ['sidebar', 'show', 'hide', 'sidebarWidth'],
+  search: ['google', 'duckduckgo', 'bing', 'custom', 'customSearch'],
+  privacy: ['history', 'cookies', 'cache', 'allData'],
+  downloads: ['ask', 'automatic', 'directory'],
+  developer: ['debugPage'],
+} as const satisfies Record<SectionId, readonly CopyKey[]>;
+
+export function matchesSettingSection(
+  id: SectionId,
+  locale: InternalLocale,
+  query: string,
+) {
+  const terms = [
+    ...copy[locale][id],
+    ...sectionSearchKeys[id].map((key) => copy[locale][key]),
+  ];
+  return matchesSearchTerms(query, terms);
+}
 
 function Section(props: {
   id: SectionId;
@@ -380,14 +405,9 @@ function Section(props: {
 export default function SettingsPage() {
   const { data, locale } = useInternalData();
   const [filter, setFilter] = createSignal('');
-  const visible = createMemo(() => {
-    const needle = filter().trim().toLocaleLowerCase();
-    return sectionIds.filter(
-      (id) =>
-        !needle ||
-        copy[locale()][id].join(' ').toLocaleLowerCase().includes(needle),
-    );
-  });
+  const visible = createMemo(() =>
+    sectionIds.filter((id) => matchesSettingSection(id, locale(), filter())),
+  );
   return (
     <main class="internal-main">
       <PageHeader title={t(locale(), 'settings')} eyebrow="Fubuki" />
@@ -401,7 +421,7 @@ export default function SettingsPage() {
         >
           <div class="settings-layout">
             <nav class="settings-nav" aria-label={t(locale(), 'settings')}>
-              <For each={sectionIds}>
+              <For each={visible()}>
                 {(id) => <a href={`#${id}`}>{copy[locale()][id][0]}</a>}
               </For>
             </nav>
