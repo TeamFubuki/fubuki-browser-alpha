@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -35,6 +35,7 @@ pub struct FrostEngineHandle {
     shutdown_tx: Sender<()>,
     worker_done_rx: Receiver<()>,
     state: Arc<AtomicU8>,
+    next_request_id: AtomicU64,
     join_handle: Option<JoinHandle<()>>,
 }
 
@@ -178,6 +179,7 @@ where
         shutdown_tx,
         worker_done_rx,
         state,
+        next_request_id: AtomicU64::new(1),
         join_handle: Some(join_handle),
     }))
 }
@@ -335,7 +337,7 @@ pub unsafe extern "C" fn frost_engine_process_json(
 
 fn send_request(
     handle: &FrostEngineHandle,
-    request: ProtocolRequest,
+    mut request: ProtocolRequest,
     deadline: Instant,
 ) -> Result<ProtocolResponse, FfiError> {
     if handle.state.load(Ordering::Acquire) != ENGINE_RUNNING {
@@ -348,29 +350,47 @@ fn send_request(
     if handle.state.load(Ordering::Acquire) != ENGINE_RUNNING {
         return Err(FfiError::new("engine_stopped", "engine worker stopped"));
     }
+
+    // Every FFI request gets an internal correlation id. A request that times
+    // out can still complete on the single core worker later; without a unique
+    // id, its late response would be mistaken for the next caller's response.
+    // Restore the caller's id before returning so this remains an internal
+    // implementation detail (including for requests that omitted an id).
+    let caller_id = request.id.take();
+    let internal_id = format!(
+        "frost-ffi-{}",
+        handle.next_request_id.fetch_add(1, Ordering::Relaxed)
+    );
+    request.id = Some(internal_id.clone());
     handle.request_tx.send(request).map_err(|_| {
         handle.state.store(ENGINE_STOPPED, Ordering::Release);
         FfiError::new("engine_stopped", "engine request channel is disconnected")
     })?;
 
-    match handle
-        .response_rx
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-    {
-        Ok(response) => Ok(response),
-        Err(error) => {
-            handle.state.store(ENGINE_STOPPED, Ordering::Release);
-            if error == RecvTimeoutError::Timeout {
-                let _ = handle.shutdown_tx.try_send(());
-                Err(FfiError::new(
+    loop {
+        match handle
+            .response_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
+            Ok(mut response) if response.id.as_deref() == Some(internal_id.as_str()) => {
+                response.id = caller_id;
+                return Ok(response);
+            }
+            // Discard a late response from a request whose caller already
+            // timed out, then continue waiting for this request's response.
+            Ok(_) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(FfiError::new(
                     "response_timeout",
                     "engine response timed out",
-                ))
-            } else {
-                Err(FfiError::new(
+                ));
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                handle.state.store(ENGINE_STOPPED, Ordering::Release);
+                return Err(FfiError::new(
                     "response_channel_disconnected",
                     "engine response channel is disconnected",
-                ))
+                ));
             }
         }
     }
@@ -1128,6 +1148,7 @@ mod tests {
                 shutdown_tx,
                 worker_done_rx,
                 state: Arc::new(AtomicU8::new(ENGINE_RUNNING)),
+                next_request_id: AtomicU64::new(1),
                 join_handle: None,
             }),
             request_rx,
@@ -1175,13 +1196,51 @@ mod tests {
     }
 
     #[test]
-    fn unresponsive_worker_returns_structured_timeout() {
+    fn unresponsive_worker_returns_structured_timeout_without_stopping_engine() {
         let (mut handle, _request_rx, _response_tx) = fake_handle();
         let started = Instant::now();
         let response = process(&mut *handle);
         assert_eq!(response["result"]["code"], "response_timeout");
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert_eq!(handle.state.load(Ordering::Acquire), ENGINE_STOPPED);
+        assert_eq!(handle.state.load(Ordering::Acquire), ENGINE_RUNNING);
+    }
+
+    #[test]
+    fn request_after_timeout_discards_late_response_and_recovers() {
+        let (mut handle, request_rx, response_tx) = fake_handle();
+        let (release_late_response_tx, release_late_response_rx) = crossbeam_channel::bounded(1);
+        let (late_response_sent_tx, late_response_sent_rx) = crossbeam_channel::bounded(1);
+        let worker = std::thread::spawn(move || {
+            let first = request_rx.recv().unwrap();
+            release_late_response_rx.recv().unwrap();
+            response_tx
+                .send(ProtocolResponse::ok(
+                    first.id,
+                    frost_protocol::Response::Json(serde_json::json!({ "attempt": 1 })),
+                ))
+                .unwrap();
+            late_response_sent_tx.send(()).unwrap();
+
+            let second = request_rx.recv().unwrap();
+            response_tx
+                .send(ProtocolResponse::ok(
+                    second.id,
+                    frost_protocol::Response::Json(serde_json::json!({ "attempt": 2 })),
+                ))
+                .unwrap();
+        });
+
+        let first = process(&mut *handle);
+        assert_eq!(first["result"]["code"], "response_timeout");
+        assert_eq!(handle.state.load(Ordering::Acquire), ENGINE_RUNNING);
+
+        release_late_response_tx.send(()).unwrap();
+        late_response_sent_rx.recv().unwrap();
+        let second = process(&mut *handle);
+        assert_eq!(second["ok"], true);
+        assert_eq!(second["result"]["attempt"], 2);
+        assert!(second.get("id").is_none());
+        worker.join().unwrap();
     }
 
     #[test]
