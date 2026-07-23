@@ -308,11 +308,14 @@ export type EventMap = {
 
 export { fubukiLogoSvg, fubukiLogoDataUri } from '../assets/logo';
 
-type NativeQuery = {
-  request: string;
-  onSuccess: (response: string) => void;
-  onFailure: (code: number, message: string) => void;
-};
+import { validateBridgeEvent } from './validation';
+import {
+  invokeNativeBridge,
+  notifyBridgeListeners,
+  type NativeQuery,
+} from './runtime';
+
+export { BRIDGE_TIMEOUT_MS } from './runtime';
 
 declare global {
   interface Window {
@@ -334,7 +337,12 @@ declare global {
 const listeners = new Map<string, Set<(payload: unknown) => void>>();
 
 function emit(eventName: string, payload: unknown) {
-  listeners.get(eventName)?.forEach((listener) => listener(payload));
+  notifyBridgeListeners(
+    eventName,
+    listeners.get(eventName) ?? [],
+    payload,
+    (message, error) => console.error(`[Fubuki] ${message}:`, error),
+  );
 }
 
 window.addEventListener('fubuki:event', (event) => {
@@ -342,8 +350,15 @@ window.addEventListener('fubuki:event', (event) => {
     name?: string;
     payload?: unknown;
   };
-  if (detail?.name) {
-    emit(detail.name, detail.payload);
+  if (!detail?.name) return;
+  try {
+    const payload = validateBridgeEvent(
+      detail.name as keyof EventMap,
+      detail.payload,
+    );
+    emit(detail.name, payload);
+  } catch (error) {
+    console.error(`[Fubuki] Dropped invalid event "${detail.name}":`, error);
   }
 });
 
@@ -355,32 +370,7 @@ async function invoke<T = unknown>(
     throw new Error('Fubuki native bridge is not available');
   }
 
-  return new Promise<T>((resolve, reject) => {
-    window.cefQuery?.({
-      request: JSON.stringify({
-        version: 0,
-        bridgeVersion: '1',
-        method,
-        params,
-      }),
-      onSuccess: (response) => {
-        const parsed = JSON.parse(response) as T & {
-          ok?: boolean;
-          error?: string;
-        };
-        if (
-          typeof parsed === 'object' &&
-          parsed !== null &&
-          parsed.ok === false
-        ) {
-          reject(new Error(parsed.error || 'Native bridge request failed'));
-          return;
-        }
-        resolve(parsed as T);
-      },
-      onFailure: (code, message) => reject(new Error(`${code}: ${message}`)),
-    });
-  });
+  return invokeNativeBridge<T>(window.cefQuery, method, params);
 }
 
 function on(
