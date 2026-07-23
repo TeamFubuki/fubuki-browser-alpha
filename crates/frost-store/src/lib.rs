@@ -31,6 +31,11 @@ pub const VALID_SETTING_KEYS: &[&str] = &[
     "newTabBackgroundUrl",
 ];
 
+/// Store-only keys used by the native host during the transition to dedicated
+/// repositories. These are intentionally excluded from `VALID_SETTING_KEYS`
+/// so they cannot be written through the public settings protocol.
+const INTERNAL_SETTING_KEYS: &[&str] = &["sessionJson"];
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
@@ -431,7 +436,7 @@ impl SettingsRepository for SqliteStore {
     }
 
     fn set_setting(&self, key: &str, value: &str) -> StoreResult<()> {
-        if !VALID_SETTING_KEYS.contains(&key) {
+        if !VALID_SETTING_KEYS.contains(&key) && !INTERNAL_SETTING_KEYS.contains(&key) {
             return Err(StoreError::InvalidKey(key.to_owned()));
         }
         self.conn.execute(
@@ -705,6 +710,25 @@ mod tests {
     }
 
     #[test]
+    fn internal_session_json_can_be_written_and_read_back() {
+        let store = SqliteStore::in_memory().unwrap();
+        let first_snapshot = r#"{"version":1,"windows":[]}"#;
+        let updated_snapshot = r#"{"version":1,"windows":[{"id":"window-1","tabs":[]}]}"#;
+
+        store.set_setting("sessionJson", first_snapshot).unwrap();
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap().as_deref(),
+            Some(first_snapshot)
+        );
+
+        store.set_setting("sessionJson", updated_snapshot).unwrap();
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap().as_deref(),
+            Some(updated_snapshot)
+        );
+    }
+
+    #[test]
     fn latest_schema_has_history_and_download_indexes() {
         let store = SqliteStore::in_memory().unwrap();
         let indexes = schema_objects(&store.conn, "index");
@@ -740,6 +764,7 @@ mod tests {
     #[test]
     fn unversioned_legacy_schema_migrates_without_losing_data() {
         let mut conn = Connection::open_in_memory().unwrap();
+        let session_json = r#"{"version":1,"windows":[{"id":"window-1"}]}"#;
         conn.execute_batch(
             "
             CREATE TABLE settings (
@@ -749,6 +774,11 @@ mod tests {
             );
             INSERT INTO settings(key, value) VALUES ('theme', 'dark');
             ",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES ('sessionJson', ?1)",
+            params![session_json],
         )
         .unwrap();
 
@@ -763,6 +793,25 @@ mod tests {
             )
             .unwrap(),
             "dark"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'sessionJson'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            session_json
+        );
+
+        let store = SqliteStore { conn };
+        let updated_session_json = r#"{"version":1,"windows":[]}"#;
+        store
+            .set_setting("sessionJson", updated_session_json)
+            .unwrap();
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap().as_deref(),
+            Some(updated_session_json)
         );
     }
 
