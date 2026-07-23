@@ -299,7 +299,22 @@ export type EventMap = {
   'bookmark.changed': { url?: string } | void;
   'history.changed': { url?: string } | void;
   'setting.changed': { key: string; value: string };
-  'permission.changed': void;
+  'permission.changed': { origin: string; permission: string };
+  'host.synced': void;
+  'external.audit': {
+    commandId: string;
+    capability:
+      | 'read_state'
+      | 'tab_control'
+      | 'navigation'
+      | 'bookmarks'
+      | 'history'
+      | 'downloads'
+      | 'debug';
+    allowed: boolean;
+    reason?: string | null;
+  };
+  'external.rateLimited': { commandId: string; retryAfterMs: number };
   'window.created': FrostWindowState | void;
   'window.closed': { windowId: string } | void;
   'window.focused': { windowId: string } | void;
@@ -319,7 +334,8 @@ export { BRIDGE_TIMEOUT_MS } from './runtime';
 
 declare global {
   interface Window {
-    cefQuery?: (query: NativeQuery) => void;
+    cefQuery?: (query: NativeQuery) => number;
+    cefQueryCancel?: (requestId: number) => void;
     fubuki: {
       bridgeVersion: string;
       invoke: <T = unknown>(
@@ -370,7 +386,13 @@ async function invoke<T = unknown>(
     throw new Error('Fubuki native bridge is not available');
   }
 
-  return invokeNativeBridge<T>(window.cefQuery, method, params);
+  return invokeNativeBridge<T>(
+    window.cefQuery,
+    method,
+    params,
+    undefined,
+    window.cefQueryCancel,
+  );
 }
 
 function on(

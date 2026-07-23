@@ -74,6 +74,55 @@ describe('native bridge runtime', () => {
     await rejection;
   });
 
+  it('cancels the pending CEF query when it times out', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const result = invokeNativeBridge(
+      () => 42,
+      'history.list',
+      {},
+      BRIDGE_TIMEOUT_MS,
+      cancel,
+    );
+    const rejection = expect(result).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(BRIDGE_TIMEOUT_MS);
+    await rejection;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith(42);
+  });
+
+  it('still rejects with the timeout if CEF cancellation throws', async () => {
+    vi.useFakeTimers();
+    const result = invokeNativeBridge(
+      () => 42,
+      'history.list',
+      {},
+      BRIDGE_TIMEOUT_MS,
+      () => {
+        throw new Error('renderer already gone');
+      },
+    );
+    const rejection = expect(result).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(BRIDGE_TIMEOUT_MS);
+    await rejection;
+  });
+
+  it('does not cancel a CEF query that completed successfully', async () => {
+    const cancel = vi.fn();
+    const result = invokeNativeBridge(
+      (query) => {
+        query.onSuccess('true');
+        return 42;
+      },
+      'tabs.close',
+      {},
+      BRIDGE_TIMEOUT_MS,
+      cancel,
+    );
+    await expect(result).resolves.toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it('does not time out before ten seconds', async () => {
     vi.useFakeTimers();
     let settled = false;
@@ -260,6 +309,44 @@ describe('event validation and listener isolation', () => {
     expect(() =>
       validateBridgeEvent('setting.changed', { key: 'theme', value: 1 }),
     ).toThrow(/setting\.changed.*value/);
+  });
+
+  it('accepts the Frost Protocol permission.changed payload', () => {
+    expect(
+      validateBridgeEvent('permission.changed', {
+        origin: 'https://example.com',
+        permission: 'notifications',
+      }),
+    ).toEqual({
+      origin: 'https://example.com',
+      permission: 'notifications',
+    });
+  });
+
+  it('rejects permission.changed without its Protocol fields', () => {
+    expect(() => validateBridgeEvent('permission.changed', {})).toThrow(
+      /permission\.changed.*origin/,
+    );
+  });
+
+  it('accepts Frost Protocol external audit events', () => {
+    expect(
+      validateBridgeEvent('external.audit', {
+        commandId: 'command-1',
+        capability: 'tab_control',
+        allowed: false,
+        reason: 'denied',
+      }),
+    ).toEqual({
+      commandId: 'command-1',
+      capability: 'tab_control',
+      allowed: false,
+      reason: 'denied',
+    });
+  });
+
+  it('accepts empty Frost Protocol host.synced payloads', () => {
+    expect(validateBridgeEvent('host.synced', {})).toBeUndefined();
   });
 
   it('clamps download.changed percentages', () => {

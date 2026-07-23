@@ -6,7 +6,8 @@ export type NativeQuery = {
   onFailure: (code: number, message: string) => void;
 };
 
-export type NativeQueryExecutor = (query: NativeQuery) => void;
+export type NativeQueryExecutor = (query: NativeQuery) => number | void;
+export type NativeQueryCanceler = (requestId: number) => void;
 
 export const BRIDGE_TIMEOUT_MS = 10_000;
 
@@ -15,12 +16,21 @@ export function invokeNativeBridge<T>(
   method: string,
   params: Record<string, unknown> = {},
   timeoutMs = BRIDGE_TIMEOUT_MS,
+  cefQueryCancel?: NativeQueryCanceler,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    let requestId: number | undefined;
     const timeout = globalThis.setTimeout(() => {
       if (settled) return;
       settled = true;
+      if (requestId !== undefined) {
+        try {
+          cefQueryCancel?.(requestId);
+        } catch {
+          // Cancellation is best-effort; the timeout remains the useful error.
+        }
+      }
       reject(
         new Error(
           `Native bridge request "${method}" timed out after ${timeoutMs}ms`,
@@ -35,7 +45,7 @@ export function invokeNativeBridge<T>(
     };
 
     try {
-      cefQuery({
+      const queryId = cefQuery({
         request: JSON.stringify({
           version: 0,
           bridgeVersion: '1',
@@ -80,6 +90,9 @@ export function invokeNativeBridge<T>(
             ),
           ),
       });
+      if (typeof queryId === 'number' && Number.isInteger(queryId)) {
+        requestId = queryId;
+      }
     } catch (error) {
       finish(() => reject(error));
     }
