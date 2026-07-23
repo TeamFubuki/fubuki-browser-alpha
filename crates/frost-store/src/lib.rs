@@ -5,12 +5,40 @@ use frost_protocol::{BookmarkRecord, DownloadRecord, HistoryRecord, PermissionRe
 use rusqlite::{Connection, params};
 use thiserror::Error;
 
+pub const VALID_SETTING_KEYS: &[&str] = &[
+    "homepage",
+    "downloadDirectory",
+    "searchEngine",
+    "startupBehavior",
+    "customSearchUrl",
+    "theme",
+    "appearance",
+    "toolbarDensity",
+    "sidebarVisible",
+    "sidebarWidth",
+    "defaultBookmarkDisplay",
+    "openBookmarkIn",
+    "showBookmarkFavicons",
+    "newTabPage",
+    "homeUrl",
+    "askBeforeDownload",
+    "language",
+    "defaultZoomLevel",
+    "closeWindowWithLastTab",
+    "privateSearchEngine",
+    "newTabBackgroundMode",
+    "newTabBackgroundColor",
+    "newTabBackgroundUrl",
+];
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error("invalid setting key: {0}")]
     InvalidKey(String),
+    #[error("database schema version {found} is newer than supported version {supported}")]
+    UnsupportedSchemaVersion { found: i64, supported: i64 },
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -74,7 +102,7 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open(path)?,
         };
         store.migrate()?;
@@ -82,16 +110,32 @@ impl SqliteStore {
     }
 
     pub fn in_memory() -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open_in_memory()?,
         };
         store.migrate()?;
         Ok(store)
     }
 
-    fn migrate(&self) -> StoreResult<()> {
-        self.conn.execute_batch(
-            "
+    fn migrate(&mut self) -> StoreResult<()> {
+        migrations::migrate(&mut self.conn)
+    }
+}
+
+mod migrations {
+    use super::{Connection, StoreError, StoreResult};
+
+    pub(super) const LATEST_SCHEMA_VERSION: i64 = 2;
+
+    struct Migration {
+        version: i64,
+        sql: &'static str,
+    }
+
+    const MIGRATIONS: &[Migration] = &[
+        Migration {
+            version: 1,
+            sql: "
             CREATE TABLE IF NOT EXISTS settings (
               key TEXT PRIMARY KEY NOT NULL,
               value TEXT NOT NULL,
@@ -139,7 +183,68 @@ impl SqliteStore {
               snapshot TEXT NOT NULL
             );
             ",
-        )?;
+        },
+        Migration {
+            version: 2,
+            sql: "
+            CREATE INDEX IF NOT EXISTS idx_history_url ON history(url);
+            CREATE INDEX IF NOT EXISTS idx_history_created_at ON history(created_at);
+            CREATE INDEX IF NOT EXISTS idx_downloads_url_path ON downloads(url, path);
+            CREATE INDEX IF NOT EXISTS idx_downloads_path ON downloads(path);
+            ",
+        },
+    ];
+
+    pub(super) fn migrate(conn: &mut Connection) -> StoreResult<()> {
+        let current_version = schema_version(conn)?;
+        if current_version > LATEST_SCHEMA_VERSION {
+            return Err(StoreError::UnsupportedSchemaVersion {
+                found: current_version,
+                supported: LATEST_SCHEMA_VERSION,
+            });
+        }
+
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version > current_version)
+        {
+            apply(conn, migration.version, migration.sql)?;
+        }
+        Ok(())
+    }
+
+    fn schema_version(conn: &Connection) -> rusqlite::Result<i64> {
+        conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+    }
+
+    fn apply(conn: &mut Connection, version: i64, sql: &str) -> StoreResult<()> {
+        let transaction = conn.transaction()?;
+        transaction.execute_batch(sql)?;
+        transaction.pragma_update(None, "user_version", version)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_for_test(
+        conn: &mut Connection,
+        version: i64,
+        sql: &str,
+    ) -> StoreResult<()> {
+        apply(conn, version, sql)
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_up_to_for_test(
+        conn: &mut Connection,
+        target_version: i64,
+    ) -> StoreResult<()> {
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= target_version)
+        {
+            apply(conn, migration.version, migration.sql)?;
+        }
         Ok(())
     }
 }
@@ -326,6 +431,9 @@ impl SettingsRepository for SqliteStore {
     }
 
     fn set_setting(&self, key: &str, value: &str) -> StoreResult<()> {
+        if !VALID_SETTING_KEYS.contains(&key) {
+            return Err(StoreError::InvalidKey(key.to_owned()));
+        }
         self.conn.execute(
             "
             INSERT INTO settings (key, value, updated_at)
@@ -460,6 +568,203 @@ fn now_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn schema_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn schema_objects(conn: &Connection, object_type: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = ?1 ORDER BY name")
+            .unwrap();
+        stmt.query_map(params![object_type], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn empty_database_migrates_to_latest_schema() {
+        let store = SqliteStore::in_memory().unwrap();
+
+        assert_eq!(
+            schema_version(&store.conn),
+            migrations::LATEST_SCHEMA_VERSION
+        );
+        let tables = schema_objects(&store.conn, "table");
+        for table in [
+            "settings",
+            "bookmarks",
+            "history",
+            "downloads",
+            "permissions",
+            "logs",
+            "session",
+        ] {
+            assert!(tables.iter().any(|name| name == table), "missing {table}");
+        }
+    }
+
+    #[test]
+    fn version_one_fixture_migrates_and_preserves_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::apply_up_to_for_test(&mut conn, 1).unwrap();
+        conn.execute(
+            "INSERT INTO history(title, url, created_at) VALUES ('Example', 'https://example.com', '1')",
+            [],
+        )
+        .unwrap();
+
+        migrations::migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn), migrations::LATEST_SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row("SELECT url FROM history", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_data_and_version() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        let previous_version = schema_version(&conn);
+
+        let result = migrations::apply_for_test(
+            &mut conn,
+            previous_version + 1,
+            "
+            INSERT INTO settings(key, value) VALUES ('theme', 'dark');
+            INSERT INTO missing_table(value) VALUES ('fail');
+            ",
+        );
+
+        assert!(result.is_err());
+        assert_eq!(schema_version(&conn), previous_version);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM settings", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn rerunning_migrations_is_idempotent() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO bookmarks(title, url, created_at) VALUES ('Example', 'https://example.com', '1')",
+            [],
+        )
+        .unwrap();
+        let objects_before = schema_objects(&conn, "index");
+
+        migrations::migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn), migrations::LATEST_SCHEMA_VERSION);
+        assert_eq!(schema_objects(&conn, "index"), objects_before);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn unknown_setting_key_is_rejected_without_writing() {
+        let store = SqliteStore::in_memory().unwrap();
+
+        let result = store.set_setting("unknownSetting", "value");
+
+        assert!(matches!(
+            result,
+            Err(StoreError::InvalidKey(key)) if key == "unknownSetting"
+        ));
+        assert_eq!(store.get_setting("unknownSetting").unwrap(), None);
+    }
+
+    #[test]
+    fn every_allowlisted_setting_key_can_be_written() {
+        let store = SqliteStore::in_memory().unwrap();
+
+        for key in VALID_SETTING_KEYS {
+            store.set_setting(key, "value").unwrap();
+        }
+
+        let count = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(count, VALID_SETTING_KEYS.len() as i64);
+    }
+
+    #[test]
+    fn latest_schema_has_history_and_download_indexes() {
+        let store = SqliteStore::in_memory().unwrap();
+        let indexes = schema_objects(&store.conn, "index");
+
+        for index in [
+            "idx_history_url",
+            "idx_history_created_at",
+            "idx_downloads_url_path",
+            "idx_downloads_path",
+        ] {
+            assert!(indexes.iter().any(|name| name == index), "missing {index}");
+        }
+    }
+
+    #[test]
+    fn newer_schema_version_is_rejected_without_changes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let future_version = migrations::LATEST_SCHEMA_VERSION + 1;
+        conn.pragma_update(None, "user_version", future_version)
+            .unwrap();
+
+        let result = migrations::migrate(&mut conn);
+
+        assert!(matches!(
+            result,
+            Err(StoreError::UnsupportedSchemaVersion { found, supported })
+                if found == future_version && supported == migrations::LATEST_SCHEMA_VERSION
+        ));
+        assert_eq!(schema_version(&conn), future_version);
+        assert!(schema_objects(&conn, "table").is_empty());
+    }
+
+    #[test]
+    fn unversioned_legacy_schema_migrates_without_losing_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE settings (
+              key TEXT PRIMARY KEY NOT NULL,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO settings(key, value) VALUES ('theme', 'dark');
+            ",
+        )
+        .unwrap();
+
+        migrations::migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn), migrations::LATEST_SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'theme'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "dark"
+        );
+    }
 
     #[test]
     fn stores_settings() {

@@ -1,34 +1,10 @@
-use frost_store::{SettingsRepository, StoreError, StoreResult};
+use frost_store::{SettingsRepository, StoreError, StoreResult, VALID_SETTING_KEYS};
 
 pub struct SettingsService;
 
 impl SettingsService {
     /// Valid setting keys that can be stored and retrieved.
-    pub const VALID_KEYS: &[&str] = &[
-        "homepage",
-        "downloadDirectory",
-        "searchEngine",
-        "startupBehavior",
-        "customSearchUrl",
-        "theme",
-        "appearance",
-        "toolbarDensity",
-        "sidebarVisible",
-        "sidebarWidth",
-        "defaultBookmarkDisplay",
-        "openBookmarkIn",
-        "showBookmarkFavicons",
-        "newTabPage",
-        "homeUrl",
-        "askBeforeDownload",
-        "language",
-        "defaultZoomLevel",
-        "closeWindowWithLastTab",
-        "privateSearchEngine",
-        "newTabBackgroundMode",
-        "newTabBackgroundColor",
-        "newTabBackgroundUrl",
-    ];
+    pub const VALID_KEYS: &[&str] = VALID_SETTING_KEYS;
 
     /// Returns the default value for a given setting key.
     pub fn default_value(key: &str) -> &'static str {
