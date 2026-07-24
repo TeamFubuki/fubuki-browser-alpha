@@ -735,6 +735,45 @@ pub unsafe extern "C" fn frost_store_set_setting(
     store.store.set_setting(key, value).is_ok()
 }
 
+/// Reads the persisted browser session snapshot, or returns null when none is
+/// stored or it cannot be read.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_get_session(handle: *mut FrostStoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &*handle };
+    match store.store.get_session() {
+        Ok(Some(snapshot)) => into_c_string(snapshot),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Persists the browser session snapshot. Validation is deliberately owned by
+/// the native restore boundary, where the snapshot is consumed.
+///
+/// # Safety
+/// - `handle` must be a valid pointer obtained from `frost_store_open`.
+/// - `json` must be a valid null-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frost_store_set_session(
+    handle: *mut FrostStoreHandle,
+    json: *const c_char,
+) -> bool {
+    if handle.is_null() || json.is_null() {
+        return false;
+    }
+    let json = match unsafe { CStr::from_ptr(json) }.to_str() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let store = unsafe { &*handle };
+    store.store.set_session(json).is_ok()
+}
+
 /// Returns all settings as a JSON object string.
 ///
 /// # Safety
@@ -753,7 +792,6 @@ pub unsafe extern "C" fn frost_store_get_all_settings(
         "searchEngine",
         "customSearchUrl",
         "startupBehavior",
-        "sessionJson",
         "downloadDirectory",
         "theme",
         "appearance",
@@ -917,5 +955,68 @@ pub unsafe extern "C" fn frost_store_upsert_download(
 pub unsafe extern "C" fn frost_store_string_free(value: *mut c_char) {
     unsafe {
         frost_engine_string_free(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    fn read_and_free(value: *mut c_char) -> String {
+        assert!(!value.is_null());
+        let result = unsafe { CStr::from_ptr(value) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { frost_store_string_free(value) };
+        result
+    }
+
+    fn in_memory_store() -> *mut FrostStoreHandle {
+        let handle = unsafe { frost_store_open(ptr::null()) };
+        assert!(!handle.is_null());
+        handle
+    }
+
+    #[test]
+    fn session_ffi_returns_null_before_a_snapshot_is_saved() {
+        let handle = in_memory_store();
+        assert!(unsafe { frost_store_get_session(handle) }.is_null());
+        unsafe { frost_store_free(handle) };
+    }
+
+    #[test]
+    fn session_ffi_round_trips_a_snapshot() {
+        let handle = in_memory_store();
+        let snapshot = CString::new("{\"version\":1,\"windows\":[]}").unwrap();
+        assert!(unsafe { frost_store_set_session(handle, snapshot.as_ptr()) });
+        assert_eq!(
+            read_and_free(unsafe { frost_store_get_session(handle) }),
+            "{\"version\":1,\"windows\":[]}"
+        );
+        unsafe { frost_store_free(handle) };
+    }
+
+    #[test]
+    fn session_ffi_replaces_the_previous_snapshot() {
+        let handle = in_memory_store();
+        let first = CString::new("first").unwrap();
+        let second = CString::new("second").unwrap();
+        assert!(unsafe { frost_store_set_session(handle, first.as_ptr()) });
+        assert!(unsafe { frost_store_set_session(handle, second.as_ptr()) });
+        assert_eq!(
+            read_and_free(unsafe { frost_store_get_session(handle) }),
+            "second"
+        );
+        unsafe { frost_store_free(handle) };
+    }
+
+    #[test]
+    fn session_ffi_rejects_null_arguments() {
+        assert!(!unsafe { frost_store_set_session(ptr::null_mut(), ptr::null()) });
+        let handle = in_memory_store();
+        assert!(!unsafe { frost_store_set_session(handle, ptr::null()) });
+        unsafe { frost_store_free(handle) };
     }
 }
