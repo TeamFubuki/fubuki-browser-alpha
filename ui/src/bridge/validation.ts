@@ -455,7 +455,9 @@ function validateNavigation(value: unknown, path: string, failed = false) {
 function validateOptionalUrl(value: unknown, path: string) {
   if (value === undefined || value === null) return undefined;
   const item = record(value, path);
-  return item.url === undefined ? {} : { url: string(item.url, `${path}.url`) };
+  return item.url === undefined || item.url === null
+    ? {}
+    : { url: string(item.url, `${path}.url`) };
 }
 
 function validatePermissionEvent(value: unknown, path: string) {
@@ -489,7 +491,7 @@ function validateDownloadEvent(value: unknown, path: string) {
   const item = record(value, path);
   const result: JsonRecord = {};
   for (const key of ['url', 'path', 'state', 'createdAt']) {
-    if (item[key] !== undefined)
+    if (item[key] !== undefined && item[key] !== null)
       result[key] = string(item[key], `${path}.${key}`);
   }
   if (item.percent !== undefined) {
