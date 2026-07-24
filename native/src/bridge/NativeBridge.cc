@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "bridge/BridgeSchema.h"
 #include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
 #include "include/cef_parser.h"
@@ -34,6 +35,54 @@ double NumberValue(CefRefPtr<CefDictionaryValue> dictionary,
     return dictionary->GetDouble(key);
   }
   return fallback;
+}
+
+bridge::Value ToSchemaValue(CefRefPtr<CefDictionaryValue> dictionary, const CefString& key) {
+  const cef_value_type_t type = dictionary->GetType(key);
+  switch (type) {
+    case VTYPE_STRING: {
+      const std::string value = dictionary->GetString(key).ToString();
+      return {bridge::ValueType::kString, value, value.size(), 0.0};
+    }
+    case VTYPE_BOOL:
+      return {bridge::ValueType::kBool};
+    case VTYPE_INT:
+      return {bridge::ValueType::kNumber, "", 0, static_cast<double>(dictionary->GetInt(key))};
+    case VTYPE_DOUBLE:
+      return {bridge::ValueType::kNumber, "", 0, dictionary->GetDouble(key)};
+    case VTYPE_DICTIONARY:
+      return {bridge::ValueType::kDictionary};
+    case VTYPE_LIST:
+      return {bridge::ValueType::kList};
+    default:
+      return {bridge::ValueType::kNull};
+  }
+}
+
+bridge::Params ToSchemaParams(CefRefPtr<CefDictionaryValue> dictionary) {
+  bridge::Params params;
+  if (!dictionary) {
+    return params;
+  }
+  CefDictionaryValue::KeyList keys;
+  dictionary->GetKeys(keys);
+  for (const CefString& key : keys) {
+    params.emplace(key.ToString(), ToSchemaValue(dictionary, key));
+  }
+  return params;
+}
+
+bool HasOnlyRequestFields(CefRefPtr<CefDictionaryValue> request, std::string& unexpectedField) {
+  CefDictionaryValue::KeyList keys;
+  request->GetKeys(keys);
+  for (const CefString& key : keys) {
+    const std::string field = key.ToString();
+    if (field != "version" && field != "bridgeVersion" && field != "method" && field != "params") {
+      unexpectedField = field;
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -403,15 +452,60 @@ bool NativeBridge::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
   }
 
   auto dict = parsed->GetDictionary();
+  std::string unexpectedField;
+  if (!HasOnlyRequestFields(dict, unexpectedField)) {
+    callback->Failure(400,
+                      "Invalid bridge request, field '" + unexpectedField + "' is not supported");
+    return true;
+  }
   if (!dict->HasKey("method") || dict->GetType("method") != VTYPE_STRING) {
     callback->Failure(400, "Missing method");
     return true;
   }
 
   const std::string method = dict->GetString("method");
+  if (method.empty() || method.size() > 128) {
+    callback->Failure(400, "Invalid bridge request, field 'method' is invalid");
+    return true;
+  }
+  if (!dict->HasKey("version") || dict->GetType("version") != VTYPE_INT ||
+      dict->GetInt("version") != 0) {
+    callback->Failure(400, "Invalid bridge request for method '" + method +
+                               "', field 'version' is unsupported");
+    return true;
+  }
+  if (!dict->HasKey("bridgeVersion") || dict->GetType("bridgeVersion") != VTYPE_STRING ||
+      dict->GetString("bridgeVersion").ToString() != "1") {
+    callback->Failure(400, "Invalid bridge request for method '" + method +
+                               "', field 'bridgeVersion' is unsupported");
+    return true;
+  }
+  if (!bridge::IsKnownMethod(method) || !methods_.contains(method)) {
+    callback->Failure(400, "Unknown bridge method '" + method + "'");
+    return true;
+  }
   CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-  if (dict->HasKey("params") && dict->GetType("params") == VTYPE_DICTIONARY) {
+  if (dict->HasKey("params") && dict->GetType("params") != VTYPE_DICTIONARY) {
+    callback->Failure(400, "Invalid bridge request for method '" + method +
+                               "', field 'params' has an invalid type");
+    return true;
+  }
+  if (dict->HasKey("params")) {
     params = dict->GetDictionary("params");
+  }
+  if (const auto error = bridge::Validate(method, ToSchemaParams(params))) {
+    callback->Failure(400, *error);
+    return true;
+  }
+  if (method == "commands.execute" && params->HasKey("args")) {
+    const std::string command = params->GetString("id").ToString();
+    if (bridge::IsKnownMethod(command) && methods_.contains(command)) {
+      if (const auto error =
+              bridge::Validate(command, ToSchemaParams(params->GetDictionary("args")))) {
+        callback->Failure(400, *error);
+        return true;
+      }
+    }
   }
 
   auto response = Invoke(method, params);
