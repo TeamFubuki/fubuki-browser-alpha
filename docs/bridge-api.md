@@ -12,6 +12,20 @@ window.fubuki.invoke(method, params)
 
 The native bridge only accepts calls from `fubuki://app/`.
 
+## Request validation
+
+Every request must have exactly these top-level fields: `version: 0`,
+`bridgeVersion: "1"`, `method`, and an optional object `params`. Unknown
+top-level fields and unknown parameter fields are rejected with a 400 response.
+The error identifies the method and field, but never echoes the submitted value.
+
+Required string fields must be non-empty. Identifiers (`tabId`, `windowId`,
+setting keys, and command IDs) are limited to 256 characters; URLs and tab
+inputs to 8,192; file paths to 4,096; general text to 4,096; and setting values
+to 16,384 characters. `ui.setSidebarWidth.width` is 160–800, overlay dimensions
+are 100–2,000, and `tabs.move.toIndex` is 0–10,000. Enumerated values are
+strictly checked for history range, data-clear target, and permission value.
+
 ## Methods
 
 - `app.snapshot`
