@@ -21,5 +21,9 @@
   <string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>CFBundleIconFile</key>
+  <string>fubuki</string>
+  <key>CFBundleIconName</key>
+  <string>fubuki</string>
 </dict>
 </plist>
