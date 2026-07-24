@@ -1555,6 +1555,7 @@ CefRefPtr<CefDictionaryValue> BrowserWindow::SessionSnapshot() const {
   const auto tabSnapshot = tabManager_.GetTabs();
   for (size_t i = 0; i < tabSnapshot.size(); ++i) {
     auto item = CefDictionaryValue::Create();
+    item->SetString("id", tabSnapshot[i].id);
     item->SetString("title", tabSnapshot[i].title);
     item->SetString("url", tabSnapshot[i].url.empty() ? "fubuki://newtab/" : tabSnapshot[i].url);
     item->SetString("faviconUrl", tabSnapshot[i].faviconUrl);

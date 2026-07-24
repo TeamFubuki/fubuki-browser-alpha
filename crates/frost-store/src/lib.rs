@@ -138,6 +138,14 @@ impl SqliteStore {
               id INTEGER PRIMARY KEY CHECK (id = 1),
               snapshot TEXT NOT NULL
             );
+            -- Move snapshots written by the legacy native setting path into
+            -- the dedicated repository without overwriting a newer session.
+            INSERT OR IGNORE INTO session(id, snapshot)
+              SELECT 1, value FROM settings WHERE key = 'sessionJson';
+            -- Once the snapshot is in the dedicated table, remove the second
+            -- persistence path so future reads have a single source of truth.
+            DELETE FROM settings
+              WHERE key = 'sessionJson' AND EXISTS (SELECT 1 FROM session WHERE id = 1);
             ",
         )?;
         Ok(())
@@ -468,6 +476,59 @@ mod tests {
 
         store.set_setting("theme", "dark").unwrap();
         assert_eq!(store.get_setting("theme").unwrap(), Some("dark".into()));
+    }
+
+    #[test]
+    fn session_is_absent_until_saved() {
+        let store = SqliteStore::in_memory().unwrap();
+        assert_eq!(store.get_session().unwrap(), None);
+    }
+
+    #[test]
+    fn stores_session_snapshot_separately_from_settings() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.set_setting("sessionJson", "legacy-setting").unwrap();
+        store.set_session("{\"version\":1,\"windows\":[]}").unwrap();
+
+        assert_eq!(
+            store.get_session().unwrap(),
+            Some("{\"version\":1,\"windows\":[]}".into())
+        );
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap(),
+            Some("legacy-setting".into())
+        );
+    }
+
+    #[test]
+    fn replacing_session_snapshot_keeps_only_latest_value() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.set_session("first").unwrap();
+        store.set_session("second").unwrap();
+        assert_eq!(store.get_session().unwrap(), Some("second".into()));
+    }
+
+    #[test]
+    fn session_accepts_json_that_will_be_validated_by_restore_boundary() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.set_session("not JSON").unwrap();
+        assert_eq!(store.get_session().unwrap(), Some("not JSON".into()));
+    }
+
+    #[test]
+    fn migrates_legacy_session_setting_into_dedicated_repository() {
+        let store = SqliteStore::in_memory().unwrap();
+        store
+            .set_setting("sessionJson", "{\"version\":1,\"windows\":[]}")
+            .unwrap();
+
+        store.migrate().unwrap();
+
+        assert_eq!(
+            store.get_session().unwrap(),
+            Some("{\"version\":1,\"windows\":[]}".into())
+        );
+        assert_eq!(store.get_setting("sessionJson").unwrap(), None);
     }
 
     #[test]

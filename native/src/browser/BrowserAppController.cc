@@ -1,6 +1,8 @@
 #include "browser/BrowserAppController.h"
 
 #include <algorithm>
+#include <iostream>
+#include <unordered_set>
 
 #include "browser/BrowserWindow.h"
 #include "include/base/cef_callback.h"
@@ -21,6 +23,98 @@ ValueFromDictionary(CefRefPtr<CefDictionaryValue> dictionary) {
   auto value = CefValue::Create();
   value->SetDictionary(dictionary);
   return value;
+}
+
+bool IsTrue(CefRefPtr<CefDictionaryValue> value, const char *key) {
+  return value && value->HasKey(key) && value->GetType(key) == VTYPE_BOOL &&
+         value->GetBool(key);
+}
+
+// Session data is untrusted persisted input. Normalize recoverable omissions,
+// and reject individual windows whose identity would make restoration
+// ambiguous. This keeps malformed data from crashing startup or creating a
+// partial private session.
+CefRefPtr<CefListValue> NormalizeSession(const std::string &json) {
+  auto normalizedWindows = CefListValue::Create();
+  auto parsed = CefParseJSON(json, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+    return normalizedWindows;
+  }
+  auto root = parsed->GetDictionary();
+  if (!root || !root->HasKey("version") || root->GetType("version") != VTYPE_INT ||
+      root->GetInt("version") != 1 || !root->HasKey("windows") ||
+      root->GetType("windows") != VTYPE_LIST) {
+    return normalizedWindows;
+  }
+
+  std::unordered_set<std::string> windowIds;
+  auto windows = root->GetList("windows");
+  for (size_t windowIndex = 0; windowIndex < windows->GetSize(); ++windowIndex) {
+    auto window = windows->GetDictionary(windowIndex);
+    if (!window || IsTrue(window, "private") || !window->HasKey("id") ||
+        window->GetType("id") != VTYPE_STRING) {
+      continue;
+    }
+    const std::string windowId = window->GetString("id").ToString();
+    if (windowId.empty() || !windowIds.insert(windowId).second ||
+        !window->HasKey("tabs") || window->GetType("tabs") != VTYPE_LIST) {
+      continue;
+    }
+
+    auto normalizedTabs = CefListValue::Create();
+    auto tabs = window->GetList("tabs");
+    std::unordered_set<std::string> tabIds;
+    std::string activeTabId;
+    if (window->HasKey("activeTabId") &&
+        window->GetType("activeTabId") == VTYPE_STRING) {
+      activeTabId = window->GetString("activeTabId").ToString();
+    }
+    std::string flaggedActiveTabId;
+    bool duplicateTabId = false;
+    for (size_t tabIndex = 0; tabIndex < tabs->GetSize(); ++tabIndex) {
+      auto tab = tabs->GetDictionary(tabIndex);
+      if (!tab || IsTrue(tab, "private")) {
+        continue;
+      }
+      std::string tabId = tab->HasKey("id") && tab->GetType("id") == VTYPE_STRING
+                              ? tab->GetString("id").ToString()
+                              : "";
+      if (tabId.empty()) {
+        tabId = "restored-" + windowId + "-tab-" + std::to_string(tabIndex + 1);
+      }
+      if (!tabIds.insert(tabId).second) {
+        duplicateTabId = true;
+        break;
+      }
+      auto normalizedTab = tab->Copy(false);
+      normalizedTab->SetString("id", tabId);
+      normalizedTabs->SetDictionary(normalizedTabs->GetSize(), normalizedTab);
+      if (flaggedActiveTabId.empty() && IsTrue(tab, "active")) {
+        flaggedActiveTabId = tabId;
+      }
+    }
+    // Empty windows and duplicate ids cannot be safely restored. A missing or
+    // stale active id is recoverable: use a marked tab, otherwise the first.
+    if (duplicateTabId || normalizedTabs->GetSize() == 0) {
+      continue;
+    }
+    if (tabIds.find(activeTabId) == tabIds.end()) {
+      activeTabId = flaggedActiveTabId.empty()
+                        ? normalizedTabs->GetDictionary(0)->GetString("id").ToString()
+                        : flaggedActiveTabId;
+    }
+    for (size_t tabIndex = 0; tabIndex < normalizedTabs->GetSize(); ++tabIndex) {
+      auto tab = normalizedTabs->GetDictionary(tabIndex);
+      tab->SetBool("active", tab->GetString("id").ToString() == activeTabId);
+    }
+
+    auto normalizedWindow = window->Copy(false);
+    normalizedWindow->SetBool("private", false);
+    normalizedWindow->SetString("activeTabId", activeTabId);
+    normalizedWindow->SetList("tabs", normalizedTabs);
+    normalizedWindows->SetDictionary(normalizedWindows->GetSize(), normalizedWindow);
+  }
+  return normalizedWindows;
 }
 
 }  // namespace
@@ -359,9 +453,13 @@ void BrowserAppController::PersistSession() {
   }
   root->SetInt("version", 1);
   root->SetList("windows", windows);
-  store_.SetSetting(
-      "sessionJson",
-      CefWriteJSON(ValueFromDictionary(root), JSON_WRITER_DEFAULT).ToString());
+  const std::string session =
+      CefWriteJSON(ValueFromDictionary(root), JSON_WRITER_DEFAULT).ToString();
+  if (!store_.SetSession(session)) {
+    const std::string message = "Failed to persist browser session";
+    std::cerr << "[fubuki] " << message << std::endl;
+    store_.AddLog("error", message);
+  }
 }
 
 BrowserWindow *BrowserAppController::ActiveWindow() const {
@@ -406,21 +504,11 @@ std::string BrowserAppController::NextWindowId() {
 }
 
 CefRefPtr<CefListValue> BrowserAppController::RestoredWindows() const {
-  auto empty = CefListValue::Create();
-  const std::string json = store_.GetSetting("sessionJson");
+  const std::string json = store_.GetSession();
   if (json.empty()) {
-    return empty;
+    return CefListValue::Create();
   }
-  auto parsed = CefParseJSON(json, JSON_PARSER_RFC);
-  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
-    return empty;
-  }
-  auto root = parsed->GetDictionary();
-  if (!root || !root->HasKey("windows") ||
-      root->GetType("windows") != VTYPE_LIST) {
-    return empty;
-  }
-  return root->GetList("windows");
+  return NormalizeSession(json);
 }
 
 BrowserAppController *GetBrowserAppController() {
