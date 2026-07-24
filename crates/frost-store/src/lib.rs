@@ -78,6 +78,7 @@ impl SqliteStore {
             conn: Connection::open(path)?,
         };
         store.migrate()?;
+        store.verify_writable()?;
         Ok(store)
     }
 
@@ -138,6 +139,18 @@ impl SqliteStore {
               id INTEGER PRIMARY KEY CHECK (id = 1),
               snapshot TEXT NOT NULL
             );
+            ",
+        )?;
+        Ok(())
+    }
+
+    fn verify_writable(&self) -> StoreResult<()> {
+        // Fail initialization if the database cannot start a write transaction.
+        self.conn.execute_batch(
+            "
+            BEGIN IMMEDIATE;
+            DELETE FROM settings WHERE 0;
+            ROLLBACK;
             ",
         )?;
         Ok(())

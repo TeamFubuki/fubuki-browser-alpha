@@ -1,6 +1,8 @@
 #include "bridge/FrostBridge.h"
 #include "frost_ffi.h"
 
+#include <filesystem>
+
 namespace {
 
 std::string TakeFrostString(char *value) {
@@ -12,15 +14,45 @@ std::string TakeFrostString(char *value) {
   return result;
 }
 
+void *OpenPersistentEngine(const std::string &databasePath) {
+  if (databasePath.empty()) {
+    return frost_engine_new_with_store(nullptr);
+  }
+  const std::filesystem::path path(databasePath);
+  if (path.has_parent_path()) {
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    // Let SQLite report a structured error if directory creation failed.
+  }
+  return frost_engine_new_with_store(databasePath.c_str());
+}
+
+std::string UnavailableResponse(const std::string &initializationError) {
+  const std::string error = initializationError.empty()
+                                ? "{\"code\":\"engine_stopped\",\"message\":\"FrostEngine is not available\"}"
+                                : initializationError;
+  return "{\"version\":0,\"ok\":false,\"kind\":\"error\",\"result\":" +
+         error + "}";
+}
+
 }  // namespace
 
 namespace fubuki {
 
-FrostBridge::FrostBridge() : handle_(frost_engine_new()) {}
+FrostBridge::FrostBridge() : handle_(frost_engine_new_in_memory()) {
+  if (!handle_) {
+    initializationErrorJson_ =
+        TakeFrostString(frost_engine_take_last_error_json());
+  }
+}
 
 FrostBridge::FrostBridge(const std::string &profilePath)
-    : handle_(frost_engine_new_with_store(
-          profilePath.empty() ? nullptr : profilePath.c_str())) {}
+    : handle_(OpenPersistentEngine(profilePath)) {
+  if (!handle_) {
+    initializationErrorJson_ =
+        TakeFrostString(frost_engine_take_last_error_json());
+  }
+}
 
 FrostBridge::~FrostBridge() {
   if (handle_) {
@@ -31,7 +63,7 @@ FrostBridge::~FrostBridge() {
 
 std::string FrostBridge::ProcessJson(const std::string &requestJson) {
   if (!handle_) {
-    return "{\"version\":0,\"ok\":false,\"kind\":\"error\",\"result\":\"FrostEngine is not available\"}";
+    return UnavailableResponse(initializationErrorJson_);
   }
   return TakeFrostString(frost_engine_process_json(handle_, requestJson.c_str()));
 }

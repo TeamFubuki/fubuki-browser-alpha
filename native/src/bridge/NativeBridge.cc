@@ -441,10 +441,24 @@ NativeBridge::FrostResultValue(const std::string &responseJson) const {
 
   auto response = parsed->GetDictionary();
   if (response->HasKey("ok") && !response->GetBool("ok")) {
-    const std::string message =
-        response->HasKey("result") ? response->GetString("result")
-                                    : "FrostEngine request failed";
-    return ErrorValue(message);
+    std::string message = "FrostEngine request failed";
+    std::string code;
+    if (response->HasKey("result") &&
+        response->GetType("result") == VTYPE_STRING) {
+      message = response->GetString("result").ToString();
+    } else if (response->HasKey("result") &&
+               response->GetType("result") == VTYPE_DICTIONARY) {
+      auto error = response->GetDictionary("result");
+      const std::string structuredMessage =
+          error->GetString("message").ToString();
+      message = structuredMessage.empty() ? message : structuredMessage;
+      code = error->GetString("code").ToString();
+    }
+    auto value = ErrorValue(message);
+    if (!code.empty()) {
+      value->GetDictionary()->SetString("errorCode", code);
+    }
+    return value;
   }
 
   if (!response->HasKey("result")) {
