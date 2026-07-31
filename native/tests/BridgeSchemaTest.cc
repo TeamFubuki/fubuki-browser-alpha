@@ -62,6 +62,10 @@ TEST(BridgeSchemaTest, RejectsEmptyTabId) {
   EXPECT_FALSE(IsValid("tabs.close", {{"tabId", String("")}}));
 }
 
+TEST(BridgeSchemaTest, RejectsOversizedTabId) {
+  EXPECT_FALSE(IsValid("tabs.close", {{"tabId", String(std::string(257, 'x'))}}));
+}
+
 TEST(BridgeSchemaTest, RequiresPinnedValue) {
   EXPECT_FALSE(IsValid("tabs.pin", {{"tabId", String("tab-1")}}));
 }
@@ -168,8 +172,33 @@ TEST(BridgeSchemaTest, AcceptsOptionalHomeIdentifiers) {
   EXPECT_TRUE(IsValid("tabs.home", {{"tabId", String("tab-1")}, {"windowId", String("window-1")}}));
 }
 
+TEST(BridgeSchemaTest, RejectsEmptyOptionalHomeTabId) {
+  EXPECT_FALSE(IsValid("tabs.home", {{"tabId", String("")}}));
+}
+
+TEST(BridgeSchemaTest, RejectsEmptyOptionalHomeWindowId) {
+  EXPECT_FALSE(IsValid("tabs.home", {{"windowId", String("")}}));
+}
+
 TEST(BridgeSchemaTest, AcceptsOptionalWindowCloseIdentifier) {
   EXPECT_TRUE(IsValid("windows.close", {{"windowId", String("window-1")}}));
+}
+
+TEST(BridgeSchemaTest, RejectsEmptyOptionalWindowCloseIdentifier) {
+  EXPECT_FALSE(IsValid("windows.close", {{"windowId", String("")}}));
+}
+
+TEST(BridgeSchemaTest, RejectsEmptyOptionalCreateTabWindowId) {
+  EXPECT_FALSE(IsValid("tabs.create", {{"windowId", String("")}}));
+}
+
+TEST(BridgeSchemaTest, RejectsOversizedOptionalCreateTabWindowId) {
+  EXPECT_FALSE(IsValid("tabs.create", {{"windowId", String(std::string(257, 'x'))}}));
+}
+
+TEST(BridgeSchemaTest, RejectsEmptyOptionalMoveToNewWindowId) {
+  EXPECT_FALSE(
+      IsValid("tabs.moveToNewWindow", {{"tabId", String("tab-1")}, {"windowId", String("")}}));
 }
 
 }  // namespace

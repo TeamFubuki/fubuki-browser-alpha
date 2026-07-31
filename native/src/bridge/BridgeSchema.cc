@@ -19,6 +19,12 @@ Field String(std::string name, bool required = false, size_t maxLength = kMaxTex
   return {std::move(name), ValueType::kString, required, maxLength};
 }
 
+Field Identifier(std::string name, bool required = false) {
+  Field field = String(std::move(name), required, kMaxIdLength);
+  field.rejectEmpty = true;
+  return field;
+}
+
 Field Bool(std::string name, bool required = false) {
   return {std::move(name), ValueType::kBool, required};
 }
@@ -62,24 +68,23 @@ const std::unordered_map<std::string, Method>& Methods() {
       schemas.emplace(std::string(name), Empty());
     }
 
-    schemas["tabs.home"] = {
-        {String("tabId", false, kMaxIdLength), String("windowId", false, kMaxIdLength)}};
-    schemas["windows.close"] = {{String("windowId", false, kMaxIdLength)}};
+    schemas["tabs.home"] = {{Identifier("tabId"), Identifier("windowId")}};
+    schemas["windows.close"] = {{Identifier("windowId")}};
 
     schemas["tabs.create"] = {{String("url", false, kMaxUrlLength), Bool("active"),
-                               String("windowId", false, kMaxIdLength)}};
+                               Identifier("windowId")}};
     for (std::string_view name :
          {"tabs.activate", "tabs.close", "tabs.duplicate", "tabs.closeOther", "tabs.closeToRight",
           "tabs.reload", "tabs.stop", "tabs.goBack", "tabs.goForward"}) {
-      schemas.emplace(std::string(name), Method{{String("tabId", true, kMaxIdLength)}});
+      schemas.emplace(std::string(name), Method{{Identifier("tabId", true)}});
     }
-    schemas["tabs.pin"] = {{String("tabId", true, kMaxIdLength), Bool("pinned", true)}};
+    schemas["tabs.pin"] = {{Identifier("tabId", true), Bool("pinned", true)}};
     schemas["tabs.move"] = {
-        {String("tabId", true, kMaxIdLength), Number("toIndex", true, 0, 10000)}};
+        {Identifier("tabId", true), Number("toIndex", true, 0, 10000)}};
     schemas["tabs.moveToNewWindow"] = {
-        {String("tabId", true, kMaxIdLength), String("windowId", false, kMaxIdLength)}};
+        {Identifier("tabId", true), Identifier("windowId")}};
     schemas["tabs.navigate"] = {
-        {String("tabId", true, kMaxIdLength), String("input", true, kMaxUrlLength)}};
+        {Identifier("tabId", true), String("input", true, kMaxUrlLength)}};
 
     schemas["page.find"] = {{String("query", true, kMaxTextLength), Bool("forward")}};
     schemas["page.stopFinding"] = {{Bool("clear")}};
@@ -145,7 +150,7 @@ std::optional<std::string> Validate(const std::string& method, const Params& par
       return Prefix(method, field.name) + "has an invalid type";
     }
     if (field.type == ValueType::kString) {
-      if (value.stringLength == 0 && field.required) {
+      if (value.stringLength == 0 && (field.required || field.rejectEmpty)) {
         return Prefix(method, field.name) + "must not be empty";
       }
       if (field.maxLength > 0 && value.stringLength > field.maxLength) {
