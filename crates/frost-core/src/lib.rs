@@ -1532,7 +1532,7 @@ where
                 closed_tabs: &mut self.closed_tabs,
                 closed_windows: &mut self.closed_windows,
             };
-            let _rollback_result = context.apply(operation);
+            let _rollback_result = context.apply(*operation);
         }
         Err(CoreError::Message(format!(
             "Host command {} failed: {}",

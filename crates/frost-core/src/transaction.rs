@@ -136,7 +136,7 @@ pub(crate) enum CompletionResult {
 
 #[derive(Debug, Clone)]
 pub(crate) enum FailureResult {
-    Rollback(PendingOperation),
+    Rollback(Box<PendingOperation>),
     UnknownCommand,
 }
 
@@ -211,7 +211,7 @@ impl PendingOperations {
         self.pending_since.remove(command_id);
 
         match entry {
-            PendingEntry::Single(operation) => FailureResult::Rollback(operation),
+            PendingEntry::Single(operation) => FailureResult::Rollback(Box::new(operation)),
             PendingEntry::Transaction {
                 group_id,
                 operation,
@@ -231,7 +231,7 @@ impl PendingOperations {
                     self.entries.remove(&sibling_id);
                     self.pending_since.remove(&sibling_id);
                 }
-                FailureResult::Rollback(operation)
+                FailureResult::Rollback(Box::new(operation))
             }
         }
     }
