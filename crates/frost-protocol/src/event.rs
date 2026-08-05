@@ -25,7 +25,7 @@ pub enum Event {
     TabMoved(TabMoved),
     #[serde(rename = "window.created")]
     WindowCreated(WindowState),
-    #[serde(rename = "window.closed")]
+    #[serde(rename = "window.closed", rename_all = "camelCase")]
     WindowClosed { window_id: String },
     #[serde(rename = "setting.changed")]
     SettingChanged(SettingChanged),

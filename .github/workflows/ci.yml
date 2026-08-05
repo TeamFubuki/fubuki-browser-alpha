@@ -86,6 +86,9 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Shared protocol fixture contract tests
+        run: cargo test -p frost-protocol --test protocol_contract
+
   rust-ffi:
     name: Rust FFI build (frost-ffi staticlib)
     runs-on: ubuntu-latest
@@ -209,6 +212,9 @@ jobs:
 
       - name: Run tests
         run: cd native/tests/build && ctest --output-on-failure
+
+      - name: Shared protocol fixture contract tests
+        run: cd native/tests/build && ctest -R '^ProtocolFixtureTest\.' --output-on-failure
 
   macos-build:
     name: macOS native build (CEF)
