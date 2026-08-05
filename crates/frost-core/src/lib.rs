@@ -4,14 +4,12 @@ mod external_router;
 mod history_service;
 mod settings_service;
 mod tab_service;
+mod transaction;
 mod window_service;
 
 pub use external_router::{ExternalPolicy, ExternalResponse};
 
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
 use frost_engine_api::{
@@ -28,6 +26,11 @@ use frost_store::{
 };
 use thiserror::Error;
 
+use transaction::{
+    ClosedWindow, FailureResult, PendingOperation, PendingOperations, RollbackContext,
+    StateSnapshot,
+};
+
 pub use bookmark_service::BookmarkService;
 pub use download_service::DownloadService;
 pub use history_service::HistoryService;
@@ -42,91 +45,6 @@ pub enum CoreError {
 }
 
 pub type CoreResult<T> = Result<T, CoreError>;
-
-/// Tracks a pending operation that can be rolled back on host command failure.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) enum PendingOperation {
-    StateSnapshot(StateSnapshot),
-    TabCreated {
-        tab_id: String,
-        window_id: String,
-    },
-    TabMoved {
-        tab_id: String,
-        from_window_id: String,
-        to_window_id: String,
-        from_index: usize,
-        to_index: usize,
-    },
-    TabActivated {
-        tab_id: String,
-        window_id: String,
-        previous_active_tab_id: Option<String>,
-    },
-    WindowCreated {
-        window_id: String,
-    },
-    TabClosed {
-        tab_id: String,
-        window_id: String,
-        was_active: bool,
-        tab_state: frost_protocol::TabState,
-        previous_active_tab_id: Option<String>,
-        replacement_tab: Option<frost_protocol::TabState>,
-    },
-    TabsCloseOther {
-        keep_tab_id: String,
-        closed_tabs: Vec<frost_protocol::TabState>,
-        window_id: String,
-        was_active: bool,
-        previous_active_tab_id: Option<String>,
-    },
-    TabsCloseToRight {
-        anchor_tab_id: String,
-        closed_tabs: Vec<frost_protocol::TabState>,
-        window_id: String,
-        was_active: bool,
-        previous_active_tab_id: Option<String>,
-    },
-    TabMoveToNewWindow {
-        tab_id: String,
-        original_window_id: String,
-        new_window_id: String,
-        new_window_is_private: bool,
-        empty_tab_created: Option<frost_protocol::TabState>,
-    },
-    TabPin {
-        tab_id: String,
-        previous_pinned: bool,
-    },
-    TabNavigate {
-        tab_id: String,
-        previous_url: String,
-        previous_error_text: String,
-        previous_is_loading: bool,
-    },
-}
-
-#[derive(Debug, Clone)]
-enum PendingEntry {
-    Single(PendingOperation),
-    Transaction {
-        group_id: String,
-        operation: PendingOperation,
-    },
-}
-
-/// Snapshot of state before an operation for rollback purposes.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct StateSnapshot {
-    tabs: Vec<frost_protocol::TabState>,
-    windows: Vec<frost_protocol::WindowState>,
-    active_window_id: Option<String>,
-    closed_tabs: Vec<frost_protocol::TabState>,
-    closed_windows: Vec<ClosedWindow>,
-}
 
 pub struct HostCommandAdapter {
     tx: Sender<HostCommandEnvelope>,
@@ -253,9 +171,7 @@ pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     closed_windows: Vec<ClosedWindow>,
     events: Vec<EventEnvelope>,
     event_tx: Option<Sender<EventEnvelope>>,
-    /// Tracks pending operations for rollback on host command failure
-    pending_operations: HashMap<String, PendingEntry>,
-    pending_since: HashMap<String, SystemTime>,
+    pending: PendingOperations,
 }
 
 impl BrowserCore<NoopEngineAdapter, InMemoryStore> {
@@ -296,8 +212,7 @@ where
             closed_windows: Vec::new(),
             events: Vec::new(),
             event_tx: None,
-            pending_operations: HashMap::new(),
-            pending_since: HashMap::new(),
+            pending: PendingOperations::default(),
         }
     }
 
@@ -310,7 +225,7 @@ where
     }
 
     pub fn process(&mut self, request: ProtocolRequest) -> ProtocolResponse {
-        self.expire_pending_operations();
+        self.pending.expire(SystemTime::now());
         let id = request.id.clone();
         match self.process_inner(request.request) {
             Ok(response) => ProtocolResponse::ok(id, response),
@@ -1606,40 +1521,18 @@ where
         result: HostCommandResultEnvelope,
     ) -> CoreResult<()> {
         if result.ok {
-            self.pending_operations.remove(&result.command_id);
-            self.pending_since.remove(&result.command_id);
+            self.pending.complete(&result.command_id);
             return Ok(());
         }
-        // Roll back only the operation identified by this host response.
-        if let Some(entry) = self.pending_operations.remove(&result.command_id) {
-            match entry {
-                PendingEntry::Single(op) => {
-                    self.pending_since.remove(&result.command_id);
-                    self.rollback_operation(op);
-                }
-                PendingEntry::Transaction {
-                    group_id,
-                    operation,
-                } => {
-                    let command_ids: Vec<String> = self
-                        .pending_operations
-                        .iter()
-                        .filter_map(|(command_id, entry)| match entry {
-                            PendingEntry::Transaction {
-                                group_id: entry_group_id,
-                                ..
-                            } if entry_group_id == &group_id => Some(command_id.clone()),
-                            _ => None,
-                        })
-                        .collect();
-                    for command_id in command_ids {
-                        self.pending_operations.remove(&command_id);
-                        self.pending_since.remove(&command_id);
-                    }
-                    self.pending_since.remove(&result.command_id);
-                    self.rollback_operation(operation);
-                }
-            }
+        if let FailureResult::Rollback(operation) = self.pending.fail(&result.command_id) {
+            let mut context = RollbackContext {
+                adapter: &mut self.adapter,
+                tabs: &mut self.tabs,
+                windows: &mut self.windows,
+                closed_tabs: &mut self.closed_tabs,
+                closed_windows: &mut self.closed_windows,
+            };
+            let _rollback_result = context.apply(operation);
         }
         Err(CoreError::Message(format!(
             "Host command {} failed: {}",
@@ -1650,176 +1543,33 @@ where
 
     #[allow(dead_code)]
     fn take_snapshot(&self) -> StateSnapshot {
-        StateSnapshot {
-            tabs: self.tabs.list(),
-            windows: self.windows.list(),
-            active_window_id: self.windows.active_window_id().map(ToOwned::to_owned),
-            closed_tabs: self.closed_tabs.clone(),
-            closed_windows: self.closed_windows.clone(),
-        }
+        StateSnapshot::capture(
+            &self.tabs,
+            &self.windows,
+            &self.closed_tabs,
+            &self.closed_windows,
+        )
     }
 
     #[allow(dead_code)]
     fn restore_from_snapshot(&mut self, snapshot: &StateSnapshot) {
-        self.tabs.replace_all(snapshot.tabs.clone());
-        self.windows
-            .replace_all(snapshot.windows.clone(), snapshot.active_window_id.clone());
-        self.closed_tabs = snapshot.closed_tabs.clone();
-        self.closed_windows = snapshot.closed_windows.clone();
+        snapshot.restore(
+            &mut self.tabs,
+            &mut self.windows,
+            &mut self.closed_tabs,
+            &mut self.closed_windows,
+        );
     }
 
-    fn rollback_operation(&mut self, op: PendingOperation) {
-        match op {
-            PendingOperation::StateSnapshot(snapshot) => self.restore_from_snapshot(&snapshot),
-            PendingOperation::TabCreated { tab_id, window_id } => {
-                self.windows.detach_tab(&tab_id);
-                self.tabs.remove_tab(&tab_id);
-                // If this was the only tab in the window, close the window
-                if self.tabs.tabs_in_window(&window_id).is_empty() {
-                    self.windows.close_window(&window_id);
-                }
-            }
-            PendingOperation::TabMoved {
-                tab_id,
-                from_window_id,
-                to_window_id,
-                from_index,
-                to_index: _,
-            } => {
-                // Move tab back to original window and position
-                self.tabs.move_tab_to_window(&tab_id, &from_window_id);
-                self.windows.move_tab_to_window(&tab_id, &from_window_id);
-                self.tabs.move_tab(&tab_id, from_index);
-                self.windows.move_tab_in_window(&tab_id, from_index);
-                // If the new window is now empty, close it
-                if self.tabs.tabs_in_window(&to_window_id).is_empty() {
-                    self.windows.close_window(&to_window_id);
-                }
-            }
-            PendingOperation::TabActivated {
-                tab_id: _,
-                window_id: _,
-                previous_active_tab_id,
-            } => {
-                if let Some(prev_tab_id) = previous_active_tab_id {
-                    self.tabs.activate_tab(&prev_tab_id);
-                    self.windows.set_active_tab(&prev_tab_id);
-                }
-            }
-            PendingOperation::WindowCreated { window_id } => {
-                self.windows.close_window(&window_id);
-            }
-            PendingOperation::TabClosed {
-                tab_id,
-                window_id,
-                was_active,
-                tab_state,
-                previous_active_tab_id,
-                replacement_tab,
-            } => {
-                if let Some(replacement_tab) = replacement_tab {
-                    self.windows.detach_tab(&replacement_tab.id);
-                    self.tabs.remove_tab(&replacement_tab.id);
-                }
-                self.closed_tabs.retain(|closed| closed.id != tab_id);
-                // Restore the tab
-                self.tabs.upsert_tab(tab_state.clone());
-                self.windows.attach_tab(&window_id, &tab_id, was_active);
-                // Restore previous active tab if needed
-                if let Some(prev_tab_id) = previous_active_tab_id {
-                    self.tabs.activate_tab(&prev_tab_id);
-                    self.windows.set_active_tab(&prev_tab_id);
-                } else if was_active {
-                    self.tabs.activate_tab(&tab_id);
-                    self.windows.set_active_tab(&tab_id);
-                }
-            }
-            PendingOperation::TabsCloseOther {
-                keep_tab_id,
-                closed_tabs,
-                window_id,
-                was_active,
-                previous_active_tab_id,
-            } => {
-                // Restore all closed tabs
-                for tab in &closed_tabs {
-                    self.closed_tabs.retain(|closed| closed.id != tab.id);
-                    self.tabs.upsert_tab(tab.clone());
-                    self.windows.attach_tab(&window_id, &tab.id, tab.is_active);
-                }
-                // Restore previous active tab
-                if let Some(prev_tab_id) = previous_active_tab_id {
-                    self.tabs.activate_tab(&prev_tab_id);
-                    self.windows.set_active_tab(&prev_tab_id);
-                } else if was_active {
-                    self.tabs.activate_tab(&keep_tab_id);
-                    self.windows.set_active_tab(&keep_tab_id);
-                }
-            }
-            PendingOperation::TabsCloseToRight {
-                anchor_tab_id,
-                closed_tabs,
-                window_id,
-                was_active,
-                previous_active_tab_id,
-            } => {
-                // Restore all closed tabs
-                for tab in &closed_tabs {
-                    self.closed_tabs.retain(|closed| closed.id != tab.id);
-                    self.tabs.upsert_tab(tab.clone());
-                    self.windows.attach_tab(&window_id, &tab.id, tab.is_active);
-                }
-                // Restore previous active tab
-                if let Some(prev_tab_id) = previous_active_tab_id {
-                    self.tabs.activate_tab(&prev_tab_id);
-                    self.windows.set_active_tab(&prev_tab_id);
-                } else if was_active {
-                    self.tabs.activate_tab(&anchor_tab_id);
-                    self.windows.set_active_tab(&anchor_tab_id);
-                }
-            }
-            PendingOperation::TabMoveToNewWindow {
-                tab_id,
-                original_window_id,
-                new_window_id,
-                new_window_is_private: _,
-                empty_tab_created,
-            } => {
-                // Move tab back to original window
-                self.tabs.move_tab_to_window(&tab_id, &original_window_id);
-                self.windows
-                    .move_tab_to_window(&tab_id, &original_window_id);
-                // Close the new window if it was created
-                self.windows.close_window(&new_window_id);
-                // Remove empty tab if it was created in original window
-                if let Some(empty_tab) = empty_tab_created {
-                    self.windows.detach_tab(&empty_tab.id);
-                    self.tabs.remove_tab(&empty_tab.id);
-                }
-            }
-            PendingOperation::TabPin {
-                tab_id,
-                previous_pinned,
-            } => {
-                self.tabs.pin_tab(&tab_id, previous_pinned);
-                // Best effort to notify host - ignore errors during rollback
-                let _ = self.adapter.pin_page(&tab_id, previous_pinned);
-            }
-            PendingOperation::TabNavigate {
-                tab_id,
-                previous_url,
-                previous_error_text,
-                previous_is_loading,
-            } => {
-                if let Some(tab) = self.tabs.get_tab(&tab_id) {
-                    let mut tab = tab.clone();
-                    tab.url = previous_url;
-                    tab.error_text = previous_error_text;
-                    tab.is_loading = previous_is_loading;
-                    self.tabs.upsert_tab(tab);
-                }
-            }
-        }
+    fn rollback_operation(&mut self, operation: PendingOperation) {
+        let mut context = RollbackContext {
+            adapter: &mut self.adapter,
+            tabs: &mut self.tabs,
+            windows: &mut self.windows,
+            closed_tabs: &mut self.closed_tabs,
+            closed_windows: &mut self.closed_windows,
+        };
+        let _rollback_result = context.apply(operation);
     }
 
     fn host_tab_action(&mut self, tab_id: &str, action: HostTabAction) -> CoreResult<Response> {
@@ -1896,14 +1646,7 @@ where
     }
 
     fn record_pending(&mut self, command_id: HostCommandId, operation: PendingOperation) {
-        let id = if command_id.is_empty() {
-            format!("local-pending-{}", self.pending_operations.len())
-        } else {
-            command_id
-        };
-        self.pending_operations
-            .insert(id.clone(), PendingEntry::Single(operation));
-        self.pending_since.insert(id, SystemTime::now());
+        self.pending.record(command_id, operation);
     }
 
     fn record_pending_transaction(
@@ -1911,46 +1654,7 @@ where
         command_ids: Vec<HostCommandId>,
         operation: PendingOperation,
     ) {
-        let group_id = format!("pending-group-{}", uuid::Uuid::new_v4());
-        let mut ids = command_ids;
-        if ids.is_empty() {
-            ids.push(String::new());
-        }
-        for command_id in ids {
-            let id = if command_id.is_empty() {
-                format!("local-pending-{}", self.pending_operations.len())
-            } else {
-                command_id
-            };
-            self.pending_operations.insert(
-                id.clone(),
-                PendingEntry::Transaction {
-                    group_id: group_id.clone(),
-                    operation: operation.clone(),
-                },
-            );
-            self.pending_since.insert(id, SystemTime::now());
-        }
-    }
-
-    fn expire_pending_operations(&mut self) {
-        const HOST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-        let now = SystemTime::now();
-        let expired: Vec<String> = self
-            .pending_since
-            .iter()
-            .filter(|(_id, started)| {
-                now.duration_since(**started).unwrap_or_default() >= HOST_COMMAND_TIMEOUT
-            })
-            .map(|(id, _started)| id.clone())
-            .collect();
-        for id in expired {
-            self.pending_since.remove(&id);
-            // Do NOT rollback on timeout - the host may still complete the operation.
-            // Rolling back here would cause Core/Host inconsistency.
-            // Just remove the pending operation tracking.
-            self.pending_operations.remove(&id);
-        }
+        self.pending.record_transaction(command_ids, operation);
     }
 }
 
@@ -2019,12 +1723,6 @@ enum HostTabAction {
     Reload,
     GoBack,
     GoForward,
-}
-
-#[derive(Debug, Clone)]
-struct ClosedWindow {
-    window: frost_protocol::WindowState,
-    tabs: Vec<frost_protocol::TabState>,
 }
 
 #[derive(Default)]
