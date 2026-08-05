@@ -1,16 +1,18 @@
 import { createStore } from 'solid-js/store';
 import {
-  fromFrostTab,
   invokeBridge,
   normalizeAppState,
   onBridgeEvent,
   type BookmarkRecord,
   type BrowserState,
-  type FrostTabState,
   type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
-import { reorderTab } from './tabUtils';
+import {
+  reduceBrowserEvent,
+  type BrowserEvent,
+  type BrowserEventResult,
+} from './browserEventReducer';
 export { reorderTab } from './tabUtils';
 
 const initialState: BrowserState & { status: string } = {
@@ -255,128 +257,31 @@ export async function clearBookmarks(): Promise<boolean> {
 // --- Event binding ---
 
 export function bindNativeEvents() {
-  // All tab/window events are handled by direct store patches — zero bridge calls.
   const disposers = [
-    // --- Tab lifecycle (direct patches) ---
-    onBridgeEvent('tab.created', (tab) => {
-      const nextTab = fromFrostTab(tab);
-      if (nextTab.windowId !== browserState.windowId) return;
-      if (nextTab.isActive) {
-        setBrowserState('tabs', (item) => item.id !== nextTab.id, {
-          isActive: false,
-        });
-      }
-      setBrowserState('tabs', (tabs) => [
-        ...tabs.filter((item) => item.id !== nextTab.id),
-        nextTab,
-      ]);
-      if (nextTab.isActive) {
-        setBrowserState('activeTabId', nextTab.id);
-      }
-    }),
-
-    onBridgeEvent('tab.updated', (patch) => {
-      const existingTab = browserState.tabs.find(
-        (tab) => tab.id === patch.tabId,
-      );
-      if (!existingTab || existingTab.windowId !== browserState.windowId)
-        return;
-      const tabPatch = toTabPatch(patch);
-      if (tabPatch) {
-        setBrowserState(
-          'tabs',
-          (tab) => tab.id === patch.tabId,
-          (tab) => ({
-            ...tab,
-            ...tabPatch,
-          }),
-        );
-      }
-    }),
-
-    onBridgeEvent('tab.closed', ({ tabId }) => {
-      if (!browserState.tabs.some((tab) => tab.id === tabId)) return;
-      const closedIndex = browserState.tabs.findIndex(
-        (tab) => tab.id === tabId,
-      );
-      const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
-      setBrowserState('tabs', remaining);
-      if (browserState.activeTabId === tabId) {
-        // Match the engine's close policy: prefer the tab immediately to the
-        // left, falling back to the first tab when the first one was closed.
-        const nextActive = remaining[closedIndex === 0 ? 0 : closedIndex - 1];
-        setBrowserState('activeTabId', nextActive?.id ?? '');
-      }
-    }),
-
-    onBridgeEvent('tab.activated', ({ tabId }) => {
-      // Host events are broadcast to every UI bridge. Ignore activations from
-      // another window; otherwise that window can steal this window's active
-      // tab and make keyboard commands target the wrong page.
-      if (!browserState.tabs.some((tab) => tab.id === tabId)) return;
-      setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
-      setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
-      setBrowserState('activeTabId', tabId);
-    }),
-
-    onBridgeEvent(
-      'tab.moved',
-      ({ tabId, fromWindowId, toWindowId, toIndex }) => {
-        if (fromWindowId === toWindowId) {
-          if (browserState.windowId !== toWindowId) return;
-          setBrowserState(
-            'tabs',
-            reorderTab(browserState.tabs, tabId, toIndex),
-          );
-          return;
-        }
-
-        if (browserState.windowId === fromWindowId) {
-          const movedIndex = browserState.tabs.findIndex(
-            (tab) => tab.id === tabId,
-          );
-          if (movedIndex < 0) return;
-          const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
-          setBrowserState('tabs', remaining);
-          if (browserState.activeTabId === tabId) {
-            const nextActive = remaining[movedIndex === 0 ? 0 : movedIndex - 1];
-            setBrowserState('activeTabId', nextActive?.id ?? '');
-          }
-          return;
-        }
-
-        if (browserState.windowId === toWindowId) {
-          // TabMoved intentionally carries only identity and position. Refresh
-          // the destination window to obtain the complete tab state.
-          void refreshFullState('tab.moved');
-        }
-      },
+    onBridgeEvent('tab.created', (payload) =>
+      applyBrowserEvent({ type: 'tab.created', payload }),
     ),
-
-    // --- Window lifecycle (direct patches) ---
-    onBridgeEvent('window.created', (windowState) => {
-      if (windowState) {
-        setBrowserState('windows', (w) => [
-          ...w,
-          {
-            id: windowState.id,
-            private: windowState.isPrivate,
-            activeTabId: windowState.activeTabId ?? '',
-            tabs: [],
-          },
-        ]);
-      }
-    }),
-
-    onBridgeEvent('window.closed', () => {
-      // Windows changed — need full refresh to reconcile tabs
-      void refreshFullState('window.closed');
-    }),
-
-    onBridgeEvent('window.focused', () => {
-      // Window focus changed — need full refresh to get active window/tabs
-      void refreshFullState('window.focused');
-    }),
+    onBridgeEvent('tab.updated', (payload) =>
+      applyBrowserEvent({ type: 'tab.updated', payload }),
+    ),
+    onBridgeEvent('tab.closed', (payload) =>
+      applyBrowserEvent({ type: 'tab.closed', payload }),
+    ),
+    onBridgeEvent('tab.activated', (payload) =>
+      applyBrowserEvent({ type: 'tab.activated', payload }),
+    ),
+    onBridgeEvent('tab.moved', (payload) =>
+      applyBrowserEvent({ type: 'tab.moved', payload }),
+    ),
+    onBridgeEvent('window.created', (payload) =>
+      applyBrowserEvent({ type: 'window.created', payload }),
+    ),
+    onBridgeEvent('window.closed', (payload) =>
+      applyBrowserEvent({ type: 'window.closed', payload }),
+    ),
+    onBridgeEvent('window.focused', (payload) =>
+      applyBrowserEvent({ type: 'window.focused', payload }),
+    ),
 
     // --- Settings (direct patch) ---
     onBridgeEvent('setting.changed', ({ key, value }) => {
@@ -425,33 +330,27 @@ export function bindNativeEvents() {
   return () => disposers.forEach((dispose) => dispose());
 }
 
-// --- Helpers ---
+// --- Event application ---
 
-function toTabPatch(
-  patch: Partial<FrostTabState> & { tabId: string },
-): Partial<Tab> | null {
-  // Fast path: check if any field actually changed
-  const keys = Object.keys(patch) as Array<string>;
-  let hasChanges = false;
-  for (const key of keys) {
-    if (key !== 'tabId' && key !== 'windowId') {
-      hasChanges = true;
-      break;
-    }
+function applyBrowserEvent(event: BrowserEvent): void {
+  const result = reduceBrowserEvent(browserState, event);
+  applyBrowserEventResult(result);
+  if (result.refreshSnapshot) {
+    void refreshFullState(event.type);
   }
-  if (!hasChanges) return null;
+}
 
-  const next: Partial<Tab> = {};
-  if (patch.title !== undefined) next.title = patch.title;
-  if (patch.url !== undefined) next.url = patch.url;
-  if (patch.faviconUrl !== undefined) next.faviconUrl = patch.faviconUrl;
-  if (patch.errorText !== undefined) next.errorText = patch.errorText;
-  if (patch.zoomLevel !== undefined) next.zoomLevel = patch.zoomLevel;
-  if (patch.isLoading !== undefined) next.isLoading = patch.isLoading;
-  if (patch.canGoBack !== undefined) next.canGoBack = patch.canGoBack;
-  if (patch.canGoForward !== undefined) next.canGoForward = patch.canGoForward;
-  if (patch.isPinned !== undefined) next.isPinned = patch.isPinned;
-  return Object.keys(next).length > 0 ? next : null;
+function applyBrowserEventResult(result: BrowserEventResult): void {
+  if (!result.changed) return;
+  if (result.state.tabs !== browserState.tabs) {
+    setBrowserState('tabs', result.state.tabs);
+  }
+  if (result.state.windows !== browserState.windows) {
+    setBrowserState('windows', result.state.windows);
+  }
+  if (result.state.activeTabId !== browserState.activeTabId) {
+    setBrowserState('activeTabId', result.state.activeTabId);
+  }
 }
 
 function isSettingsKey(key: string): key is keyof BrowserState['settings'] {
