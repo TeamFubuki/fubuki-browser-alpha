@@ -17,9 +17,6 @@ permissions:
   contents: read
 
 env:
-  # 11.13.0 is currently published as a broken pnpm release and fails in
-  # pnpm/action-setup before any UI step starts. Keep CI on a known-good v11
-  # release until that upstream artifact is repaired.
   PNPM_VERSION: "11.4.0"
   NODE_VERSION: "22"
 
