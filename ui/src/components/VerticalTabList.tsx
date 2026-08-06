@@ -5,6 +5,7 @@ import { browserState, currentLanguage } from '../stores/browserStore';
 import {
   focusAfterClose,
   focusTabElement,
+  focusTargetAfterClose,
   navigationTarget,
   reorderTargetIndex,
   tabIndexFor,
@@ -65,7 +66,18 @@ export default function VerticalTabList() {
   const closeTab = (list: readonly Tab[], tab: Tab) => {
     const nextId = focusAfterCloseAndRestore(list, tab);
     void tabs.close(tab.id).then((closed) => {
-      if (closed && nextId) queueMicrotask(() => focusTabElement(nextId));
+      if (closed) {
+        queueMicrotask(() => {
+          const focusId = focusTargetAfterClose(
+            nextId,
+            browserState.activeTabId,
+          );
+          if (focusId) {
+            setFocusedTabId(focusId);
+            focusTabElement(focusId);
+          }
+        });
+      }
     });
   };
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   focusAfterClose,
+  focusTargetAfterClose,
   navigationTarget,
   reorderTargetIndex,
   tabIndexFor,
@@ -75,6 +76,10 @@ describe('vertical tab keyboard navigation', () => {
 
   it('returns null when the last tab is closed', () => {
     expect(focusAfterClose(['a'], 0)).toBeNull();
+  });
+
+  it('falls back to the new active tab after closing the last tab', () => {
+    expect(focusTargetAfterClose(null, 'replacement')).toBe('replacement');
   });
 
   it('moves a normal tab only across normal tabs', () => {

@@ -40,6 +40,13 @@ export function focusAfterClose(
   return remaining[closedIndex === 0 ? 0 : closedIndex - 1] ?? null;
 }
 
+export function focusTargetAfterClose(
+  adjacentId: string | null,
+  activeId: string,
+): string | null {
+  return adjacentId ?? (activeId || null);
+}
+
 export function reorderTargetIndex(
   allTabs: readonly Tab[],
   visibleTabs: readonly Tab[],
