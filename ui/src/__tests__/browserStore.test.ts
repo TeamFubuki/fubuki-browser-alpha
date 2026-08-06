@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { reorderTab } from '../stores/tabUtils';
 
 // browserStore の関数を直接インポートするのではなく、
 // 同じロジックを検証するためのヘルパーをテストする。
@@ -198,5 +199,16 @@ describe('tab filtering logic', () => {
     );
 
     expect(filtered).toHaveLength(2);
+  });
+});
+
+describe('tab move logic', () => {
+  it('reorders a tab to the engine-provided index', () => {
+    const moved = reorderTab(
+      [{ id: 'tab-1' }, { id: 'tab-2' }, { id: 'tab-3' }],
+      'tab-1',
+      2,
+    );
+    expect(moved.map((tab) => tab.id)).toEqual(['tab-2', 'tab-3', 'tab-1']);
   });
 });

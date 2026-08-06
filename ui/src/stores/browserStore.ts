@@ -10,6 +10,8 @@ import {
   type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
+import { reorderTab } from './tabUtils';
+export { reorderTab } from './tabUtils';
 
 const initialState: BrowserState & { status: string } = {
   bridgeVersion: '1',
@@ -37,6 +39,10 @@ const initialState: BrowserState & { status: string } = {
     homeUrl: 'https://example.com',
     language: 'system',
     defaultZoomLevel: '0',
+    startupBehavior: 'lastSession',
+    downloadDirectory: '',
+    askBeforeDownload: 'false',
+    closeWindowWithLastTab: 'false',
   },
   profilePath: '',
   status: 'Starting',
@@ -48,6 +54,19 @@ export const [browserState, setBrowserState] = createStore(initialState);
 
 let bookmarksPending = false;
 let historyPending = false;
+let commandsPending = false;
+
+async function refreshCommands() {
+  if (commandsPending) return;
+  commandsPending = true;
+  try {
+    setBrowserState('commands', await invokeBridge('commands.list'));
+  } catch {
+    // Keep the last known command list on transient bridge failures.
+  } finally {
+    commandsPending = false;
+  }
+}
 
 async function refreshBookmarks() {
   if (bookmarksPending) return;
@@ -91,6 +110,7 @@ export async function refreshFullState(status = 'Ready') {
     try {
       const snapshot = await invokeBridge('app.snapshot');
       const state = normalizeAppState(snapshot);
+      void refreshCommands();
       if (myCounter !== fullRefreshCounter) return;
 
       // Only update slices that actually changed
@@ -126,9 +146,6 @@ export async function refreshFullState(status = 'Ready') {
       }
       if (state.permissions !== browserState.permissions) {
         setBrowserState('permissions', state.permissions);
-      }
-      if (state.commands !== browserState.commands) {
-        setBrowserState('commands', state.commands);
       }
       setBrowserState('status', status);
     } catch (error) {
@@ -219,6 +236,22 @@ export function navigateInternal(url: string): void {
   );
 }
 
+export async function clearHistory(): Promise<boolean> {
+  // `history.clear` is a legacy native alias. Use the Frost Protocol method
+  // directly so bulk deletion also works with the engine-only bridge.
+  const cleared = await invokeBridge('history.clearRange', { range: 'all' });
+  if (cleared) setBrowserState('history', []);
+  return cleared;
+}
+
+export async function clearDownloadHistory(): Promise<boolean> {
+  return invokeBridge('downloads.clear');
+}
+
+export async function clearBookmarks(): Promise<boolean> {
+  return invokeBridge('bookmarks.clear');
+}
+
 // --- Event binding ---
 
 export function bindNativeEvents() {
@@ -227,6 +260,7 @@ export function bindNativeEvents() {
     // --- Tab lifecycle (direct patches) ---
     onBridgeEvent('tab.created', (tab) => {
       const nextTab = fromFrostTab(tab);
+      if (nextTab.windowId !== browserState.windowId) return;
       if (nextTab.isActive) {
         setBrowserState('tabs', (item) => item.id !== nextTab.id, {
           isActive: false,
@@ -242,6 +276,11 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.updated', (patch) => {
+      const existingTab = browserState.tabs.find(
+        (tab) => tab.id === patch.tabId,
+      );
+      if (!existingTab || existingTab.windowId !== browserState.windowId)
+        return;
       const tabPatch = toTabPatch(patch);
       if (tabPatch) {
         setBrowserState(
@@ -256,18 +295,63 @@ export function bindNativeEvents() {
     }),
 
     onBridgeEvent('tab.closed', ({ tabId }) => {
+      if (!browserState.tabs.some((tab) => tab.id === tabId)) return;
+      const closedIndex = browserState.tabs.findIndex(
+        (tab) => tab.id === tabId,
+      );
       const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
       setBrowserState('tabs', remaining);
       if (browserState.activeTabId === tabId) {
-        setBrowserState('activeTabId', remaining[0]?.id ?? '');
+        // Match the engine's close policy: prefer the tab immediately to the
+        // left, falling back to the first tab when the first one was closed.
+        const nextActive = remaining[closedIndex === 0 ? 0 : closedIndex - 1];
+        setBrowserState('activeTabId', nextActive?.id ?? '');
       }
     }),
 
     onBridgeEvent('tab.activated', ({ tabId }) => {
+      // Host events are broadcast to every UI bridge. Ignore activations from
+      // another window; otherwise that window can steal this window's active
+      // tab and make keyboard commands target the wrong page.
+      if (!browserState.tabs.some((tab) => tab.id === tabId)) return;
       setBrowserState('tabs', (tab) => tab.id === tabId, { isActive: true });
       setBrowserState('tabs', (tab) => tab.id !== tabId, { isActive: false });
       setBrowserState('activeTabId', tabId);
     }),
+
+    onBridgeEvent(
+      'tab.moved',
+      ({ tabId, fromWindowId, toWindowId, toIndex }) => {
+        if (fromWindowId === toWindowId) {
+          if (browserState.windowId !== toWindowId) return;
+          setBrowserState(
+            'tabs',
+            reorderTab(browserState.tabs, tabId, toIndex),
+          );
+          return;
+        }
+
+        if (browserState.windowId === fromWindowId) {
+          const movedIndex = browserState.tabs.findIndex(
+            (tab) => tab.id === tabId,
+          );
+          if (movedIndex < 0) return;
+          const remaining = browserState.tabs.filter((tab) => tab.id !== tabId);
+          setBrowserState('tabs', remaining);
+          if (browserState.activeTabId === tabId) {
+            const nextActive = remaining[movedIndex === 0 ? 0 : movedIndex - 1];
+            setBrowserState('activeTabId', nextActive?.id ?? '');
+          }
+          return;
+        }
+
+        if (browserState.windowId === toWindowId) {
+          // TabMoved intentionally carries only identity and position. Refresh
+          // the destination window to obtain the complete tab state.
+          void refreshFullState('tab.moved');
+        }
+      },
+    ),
 
     // --- Window lifecycle (direct patches) ---
     onBridgeEvent('window.created', (windowState) => {
@@ -336,6 +420,7 @@ export function bindNativeEvents() {
 
   // Fire-and-forget initial state load
   void refreshFullState('Ready');
+  void refreshCommands();
 
   return () => disposers.forEach((dispose) => dispose());
 }
