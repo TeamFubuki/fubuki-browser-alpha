@@ -1073,7 +1073,7 @@ mod tests {
             ",
         )
         .unwrap();
-        let store = SqliteStore { conn };
+        let mut store = SqliteStore { conn };
 
         store.migrate().unwrap();
 
