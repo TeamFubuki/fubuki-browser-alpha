@@ -130,7 +130,7 @@ impl SqliteStore {
 mod migrations {
     use super::{Connection, StoreError, StoreResult};
 
-    pub(super) const LATEST_SCHEMA_VERSION: i64 = 2;
+    pub(super) const LATEST_SCHEMA_VERSION: i64 = 3;
 
     struct Migration {
         version: i64,
@@ -196,6 +196,14 @@ mod migrations {
             CREATE INDEX IF NOT EXISTS idx_history_created_at ON history(created_at);
             CREATE INDEX IF NOT EXISTS idx_downloads_url_path ON downloads(url, path);
             CREATE INDEX IF NOT EXISTS idx_downloads_path ON downloads(path);
+            ",
+        },
+        Migration {
+            version: 3,
+            sql: "
+            DROP INDEX IF EXISTS idx_history_created_at;
+            CREATE INDEX idx_history_created_at
+              ON history(CAST(created_at AS INTEGER));
             ",
         },
     ];
@@ -741,6 +749,31 @@ mod tests {
         ] {
             assert!(indexes.iter().any(|name| name == index), "missing {index}");
         }
+    }
+
+    #[test]
+    fn history_range_cleanup_uses_created_at_index() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::apply_up_to_for_test(&mut conn, 2).unwrap();
+        migrations::migrate(&mut conn).unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN DELETE FROM history \
+                 WHERE CAST(created_at AS INTEGER) >= ?1",
+            )
+            .unwrap();
+        let plan = statement
+            .query_map(params!["1"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("USING INDEX idx_history_created_at")),
+            "history range cleanup should use the created_at expression index, got {plan:?}"
+        );
     }
 
     #[test]
