@@ -66,6 +66,8 @@ pub struct BookmarkRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadRecord {
+    #[serde(default)]
+    pub download_id: String,
     pub url: String,
     pub path: String,
     pub state: String,

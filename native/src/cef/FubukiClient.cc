@@ -418,21 +418,30 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
   if (StartsWith(url, "fubuki://settings/set")) {
     const std::string method = request->GetMethod().ToString();
     // CEF does not consistently mark HTML form POST navigations as a user
-    // gesture. Authenticity comes from a trusted internal-page source plus a
-    // POST request; requiring user_gesture here silently discarded every form
-    // submission. GET remains gesture-gated and destructive keys are rejected.
-    if (is_redirect || !IsTrustedSettingsActionSource(frame->GetURL().ToString()) ||
-        (method != "POST" && !user_gesture)) {
+    // gesture and can omit POST elements for custom-scheme navigation. Trust
+    // only internal-page sources, and use the duplicated URL query when the
+    // POST body is unavailable.
+    const std::string frameUrl = frame->GetURL().ToString();
+    const std::string referrerUrl = request->GetReferrerURL().ToString();
+    const bool trustedSource = IsTrustedSettingsActionSource(frameUrl) ||
+                               IsTrustedSettingsActionSource(referrerUrl);
+    if (is_redirect || !trustedSource || (method != "POST" && !user_gesture)) {
+      if (!window_->IsPrivate()) {
+        window_->Store().AddLog(
+            "warning", "Blocked settings action: method=" + method +
+                           " source=" + frameUrl + " referrer=" + referrerUrl);
+      }
       return true;
     }
-    std::string query = method == "POST" ? PostBody(request) : QueryString(url);
-    if (method == "POST" && query.empty()) {
-      // CEF can omit POST elements for custom-scheme form navigation. Action
-      // forms duplicate the same encoded fields in their URL; this branch is
-      // still POST-only and retains the trusted-source check above.
-      query = QueryString(url);
-    }
+    const std::string postBody = method == "POST" ? PostBody(request) : "";
+    const std::string query = postBody.empty() ? QueryString(url) : postBody;
     const std::string key = FormParam(query, "key");
+    if (key.empty()) {
+      if (!window_->IsPrivate()) {
+        window_->Store().AddLog("warning", "Blocked settings action with empty form body");
+      }
+      return true;
+    }
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
       if (!window_->IsPrivate()) {
         window_->Store().AddLog("warning",

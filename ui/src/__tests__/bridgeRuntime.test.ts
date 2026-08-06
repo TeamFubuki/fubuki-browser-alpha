@@ -226,6 +226,7 @@ describe('response validation', () => {
   it('safely clamps download percentages', () => {
     const result = validateBridgeResponse('downloads.list', [
       {
+        downloadId: 'download-1',
         url: 'https://example.com/file.zip',
         path: '/tmp/file.zip',
         state: 'in_progress',
@@ -240,6 +241,7 @@ describe('response validation', () => {
     expect(() =>
       validateBridgeResponse('downloads.list', [
         {
+          downloadId: 'download-1',
           url: 'https://example.com/file.zip',
           path: '/tmp/file.zip',
           state: 'in_progress',
@@ -248,6 +250,20 @@ describe('response validation', () => {
         },
       ]),
     ).toThrow(/downloads\.list.*percent/);
+  });
+
+  it('rejects downloads without a stable identity', () => {
+    expect(() =>
+      validateBridgeResponse('downloads.list', [
+        {
+          url: 'https://example.com/file.zip',
+          path: '/tmp/file.zip',
+          state: 'completed',
+          percent: 100,
+          createdAt: '2026-07-23',
+        },
+      ]),
+    ).toThrow(/downloads\.list.*downloadId/);
   });
 
   it('rejects history records without a URL', () => {
