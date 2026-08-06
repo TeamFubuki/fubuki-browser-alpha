@@ -23,7 +23,5 @@
   <true/>
   <key>CFBundleIconFile</key>
   <string>fubuki</string>
-  <key>CFBundleIconName</key>
-  <string>fubuki</string>
 </dict>
 </plist>

@@ -15,6 +15,11 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+add_test(
+  NAME AppIconMetadataTest
+  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/AppIconMetadataTest.cmake"
+)
+
 add_executable(fubuki_tests
   UrlUtilsTest.cc
   JsonUtilsTest.cc
