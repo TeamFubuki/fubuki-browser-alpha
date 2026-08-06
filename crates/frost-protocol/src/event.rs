@@ -5,6 +5,7 @@ use crate::state::{TabState, WindowState};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventEnvelope {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     #[serde(flatten)]
     pub event: Event,

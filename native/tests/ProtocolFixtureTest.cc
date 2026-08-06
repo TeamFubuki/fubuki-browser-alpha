@@ -183,10 +183,13 @@ bool IsType(const JsonValue* value, JsonValue::Type type) {
   return value && value->type == type;
 }
 
+bool IsSupportedVersion(const JsonValue* value) {
+  return IsType(value, JsonValue::Type::kNumber) && value->number == 0;
+}
+
 bool IsEnvelope(const JsonValue* value, const char* field) {
   return IsType(value, JsonValue::Type::kObject) &&
-         IsType(value->Get("version"), JsonValue::Type::kNumber) &&
-         value->Get("version")->number == 0 &&
+         IsSupportedVersion(value->Get("version")) &&
          IsType(value->Get(field), JsonValue::Type::kString);
 }
 
@@ -234,7 +237,7 @@ TEST(ProtocolFixtureTest, NegativeFixturesAreRejectedAtTheBoundary) {
       EXPECT_FALSE(parsed);
     } else if (name == "unknown-version") {
       ASSERT_TRUE(parsed);
-      EXPECT_NE(payload.Get("version")->number, 0);
+      EXPECT_FALSE(IsSupportedVersion(payload.Get("version")));
     } else if (name == "missing-field") {
       ASSERT_TRUE(parsed);
       const JsonValue* event = payload.Get("payload");

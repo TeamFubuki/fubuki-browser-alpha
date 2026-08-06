@@ -119,11 +119,7 @@ fn negative_fixture_rejects_malformed_unknown_version_and_missing_fields() {
         match case.name.as_str() {
             "malformed-json" => assert!(value.is_err()),
             "unknown-version" => {
-                let request: ProtocolRequest = serde_json::from_value(value.unwrap()).unwrap();
-                assert_ne!(
-                    request.version, 0,
-                    "unknown version must be rejected by callers"
-                );
+                assert!(serde_json::from_value::<ProtocolRequest>(value.unwrap()).is_err());
             }
             "missing-field" => {
                 assert!(serde_json::from_str::<EventEnvelope>(&case.payload).is_err());

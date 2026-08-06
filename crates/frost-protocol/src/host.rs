@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostCommandEnvelope {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     pub id: String,
     #[serde(flatten)]
@@ -63,6 +64,7 @@ pub enum HostCommand {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostCommandResultEnvelope {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     pub command_id: String,
     pub ok: bool,
@@ -73,6 +75,7 @@ pub struct HostCommandResultEnvelope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostEventEnvelope {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     #[serde(flatten)]
     pub event: HostEvent,
