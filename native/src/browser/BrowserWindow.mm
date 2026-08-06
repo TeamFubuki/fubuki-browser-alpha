@@ -916,6 +916,7 @@ bool BrowserWindow::AddActiveBookmark() {
   Store().AddLog("info", "Bookmark added: " + tab->url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
+  PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
 
@@ -943,10 +944,12 @@ bool BrowserWindow::RemoveHistory(const std::string& url) {
   return ok;
 }
 
-bool BrowserWindow::RemoveDownload(const std::string& url, const std::string& path) {
-  const bool ok = Store().RemoveDownload(url, path);
+bool BrowserWindow::RemoveDownload(const std::string& downloadId, const std::string& url,
+                                   const std::string& path) {
+  const bool ok = Store().RemoveDownload(downloadId, url, path);
   PageCache::Instance().Invalidate("fubuki://downloads");
-  eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path.empty() ? url : path});
+  eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "",
+                     path.empty() ? (url.empty() ? downloadId : url) : path});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
@@ -1005,6 +1008,15 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     ok = Store().ClearHistory() && Store().ClearDownloads() && Store().ClearLogs();
   }
   if (ok) {
+    if (target == "bookmarks") {
+      PageCache::Instance().Invalidate("fubuki://bookmarks");
+    }
+    if (target == "history" || target == "all") {
+      PageCache::Instance().Invalidate("fubuki://history");
+    }
+    if (target == "downloads" || target == "all") {
+      PageCache::Instance().Invalidate("fubuki://downloads");
+    }
     if (target != "logs" && target != "all") {
       Store().AddLog("info", "Browsing data cleared: " + target);
     }
@@ -1016,6 +1028,7 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
 bool BrowserWindow::ClearHistoryRange(const std::string& range) {
   const bool ok = Store().ClearHistoryRange(range);
   if (ok) {
+    PageCache::Instance().Invalidate("fubuki://history");
     eventBus_.Publish(
         {EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
     bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
@@ -1062,7 +1075,7 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
     app_.PersistSession();
   }
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://");
   return true;
 }
 
@@ -1072,7 +1085,7 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
   }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
   bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
-  PageCache::Instance().Invalidate("fubuki://settings");
+  PageCache::Instance().Invalidate("fubuki://");
   return true;
 }
 
@@ -1133,7 +1146,7 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
   } else if (key == "removeHistory") {
     ok = RemoveHistory(value);
   } else if (key == "removeDownload") {
-    ok = RemoveDownload(value, value);
+    ok = RemoveDownload(value, "", "");
   } else if (key == "openDownload") {
     ok = OpenDownloadedFile(value);
   } else if (key == "revealDownload") {
@@ -1457,7 +1470,9 @@ void BrowserWindow::OnNavigationStarted(const std::string& tabId) {
 void BrowserWindow::OnNavigationFinished(const std::string& tabId) {
   if (Tab* tab = tabManager_.GetTab(tabId)) {
     if (!privateWindow_) {
-      Store().AddHistory(tab->title, tab->url, tab->faviconUrl);
+      if (Store().AddHistory(tab->title, tab->url, tab->faviconUrl)) {
+        PageCache::Instance().Invalidate("fubuki://history");
+      }
       app_.PersistSession();
     }
     eventBus_.Publish(
@@ -1492,12 +1507,24 @@ CefWindowInfo BrowserWindow::PopupWindowInfo() const {
   return ChildWindowInfo(contentHostView_);
 }
 
+std::string BrowserWindow::DownloadKeyFor(const std::string& downloadId) {
+  const auto existing = downloadKeys_.find(downloadId);
+  if (existing != downloadKeys_.end()) {
+    return existing->second;
+  }
+  const char* uuid = [[[NSUUID UUID] UUIDString] UTF8String];
+  const std::string key = uuid ? uuid : windowId_ + ":" + downloadId;
+  downloadKeys_.emplace(downloadId, key);
+  return key;
+}
+
 void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::string& url,
                                       const std::string& path) {
   if (privateWindow_) {
     return;
   }
-  Store().AddDownload(url, path, "started");
+  const std::string downloadKey = DownloadKeyFor(downloadId);
+  Store().AddDownload(downloadKey, url, path, "started");
   Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
@@ -1511,12 +1538,17 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
   if (privateWindow_) {
     return;
   }
-  Store().UpdateDownload(url, path, state, percent);
+  const std::string downloadKey = DownloadKeyFor(downloadId);
+  const bool updated = Store().UpdateDownload(downloadKey, url, path, state, percent);
+  if (updated) {
+    PageCache::Instance().Invalidate("fubuki://downloads");
+  }
   if (state != "in_progress") {
     Store().AddLog("info", "Download " + state + ": " + path);
   }
   PushHostEventJson(HostEventJson("download.updated",
-                                  {{ "url", JsonStringValue(url) },
+                                  {{ "downloadId", JsonStringValue(downloadKey) },
+                                   { "url", JsonStringValue(url) },
                                    { "path", JsonStringValue(path) },
                                    { "state", JsonStringValue(state) },
                                    { "percent", JsonIntValue(percent) }}));

@@ -28,6 +28,7 @@ struct Record {
   std::string state;
   int percent = 0;
   std::string createdAt;
+  std::string downloadId;
 };
 
 std::filesystem::path ProfilePath() {
@@ -95,23 +96,26 @@ std::string ColumnText(sqlite3_stmt* statement, int column) {
 }
 
 sqlite3* OpenDatabase() {
-  // Cache a single process-lifetime connection. Opening the database (and
-  // running the DDL) on every Setting()/QueryRecords() call was a major source
-  // of latency: each call paid sqlite3_open + 7 DDL statements + sqlite3_close.
-  // The connection is now opened once and reused for the process lifetime.
+  // The Rust store owns creation and migrations. Internal pages only read the
+  // database so they cannot race a writer with their own DDL.
   static sqlite3* cached = nullptr;
-  static bool initialized = false;
-  if (initialized) {
+  if (cached) {
     return cached;
   }
   if (sqlite3_open_v2(DatabasePath().string().c_str(), &cached,
-                      SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
+                      SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+                      nullptr) != SQLITE_OK) {
+    if (cached) {
+      sqlite3_close(cached);
+    }
     cached = nullptr;
     return nullptr;
   }
-  // Only mark as initialized after a successful open so retries are possible.
-  initialized = true;
-  sqlite3_busy_timeout(cached, 2500);
+  if (sqlite3_busy_timeout(cached, 2500) != SQLITE_OK) {
+    sqlite3_close(cached);
+    cached = nullptr;
+    return nullptr;
+  }
   return cached;
 }
 
@@ -252,6 +256,10 @@ std::string NormalizedDownloadState(const Record& record) {
   return record.state.empty() ? "unknown" : record.state;
 }
 
+bool IsActiveDownloadState(const std::string& state) {
+  return state == "started" || state == "in_progress";
+}
+
 std::string DownloadStatusText(const std::string& state, int percent) {
   if (state == "completed") {
     return Label("Completed");
@@ -271,28 +279,54 @@ std::string DownloadStatusText(const std::string& state, int percent) {
   return state;
 }
 
-std::vector<Record> QueryRecords(const std::string& table, int limit) {
-  sqlite3* db = OpenDatabase();
-  if (!db)
-    return {};
+enum class DatabaseErrorKind { kNone, kBusy, kOpenFailed, kPrepareFailed, kBindFailed, kStepFailed };
 
-  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at "
+template <typename T>
+struct DatabaseResult {
+  T value{};
+  DatabaseErrorKind error = DatabaseErrorKind::kNone;
+
+  bool Ok() const { return error == DatabaseErrorKind::kNone; }
+};
+
+DatabaseErrorKind DatabaseErrorFor(int code, DatabaseErrorKind fallback) {
+  return code == SQLITE_BUSY || code == SQLITE_LOCKED ? DatabaseErrorKind::kBusy : fallback;
+}
+
+DatabaseResult<std::vector<Record>> QueryRecords(const std::string& table, int limit) {
+  DatabaseResult<std::vector<Record>> result;
+  sqlite3* db = OpenDatabase();
+  if (!db) {
+    result.error = DatabaseErrorKind::kOpenFailed;
+    return result;
+  }
+
+  const std::string sql = table == "bookmarks" ? "SELECT title,url,favicon_url,'','',0,created_at,'' "
                                                  "FROM bookmarks ORDER BY id DESC LIMIT ?"
-                          : table == "history" ? "SELECT title,url,favicon_url,'','',0,created_at FROM "
+                          : table == "history" ? "SELECT title,url,favicon_url,'','',0,created_at,'' FROM "
                                                  "history ORDER BY id DESC LIMIT ?"
                           : table == "logs"
-                              ? "SELECT message,'','',level,'',0,created_at FROM logs ORDER BY id "
+                              ? "SELECT message,'','',level,'',0,created_at,'' FROM logs ORDER BY id "
                                 "DESC LIMIT ?"
                               : "SELECT "
-                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at) FROM "
+                                "'',url,'',path,state,percent,COALESCE(updated_at,created_at),"
+                                "download_id FROM "
                                 "downloads ORDER BY COALESCE(updated_at,created_at) DESC,id DESC "
                                 "LIMIT ?";
   sqlite3_stmt* statement = nullptr;
-  sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
-  sqlite3_bind_int(statement, 1, limit);
+  int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &statement, nullptr);
+  if (rc != SQLITE_OK) {
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kPrepareFailed);
+    return result;
+  }
+  rc = sqlite3_bind_int(statement, 1, limit);
+  if (rc != SQLITE_OK) {
+    sqlite3_finalize(statement);
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kBindFailed);
+    return result;
+  }
 
-  std::vector<Record> records;
-  while (sqlite3_step(statement) == SQLITE_ROW) {
+  while ((rc = sqlite3_step(statement)) == SQLITE_ROW) {
     Record record;
     record.title = ColumnText(statement, 0);
     record.url = ColumnText(statement, 1);
@@ -301,11 +335,16 @@ std::vector<Record> QueryRecords(const std::string& table, int limit) {
     record.state = ColumnText(statement, 4);
     record.percent = sqlite3_column_int(statement, 5);
     record.createdAt = ColumnText(statement, 6);
-    records.push_back(record);
+    record.downloadId = ColumnText(statement, 7);
+    result.value.push_back(record);
   }
 
   sqlite3_finalize(statement);
-  return records;
+  if (rc != SQLITE_DONE) {
+    result.value.clear();
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kStepFailed);
+  }
+  return result;
 }
 
 std::string FubukiLogoSvg(const std::string& className = "logo") {
@@ -348,6 +387,7 @@ html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#2529
 @media(prefers-color-scheme:dark){html[data-appearance=system] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}}
 @keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}@keyframes focusPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 25%,transparent)}100%{box-shadow:0 0 0 6px transparent}}
 main{width:min(1040px,calc(100vw - 48px));margin:0 auto;padding:34px 0 56px;animation:pageIn .32s cubic-bezier(.2,.8,.2,1)}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.logo{width:34px;height:34px;flex:0 0 auto}h1{font-size:30px;line-height:1.08;margin:0;font-weight:720;overflow-wrap:anywhere}h2{font-size:13px;margin:14px 0 5px;color:var(--muted);font-weight:680}a{color:inherit}.list{display:grid;gap:7px}.row{min-height:48px;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);text-decoration:none;animation:rowIn .28s cubic-bezier(.2,.8,.2,1);transition:background .16s ease,border-color .16s ease,transform .16s ease}.row:hover{background:var(--hover);border-color:color-mix(in srgb,var(--line) 55%,var(--accent));transform:translateY(-1px)}.row>a{display:block;min-width:0;text-decoration:none}.row>form{justify-self:end}.favicon{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#25a8d7,#6d7edc 58%,#f08072)}.favicon img{display:block;width:16px;height:16px;border-radius:4px}.title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:640}.meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;line-height:1.45}.download-main{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}.download-main>div{min-width:0}.download-actions{justify-content:flex-end}.download-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;line-height:1.35}.download-bar{position:relative;overflow:hidden;width:min(260px,42vw);height:4px;border-radius:999px;background:var(--surface-2)}.download-bar span{position:absolute;inset:0 auto 0 0;width:var(--progress);border-radius:inherit;background:var(--accent);transition:width .18s ease}.button,.chip{min-height:30px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);text-decoration:none;font:inherit;font-weight:620;white-space:nowrap;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}.button:hover,.chip:hover{background:var(--hover);transform:translateY(-1px)}.danger{color:var(--danger)}.disabled{color:var(--muted);opacity:.55;cursor:not-allowed}.empty{color:var(--muted);padding:18px 0}.section{display:grid;gap:14px}.field{display:grid;gap:11px;padding:14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);animation:rowIn .28s cubic-bezier(.2,.8,.2,1);scroll-margin-top:18px;min-width:0}.field>span{font-weight:680}.segmented{display:flex;flex-wrap:wrap;gap:8px}.selected{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));background:var(--active);color:var(--accent)}input{height:34px;min-width:220px;max-width:100%;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:var(--surface);color:var(--text);font:inherit;outline:0;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}input:focus{border-color:var(--accent);animation:focusPulse .5s ease}.inline-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}.settings-nav{position:sticky;top:20px;display:grid;gap:4px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow)}.settings-nav a{min-height:34px;display:flex;align-items:center;padding:0 10px;border-radius:6px;color:var(--muted);font-weight:640;text-decoration:none;transition:background .16s ease,color .16s ease,transform .16s ease}.settings-nav a:hover{background:var(--hover);color:var(--text);transform:translateX(2px)}.settings-content{display:grid;gap:14px;min-width:0}.settings-search{margin-bottom:0}.section-kicker{color:var(--muted);font-size:12px}.switch-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}@media(max-width:760px){main{width:min(calc(100% - 28px),1040px);padding-top:24px}.settings-layout{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}input{min-width:0;width:100%}.row{grid-template-columns:20px minmax(0,1fr)}.row>form{grid-column:2;justify-self:start}.download-main{grid-template-columns:1fr}.download-actions{justify-content:flex-start}.download-bar{width:100%}}@media(max-width:420px){main{width:calc(100% - 20px)}header{align-items:flex-start}h1{font-size:25px}.settings-nav{grid-template-columns:1fr}.button,.chip{white-space:normal;text-align:center}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+.download-actions{display:flex;align-items:center;gap:8px;justify-self:end;white-space:nowrap}.download-actions form{display:block!important;flex:0 0 auto}@media(max-width:760px){.download-actions{grid-column:2;justify-self:start;flex-wrap:wrap}}
 html[data-appearance=dark] body{--bg:#14161a;--surface:#1d2025;--surface-2:#252932;--text:#f4f6f8;--muted:#a7b0bd;--line:rgb(255 255 255/.12);--hover:rgb(255 255 255/.07);--active:rgb(111 168 255/.14);--accent:#76a9ff;--danger:#ff8a80;--shadow:none;color-scheme:dark}
 @media(min-width:481px){.row{grid-template-columns:22px minmax(0,1fr) auto}.row>form{grid-column:auto;justify-self:end}}
 </style></head><body><main><header>)"
@@ -398,9 +438,29 @@ std::string FileName(const std::string& path, const std::string& url) {
   return slash == std::string::npos ? source : source.substr(slash + 1);
 }
 
-std::string BookmarksHtml() {
+struct PageRenderResult {
+  std::string html;
+  int status = 200;
+  bool cacheable = true;
+};
+
+PageRenderResult DatabaseErrorPage(const std::string& title) {
+  return {PageChrome(title,
+                     "<section class=\"field\"><strong>" +
+                         HtmlEscape(title) +
+                         " could not be loaded</strong><p class=\"meta\">"
+                         "The internal database is temporarily unavailable. "
+                         "Reload this page in a moment.</p></section>"),
+          503, false};
+}
+
+PageRenderResult BookmarksHtml() {
   std::ostringstream body;
-  const auto records = QueryRecords("bookmarks", 500);
+  const auto query = QueryRecords("bookmarks", 500);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("Bookmarks");
+  }
+  const auto& records = query.value;
   if (records.empty()) {
     body << "<p class=\"empty\">" << Label("No bookmarks") << "</p>";
   } else {
@@ -420,12 +480,16 @@ std::string BookmarksHtml() {
            << "</div>";    }
     body << "</div>";
   }
-  return PageChrome("Bookmarks", body.str());
+  return {PageChrome("Bookmarks", body.str())};
 }
 
-std::string DownloadsHtml() {
+PageRenderResult DownloadsHtml() {
   std::ostringstream body;
-  const auto records = QueryRecords("downloads", 50);
+  const auto query = QueryRecords("downloads", 50);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("Downloads");
+  }
+  const auto& records = query.value;
   body << "<div class=\"segmented\" style=\"margin-bottom:12px\">"
        << ActionForm("clearData", "downloads", "fubuki://downloads/",
                      Label("Clear downloads"), "chip danger")
@@ -439,29 +503,44 @@ std::string DownloadsHtml() {
       const int percent = state == "completed" ? 100 : ClampPercent(record.percent);
       const std::string status = DownloadStatusText(state, percent);
       const bool hasPath = !record.path.empty();
-      const std::string removeValue = hasPath ? record.path : record.url;
       body << "<article class=\"row\"><span "
               "aria-hidden=\"true\">↓</span><div class=\"download-main\"><div><div class=\"title\">"
            << HtmlEscape(FileName(record.path, record.url)) << "</div><div class=\"meta\">"
            << HtmlEscape(record.path.empty() ? record.url : record.path)
-           << "</div></div><span class=\"segmented download-actions\">"
-           << ActionForm("openDownload", record.path, "fubuki://downloads/",
-                         Label("Open"), "chip")
-           << ActionForm("revealDownload", record.path, "fubuki://downloads/",
-                         Label("Reveal"), "chip")
-           << ActionForm("removeDownload", record.path, "fubuki://downloads/",
+           << "</div></div><div class=\"download-status\">";
+      if (IsActiveDownloadState(state)) {
+        body << "<span class=\"download-bar\" aria-hidden=\"true\" style=\"--progress:"
+             << percent << "%\"><span></span></span>";
+      }
+      body << "<span>" << HtmlEscape(status) << "</span></div></div>"
+           << "<div class=\"download-actions\">";
+      if (hasPath) {
+        body << ActionForm("openDownload", record.path, "fubuki://downloads/",
+                           Label("Open"), "chip")
+             << ActionForm("revealDownload", record.path, "fubuki://downloads/",
+                           Label("Reveal"), "chip");
+      } else {
+        body << "<span class=\"chip disabled\" aria-disabled=\"true\">"
+             << HtmlEscape(Label("Open")) << "</span>"
+             << "<span class=\"chip disabled\" aria-disabled=\"true\">"
+             << HtmlEscape(Label("Reveal")) << "</span>";
+      }
+      body << ActionForm("removeDownload", record.downloadId, "fubuki://downloads/",
                          Label("Remove"), "chip danger")
-           << "</span><div class=\"download-status\"><span>"
-           << HtmlEscape(status) << "</span><div class=\"download-bar\" style=\"--progress:"
-           << percent << "%\"><span></span></div></div></div></article>";    }
+           << "</div></article>";
+    }
     body << "</div>";
   }
-  return PageChrome("Downloads", body.str());
+  return {PageChrome("Downloads", body.str())};
 }
 
-std::string HistoryHtml() {
+PageRenderResult HistoryHtml() {
   std::ostringstream body;
-  const auto records = QueryRecords("history", 500);
+  const auto query = QueryRecords("history", 500);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("History");
+  }
+  const auto& records = query.value;
   body << "<form class=\"inline-form\" style=\"margin-bottom:12px\"><input "
           "type=\"search\" id=\"historySearch\" placeholder=\""
        << Label("Search history")
@@ -504,7 +583,7 @@ std::string HistoryHtml() {
            << "</div>";    }
     body << "</div>";
   }
-  return PageChrome("History", body.str());
+  return {PageChrome("History", body.str())};
 }
 
 std::string SettingsHtml() {
@@ -684,7 +763,7 @@ std::string SettingsHtml() {
       << "</section></div>";  return PageChrome("Settings", body.str());
 }
 
-std::string DebugHtml() {
+PageRenderResult DebugHtml() {
   std::ostringstream body;
   BrowserAppController* app = GetBrowserAppController();
   body << "<section class=\"section\">";
@@ -736,7 +815,11 @@ std::string DebugHtml() {
   }
 
   body << "<div class=\"field\"><span>" << Label("Logs") << "</span><div class=\"list\">";
-  const auto logs = QueryRecords("logs", 80);
+  const auto query = QueryRecords("logs", 80);
+  if (!query.Ok()) {
+    return DatabaseErrorPage("Debug");
+  }
+  const auto& logs = query.value;
   for (const auto& record : logs) {
     body << "<article class=\"row\"><span>i</span><div><div class=\"title\">"
          << HtmlEscape(record.title) << "</div><div class=\"meta\">"
@@ -749,7 +832,7 @@ std::string DebugHtml() {
        << ActionForm("openDevTools", "1", "fubuki://debug/",
                      Label("Open DevTools"), "chip")
        << "</div></div>";  body << "</section>";
-  return PageChrome("Debug", body.str());
+  return {PageChrome("Debug", body.str())};
 }
 
 std::string NewTabHtml() {
@@ -949,9 +1032,11 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (cache.Get(url, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
-      html = BookmarksHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+      auto page = BookmarksHtml();
+      if (page.cacheable) {
+        cache.Set(url, page.html);
+      }
+      LoadText(std::move(page.html), "text/html", page.status);
     }
     return true;
   }
@@ -960,9 +1045,11 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (cache.Get(url, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
-      html = DownloadsHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+      auto page = DownloadsHtml();
+      if (page.cacheable) {
+        cache.Set(url, page.html);
+      }
+      LoadText(std::move(page.html), "text/html", page.status);
     }
     return true;
   }
@@ -971,9 +1058,11 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     if (cache.Get(url, html)) {
       LoadText(std::move(html), "text/html", 200);
     } else {
-      html = HistoryHtml();
-      cache.Set(url, html);
-      LoadText(std::move(html), "text/html", 200);
+      auto page = HistoryHtml();
+      if (page.cacheable) {
+        cache.Set(url, page.html);
+      }
+      LoadText(std::move(page.html), "text/html", page.status);
     }
     return true;
   }
@@ -989,7 +1078,8 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
     return true;
   }
   if (url.rfind("fubuki://debug/", 0) == 0) {
-    LoadText(DebugHtml(), "text/html", 200);
+    auto page = DebugHtml();
+    LoadText(std::move(page.html), "text/html", page.status);
     return true;
   }
   if (url.rfind("fubuki://app/", 0) == 0) {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BRIDGE_TIMEOUT_MS,
   invokeNativeBridge,
+  MAX_BRIDGE_RESPONSE_LENGTH,
   notifyBridgeListeners,
   type NativeQuery,
 } from '../bridge/runtime';
@@ -47,6 +48,7 @@ const snapshot = {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('native bridge runtime', () => {
@@ -64,6 +66,23 @@ describe('native bridge runtime', () => {
     await expect(result).rejects.toThrow(/app\.snapshot.*JSON/i);
   });
 
+  it('rejects responses larger than the parser limit', async () => {
+    const result = invokeNativeBridge((query) => {
+      query.onSuccess(`"${'x'.repeat(MAX_BRIDGE_RESPONSE_LENGTH)}"`);
+    }, 'settings.get');
+    await expect(result).rejects.toThrow(/exceeds.*characters/);
+  });
+
+  it('enforces the deadline after parsing and validation complete', async () => {
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(BRIDGE_TIMEOUT_MS);
+    const result = invokeNativeBridge((query) => {
+      query.onSuccess('true');
+    }, 'tabs.close');
+    await expect(result).rejects.toThrow(/timed out/);
+  });
+
   it('rejects after the ten second timeout', async () => {
     vi.useFakeTimers();
     const result = invokeNativeBridge(() => {}, 'history.list');
@@ -72,6 +91,55 @@ describe('native bridge runtime', () => {
     );
     await vi.advanceTimersByTimeAsync(BRIDGE_TIMEOUT_MS);
     await rejection;
+  });
+
+  it('cancels the pending CEF query when it times out', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const result = invokeNativeBridge(
+      () => 42,
+      'history.list',
+      {},
+      BRIDGE_TIMEOUT_MS,
+      cancel,
+    );
+    const rejection = expect(result).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(BRIDGE_TIMEOUT_MS);
+    await rejection;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith(42);
+  });
+
+  it('still rejects with the timeout if CEF cancellation throws', async () => {
+    vi.useFakeTimers();
+    const result = invokeNativeBridge(
+      () => 42,
+      'history.list',
+      {},
+      BRIDGE_TIMEOUT_MS,
+      () => {
+        throw new Error('renderer already gone');
+      },
+    );
+    const rejection = expect(result).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(BRIDGE_TIMEOUT_MS);
+    await rejection;
+  });
+
+  it('does not cancel a CEF query that completed successfully', async () => {
+    const cancel = vi.fn();
+    const result = invokeNativeBridge(
+      (query) => {
+        query.onSuccess('true');
+        return 42;
+      },
+      'tabs.close',
+      {},
+      BRIDGE_TIMEOUT_MS,
+      cancel,
+    );
+    await expect(result).resolves.toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
   });
 
   it('does not time out before ten seconds', async () => {
@@ -158,6 +226,7 @@ describe('response validation', () => {
   it('safely clamps download percentages', () => {
     const result = validateBridgeResponse('downloads.list', [
       {
+        downloadId: 'download-1',
         url: 'https://example.com/file.zip',
         path: '/tmp/file.zip',
         state: 'in_progress',
@@ -172,6 +241,7 @@ describe('response validation', () => {
     expect(() =>
       validateBridgeResponse('downloads.list', [
         {
+          downloadId: 'download-1',
           url: 'https://example.com/file.zip',
           path: '/tmp/file.zip',
           state: 'in_progress',
@@ -180,6 +250,20 @@ describe('response validation', () => {
         },
       ]),
     ).toThrow(/downloads\.list.*percent/);
+  });
+
+  it('rejects downloads without a stable identity', () => {
+    expect(() =>
+      validateBridgeResponse('downloads.list', [
+        {
+          url: 'https://example.com/file.zip',
+          path: '/tmp/file.zip',
+          state: 'completed',
+          percent: 100,
+          createdAt: '2026-07-23',
+        },
+      ]),
+    ).toThrow(/downloads\.list.*downloadId/);
   });
 
   it('rejects history records without a URL', () => {
@@ -262,10 +346,58 @@ describe('event validation and listener isolation', () => {
     ).toThrow(/setting\.changed.*value/);
   });
 
+  it('accepts the Frost Protocol permission.changed payload', () => {
+    expect(
+      validateBridgeEvent('permission.changed', {
+        origin: 'https://example.com',
+        permission: 'notifications',
+      }),
+    ).toEqual({
+      origin: 'https://example.com',
+      permission: 'notifications',
+    });
+  });
+
+  it('rejects permission.changed without its Protocol fields', () => {
+    expect(() => validateBridgeEvent('permission.changed', {})).toThrow(
+      /permission\.changed.*origin/,
+    );
+  });
+
+  it('accepts Frost Protocol external audit events', () => {
+    expect(
+      validateBridgeEvent('external.audit', {
+        commandId: 'command-1',
+        capability: 'tab_control',
+        allowed: false,
+        reason: 'denied',
+      }),
+    ).toEqual({
+      commandId: 'command-1',
+      capability: 'tab_control',
+      allowed: false,
+      reason: 'denied',
+    });
+  });
+
+  it('accepts empty Frost Protocol host.synced payloads', () => {
+    expect(validateBridgeEvent('host.synced', {})).toBeUndefined();
+  });
+
   it('clamps download.changed percentages', () => {
     expect(validateBridgeEvent('download.changed', { percent: -20 })).toEqual({
       percent: 0,
     });
+  });
+
+  it('normalizes null history URLs from Frost Protocol events', () => {
+    expect(validateBridgeEvent('history.changed', { url: null })).toEqual({});
+  });
+
+  it('normalizes all-null download events from Frost Protocol', () => {
+    expect(
+      validateBridgeEvent('download.changed', { url: null, path: null }),
+    ).toEqual({});
   });
 
   it('rejects payloads for void events', () => {

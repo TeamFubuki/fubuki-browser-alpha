@@ -157,6 +157,7 @@ function validateDownload(value: unknown, path: string): DownloadRecord {
   const item = record(value, path);
   const percent = finiteNumber(item.percent, `${path}.percent`);
   return {
+    downloadId: string(item.downloadId, `${path}.downloadId`, true),
     url: string(item.url, `${path}.url`, true),
     path: string(item.path, `${path}.path`),
     state: string(item.state, `${path}.state`, true),
@@ -455,7 +456,35 @@ function validateNavigation(value: unknown, path: string, failed = false) {
 function validateOptionalUrl(value: unknown, path: string) {
   if (value === undefined || value === null) return undefined;
   const item = record(value, path);
-  return item.url === undefined ? {} : { url: string(item.url, `${path}.url`) };
+  return item.url === undefined || item.url === null
+    ? {}
+    : { url: string(item.url, `${path}.url`) };
+}
+
+function validatePermissionEvent(value: unknown, path: string) {
+  const item = record(value, path);
+  return {
+    origin: string(item.origin, `${path}.origin`, true),
+    permission: string(item.permission, `${path}.permission`, true),
+  };
+}
+
+const externalCapabilities = new Set([
+  'read_state',
+  'tab_control',
+  'navigation',
+  'bookmarks',
+  'history',
+  'downloads',
+  'debug',
+]);
+
+function validateExternalCapability(value: unknown, path: string) {
+  const capability = string(value, path, true);
+  if (!externalCapabilities.has(capability)) {
+    fail(path, 'a supported external capability');
+  }
+  return capability;
 }
 
 function validateDownloadEvent(value: unknown, path: string) {
@@ -463,7 +492,7 @@ function validateDownloadEvent(value: unknown, path: string) {
   const item = record(value, path);
   const result: JsonRecord = {};
   for (const key of ['url', 'path', 'state', 'createdAt']) {
-    if (item[key] !== undefined)
+    if (item[key] !== undefined && item[key] !== null)
       result[key] = string(item[key], `${path}.${key}`);
   }
   if (item.percent !== undefined) {
@@ -508,6 +537,7 @@ const eventValidators = new Map<string, Validator>([
   ['bookmark.changed', validateOptionalUrl],
   ['history.changed', validateOptionalUrl],
   ['download.changed', validateDownloadEvent],
+  ['permission.changed', validatePermissionEvent],
   [
     'window.created',
     (value, path) =>
@@ -529,6 +559,38 @@ const eventValidators = new Map<string, Validator>([
         ? undefined
         : validateIdEvent(value, path, 'windowId'),
   ],
+  [
+    'external.audit',
+    (value, path) => {
+      const item = record(value, path);
+      return {
+        commandId: string(item.commandId, `${path}.commandId`, true),
+        capability: validateExternalCapability(
+          item.capability,
+          `${path}.capability`,
+        ),
+        allowed: boolean(item.allowed, `${path}.allowed`),
+        ...(item.reason === undefined
+          ? {}
+          : {
+              reason:
+                item.reason === null
+                  ? null
+                  : string(item.reason, `${path}.reason`),
+            }),
+      };
+    },
+  ],
+  [
+    'external.rateLimited',
+    (value, path) => {
+      const item = record(value, path);
+      return {
+        commandId: string(item.commandId, `${path}.commandId`, true),
+        retryAfterMs: integer(item.retryAfterMs, `${path}.retryAfterMs`),
+      };
+    },
+  ],
 ]);
 
 for (const eventName of [
@@ -537,7 +599,7 @@ for (const eventName of [
   'tabs.closed',
   'tabs.activated',
   'downloads.updated',
-  'permission.changed',
+  'host.synced',
   'app.stateChanged',
 ]) {
   eventValidators.set(eventName, validateVoid);
