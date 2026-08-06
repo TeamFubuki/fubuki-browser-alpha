@@ -157,6 +157,7 @@ function validateDownload(value: unknown, path: string): DownloadRecord {
   const item = record(value, path);
   const percent = finiteNumber(item.percent, `${path}.percent`);
   return {
+    downloadId: string(item.downloadId, `${path}.downloadId`, true),
     url: string(item.url, `${path}.url`, true),
     path: string(item.path, `${path}.path`),
     state: string(item.state, `${path}.state`, true),

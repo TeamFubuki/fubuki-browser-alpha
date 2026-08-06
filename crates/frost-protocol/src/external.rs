@@ -49,6 +49,7 @@ pub enum ExternalCommand {
     HistoryClear { range: String },
     #[serde(rename = "download.remove", rename_all = "camelCase")]
     DownloadRemove {
+        download_id: Option<String>,
         url: Option<String>,
         path: Option<String>,
     },

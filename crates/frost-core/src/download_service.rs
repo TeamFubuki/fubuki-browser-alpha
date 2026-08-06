@@ -10,9 +10,10 @@ impl DownloadService {
 
     pub fn remove<S: DownloadRepository>(
         repository: &S,
+        download_id: Option<&str>,
         url: Option<&str>,
         path: Option<&str>,
     ) -> StoreResult<bool> {
-        repository.remove_download(url, path)
+        repository.remove_download(download_id, url, path)
     }
 }
