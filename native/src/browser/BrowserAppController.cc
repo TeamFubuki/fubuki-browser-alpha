@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "browser/BrowserWindow.h"
+#include "browser/WindowIdPolicy.h"
 #include "include/base/cef_callback.h"
 #include "include/cef_parser.h"
 #include "include/cef_task.h"
@@ -137,7 +138,10 @@ void BrowserAppController::Start() {
     auto windows = RestoredWindows();
     for (size_t i = 0; i < windows->GetSize(); ++i) {
       if (auto windowState = windows->GetDictionary(i)) {
-        NewWindow(false, windowState);
+        const std::string restoredWindowId = ResolveRestoredWindowId(
+            windowState->GetString("id").ToString(),
+            [this] { return NextWindowId(); });
+        NewWindow(false, windowState, restoredWindowId);
         restored = true;
       }
     }
@@ -500,7 +504,9 @@ std::vector<BrowserWindow *> BrowserAppController::Windows() const {
 }
 
 std::string BrowserAppController::NextWindowId() {
-  return "window-" + std::to_string(nextWindowId_++);
+  return NextAvailableWindowId(nextWindowId_, [this](const std::string &id) {
+    return FindWindow(id) != nullptr;
+  });
 }
 
 CefRefPtr<CefListValue> BrowserAppController::RestoredWindows() const {

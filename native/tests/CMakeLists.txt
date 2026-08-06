@@ -18,8 +18,10 @@ enable_testing()
 add_executable(fubuki_tests
   UrlUtilsTest.cc
   JsonUtilsTest.cc
+  WindowIdPolicyTest.cc
   # Add more test files here as the project grows
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/utils/UrlUtils.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/browser/WindowIdPolicy.cc"
 )
 
 target_include_directories(fubuki_tests PRIVATE
