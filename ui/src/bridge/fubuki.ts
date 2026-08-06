@@ -72,6 +72,7 @@ export type BookmarkRecord = {
 };
 
 export type DownloadRecord = {
+  downloadId: string;
   url: string;
   path: string;
   state: string;
@@ -260,7 +261,7 @@ export type BridgeMethodMap = {
   'history.clear': { params: Record<string, never>; result: boolean };
   'downloads.list': { params: Record<string, never>; result: DownloadRecord[] };
   'downloads.remove': {
-    params: { url?: string; path?: string };
+    params: { downloadId?: string; url?: string; path?: string };
     result: boolean;
   };
   'downloads.clear': { params: Record<string, never>; result: boolean };
