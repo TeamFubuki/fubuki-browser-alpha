@@ -37,6 +37,15 @@ export default function TopBar() {
       classList={{ 'top-bar': true, private: browserState.isPrivate }}
       aria-label="Navigation"
     >
+      {browserState.isPrivate && (
+        <span
+          class="private-badge"
+          title={t('common.privateWindow', lang())}
+          aria-label={t('common.privateWindow', lang())}
+        >
+          <span aria-hidden="true">◆</span> {t('common.privateWindow', lang())}
+        </span>
+      )}
       <button
         class="topbar-button"
         title={t('common.back', lang())}

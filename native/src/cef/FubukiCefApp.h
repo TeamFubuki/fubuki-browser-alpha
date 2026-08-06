@@ -25,6 +25,9 @@ public:
 
   void
   OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+  void OnBeforeCommandLineProcessing(
+      const CefString &processType,
+      CefRefPtr<CefCommandLine> commandLine) override;
   void OnContextInitialized() override;
   void OnWebKitInitialized() override;
   void OnContextCreated(CefRefPtr<CefBrowser> browser,

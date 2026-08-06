@@ -51,6 +51,14 @@ bool FrostStore::SetSetting(const std::string &key, const std::string &value) {
   if (!handle_) {
     return false;
   }
+  // Session restoration is still a host concern and is not part of the public
+  // settings protocol. All user-facing settings go through FrostEngine so the
+  // core remains the single writer and emits the corresponding diff event.
+  if (key != "sessionJson") {
+    const std::string params = "{\"key\":" + JsonEscape(key) +
+                               ",\"value\":" + JsonEscape(value) + "}";
+    return ExecRequest("settings.set", params);
+  }
   return frost_store_set_setting(handle_, key.c_str(), value.c_str());
 }
 
@@ -181,49 +189,8 @@ bool FrostStore::ClearHistoryRange(const std::string &range) {
   return ExecRequest("history.clearRange", params);
 }
 
-namespace {
-
-// Mirrors the engine's default-setting table so that a reset restores the
-// documented default rather than clearing the key.
-std::string DefaultSetting(const std::string &key) {
-  if (key == "homepage") return "https://example.com";
-  if (key == "searchEngine") return "google";
-  if (key == "customSearchUrl") return "https://www.google.com/search?q={query}";
-  if (key == "startupBehavior") return "newTab";
-  if (key == "sessionJson") return "";
-  if (key == "downloadDirectory") {
-    const char *home = std::getenv("HOME");
-    return home ? (std::filesystem::path(home) / "Downloads").string() : "/tmp";
-  }
-  if (key == "theme") return "light";
-  if (key == "appearance") return "system";
-  if (key == "toolbarDensity") return "compact";
-  if (key == "sidebarVisible") return "show";
-  if (key == "sidebarWidth") return "196";
-  if (key == "defaultBookmarkDisplay") return "sidebar";
-  if (key == "openBookmarkIn") return "current";
-  if (key == "showBookmarkFavicons") return "on";
-  if (key == "newTabPage") return "blank";
-  if (key == "homeUrl") return "https://example.com";
-  if (key == "askBeforeDownload") return "off";
-  if (key == "defaultZoomLevel") return "0";
-  if (key == "closeWindowWithLastTab") return "off";
-  if (key == "privateSearchEngine") return "default";
-  if (key == "language") return "system";
-  if (key == "newTabBackgroundMode") return "unsplash";
-  if (key == "newTabBackgroundColor") return "#f8fafd";
-  if (key == "newTabBackgroundUrl") return "";
-  return "";
-}
-
-}  // namespace
-
 bool FrostStore::ResetSetting(const std::string &key) {
-  const std::string value = DefaultSetting(key);
-  if (value.empty() && key != "sessionJson") {
-    return false;
-  }
-  return SetSetting(key, value);
+  return ExecRequest("settings.reset", "{\"key\":" + JsonEscape(key) + "}");
 }
 
 }  // namespace fubuki

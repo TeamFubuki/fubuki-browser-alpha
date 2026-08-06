@@ -23,6 +23,26 @@
 
 .top-bar.private {
   background: color-mix(in srgb, var(--topbar-bg) 72%, #17151f);
+  border-bottom: 2px solid #a855f7;
+  grid-template-columns: max-content repeat(3, var(--button-size)) minmax(
+      160px,
+      1fr
+    ) var(--button-size);
+}
+
+.private-badge {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #7e22ce;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .topbar-button {

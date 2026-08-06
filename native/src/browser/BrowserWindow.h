@@ -47,7 +47,8 @@ class BrowserWindow {
   bool CloseOtherTabs(const std::string& tabId);
   bool CloseTabsToRight(const std::string& tabId);
   bool MoveTab(const std::string& tabId, int toIndex);
-  bool MoveTabToNewWindow(const std::string& tabId);
+  bool MoveTabToNewWindow(const std::string& tabId,
+                          const std::string& engineWindowId = "");
   bool Navigate(const std::string& tabId, const std::string& input);
   bool Reload(const std::string& tabId);
   bool Stop(const std::string& tabId);
@@ -64,7 +65,9 @@ class BrowserWindow {
   bool FocusOmnibox();
   CefRefPtr<CefValue> ExecuteCommand(const std::string& commandId,
                                      CefRefPtr<CefDictionaryValue> args);
-  bool HandleShortcut(bool commandDown, bool altDown, int keyCode, char character);
+  bool HandleShortcut(bool commandDown, bool altDown, bool shiftDown,
+                      int keyCode, char character,
+                      const std::string& sourceTabId = "");
   bool OpenDevTools();
   bool AddActiveBookmark();
   bool SaveBookmark(const std::string& title, const std::string& url,
@@ -146,13 +149,6 @@ class BrowserWindow {
   CefRefPtr<CefDictionaryValue> SessionSnapshot() const;
 
  private:
-  struct ClosedTab {
-    std::string title;
-    std::string url;
-    std::string faviconUrl;
-    bool pinned = false;
-  };
-
   void CreateNativeWindow();
   void CreateUiBrowser();
   void CreateTabBrowser(const Tab& tab);
@@ -173,7 +169,6 @@ class BrowserWindow {
   std::unique_ptr<NativeBridge> bridge_;
   CefRefPtr<CefBrowser> uiBrowser_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
-  std::vector<ClosedTab> closedTabs_;
   double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
   std::string windowId_;

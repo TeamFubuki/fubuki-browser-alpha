@@ -1,5 +1,7 @@
 #include "bridge/NativeBridge.h"
 
+#include <algorithm>
+
 #include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
 #include "include/cef_parser.h"
@@ -19,17 +21,40 @@ CefRefPtr<CefValue> BoolValue(bool value) {
   return result;
 }
 
+double NumberValue(CefRefPtr<CefDictionaryValue> dictionary,
+                   const std::string &key, double fallback = 0.0) {
+  if (!dictionary || !dictionary->HasKey(key)) {
+    return fallback;
+  }
+  const cef_value_type_t type = dictionary->GetType(key);
+  if (type == VTYPE_INT) {
+    return static_cast<double>(dictionary->GetInt(key));
+  }
+  if (type == VTYPE_DOUBLE) {
+    return dictionary->GetDouble(key);
+  }
+  return fallback;
+}
+
 }  // namespace
 
 NativeBridge::NativeBridge(BrowserWindow &window)
     : window_(window),
-      frostBridge_(window.Store().ProfilePath() + "/frost-engine.sqlite3") {
+      frostBridge_(window.App().Engine()) {
   RegisterMethods();
 }
 
 void NativeBridge::RegisterMethods() {
   methods_["app.snapshot"] = [this](CefRefPtr<CefDictionaryValue>) {
-    return FrostInvoke("app.snapshot", CefDictionaryValue::Create());
+    // FrostEngine owns global activeWindowId; this bridge must not rewrite it.
+    auto result = FrostInvoke("app.snapshot", CefDictionaryValue::Create());
+    if (result && result->GetType() == VTYPE_DICTIONARY) {
+      auto snapshot = result->GetDictionary();
+      // activeWindowId is global; every BrowserWindow needs its own local
+      // rendering context to select tabs from the shared snapshot.
+      snapshot->SetString("currentWindowId", window_.WindowId());
+    }
+    return result;
   };
 
   methods_["tabs.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -37,116 +62,133 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["tabs.create"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    const std::string url =
-        params->HasKey("url") ? params->GetString("url") : "fubuki://newtab/";
-    const bool active = !params->HasKey("active") || params->GetBool("active");
-    return HostBackedFrostInvoke("tabs.create", params, [this, url, active] {
-      return window_.CreateTab(url, active);
-    });
+    if (!params) params = CefDictionaryValue::Create();
+    params->SetString("windowId", window_.WindowId());
+    // Native shortcuts and menu commands do not carry UI defaults. The
+    // protocol requires `active`, so make a newly created shortcut tab active
+    // just like the UI-side tabs.create helper does.
+    if (!params->HasKey("active")) {
+      params->SetBool("active", true);
+    }
+    return FrostInvoke("tabs.create", params);
   };
 
   methods_["tabs.activate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.activate", params, [this, params] {
-      return window_.ActivateTab(params->GetString("tabId"));
-    });
+    auto result = FrostInvoke("tabs.activate", params);
+    // FrostEngine emits page.activate asynchronously. Keep the native tab
+    // manager in sync immediately as well: a following Cmd+W is handled by
+    // the native key path and must use the tab the user just selected.
+    if (result && result->GetType() == VTYPE_BOOL && result->GetBool() &&
+        params && params->HasKey("tabId")) {
+      window_.ActivateTab(params->GetString("tabId").ToString());
+    }
+    return result;
+  };
+
+  // The engine's global active tab belongs to whichever native window was
+  // focused last. Resolve next/previous from this window's TabManager first,
+  // then activate that explicit tab in FrostEngine. This keeps tab cycling
+  // scoped to the window that received the shortcut.
+  methods_["tabs.activateNext"] = [this](CefRefPtr<CefDictionaryValue>) {
+    const auto tabs = window_.Tabs().GetTabs();
+    const std::string activeId = window_.Tabs().GetActiveTabId();
+    if (tabs.empty() || activeId.empty()) {
+      return BoolValue(false);
+    }
+    const auto current = std::find_if(
+        tabs.begin(), tabs.end(), [&activeId](const Tab& tab) { return tab.id == activeId; });
+    if (current == tabs.end()) {
+      return BoolValue(false);
+    }
+    const size_t index = static_cast<size_t>(std::distance(tabs.begin(), current));
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabs[(index + 1) % tabs.size()].id);
+    return FrostInvoke("tabs.activate", params);
+  };
+
+  methods_["tabs.activatePrevious"] = [this](CefRefPtr<CefDictionaryValue>) {
+    const auto tabs = window_.Tabs().GetTabs();
+    const std::string activeId = window_.Tabs().GetActiveTabId();
+    if (tabs.empty() || activeId.empty()) {
+      return BoolValue(false);
+    }
+    const auto current = std::find_if(
+        tabs.begin(), tabs.end(), [&activeId](const Tab& tab) { return tab.id == activeId; });
+    if (current == tabs.end()) {
+      return BoolValue(false);
+    }
+    const size_t index = static_cast<size_t>(std::distance(tabs.begin(), current));
+    auto params = CefDictionaryValue::Create();
+    params->SetString("tabId", tabs[(index + tabs.size() - 1) % tabs.size()].id);
+    return FrostInvoke("tabs.activate", params);
   };
 
   methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.close", params, [this, params] {
-      return window_.CloseTab(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.close", params);
   };
 
   methods_["tabs.pin"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.pin", params, [this, params] {
-      return window_.PinTab(params->GetString("tabId"),
-                            params->HasKey("pinned") &&
-                                params->GetBool("pinned"));
-    });
+    return FrostInvoke("tabs.pin", params);
   };
 
   methods_["tabs.duplicate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.duplicate", params, [this, params] {
-      return window_.DuplicateTab(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.duplicate", params);
   };
 
   methods_["tabs.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.reopenClosed", params,
-                                 [this] { return window_.ReopenClosedTab(); });
+    return FrostInvoke("tabs.reopenClosed", params);
   };
 
   methods_["tabs.closeOther"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.closeOther", params, [this, params] {
-      return window_.CloseOtherTabs(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.closeOther", params);
   };
 
   methods_["tabs.closeToRight"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.closeToRight", params, [this, params] {
-      return window_.CloseTabsToRight(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.closeToRight", params);
   };
 
   methods_["tabs.move"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.move", params, [this, params] {
-      return window_.MoveTab(params->GetString("tabId"),
-                             params->GetInt("toIndex"));
-    });
+    return FrostInvoke("tabs.move", params);
   };
 
   methods_["tabs.moveToNewWindow"] = [this](
                                          CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.moveToNewWindow", params,
-                                 [this, params] {
-                                   return window_.MoveTabToNewWindow(
-                                       params->GetString("tabId"));
-                                 });
+    return FrostInvoke("tabs.moveToNewWindow", params);
   };
 
   methods_["tabs.navigate"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.navigate", params, [this, params] {
-      return window_.Navigate(params->GetString("tabId"),
-                              params->GetString("input"));
-    });
+    return FrostInvoke("tabs.navigate", params);
   };
 
   methods_["tabs.reload"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.reload", params, [this, params] {
-      return window_.Reload(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.reload", params);
   };
 
   methods_["tabs.stop"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.stop", params, [this, params] {
-      return window_.Stop(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.stop", params);
   };
 
   methods_["tabs.goBack"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goBack", params, [this, params] {
-      return window_.GoBack(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.goBack", params);
   };
 
   methods_["tabs.goForward"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("tabs.goForward", params, [this, params] {
-      return window_.GoForward(params->GetString("tabId"));
-    });
+    return FrostInvoke("tabs.goForward", params);
   };
 
   methods_["tabs.home"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("tabs.home", params,
-                                 [this] { return window_.GoHome(); });
+    if (auto *tab = window_.Tabs().GetActiveTab()) {
+      params->SetString("tabId", tab->id);
+    }
+    params->SetString("windowId", window_.WindowId());
+    return FrostInvoke("tabs.home", params);
   };
 
   methods_["windows.create"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.create", params, [this] {
-      return window_.App().RequestNewWindow(false, nullptr);
-    });
+    return FrostInvoke("windows.create", params);
   };
 
   methods_["windows.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -155,23 +197,17 @@ void NativeBridge::RegisterMethods() {
 
   methods_["windows.createPrivate"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.createPrivate", params, [this] {
-      return window_.App().RequestNewPrivateWindow();
-    });
+    return FrostInvoke("windows.createPrivate", params);
   };
 
   methods_["windows.close"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();
     params->SetString("windowId", window_.WindowId());
-    return HostBackedFrostInvoke("windows.close", params,
-                                 [this] { return window_.CloseWindow(); });
+    return FrostInvoke("windows.close", params);
   };
 
   methods_["windows.reopenClosed"] = [this](CefRefPtr<CefDictionaryValue>) {
-    auto params = CefDictionaryValue::Create();
-    return HostBackedFrostInvoke("windows.reopenClosed", params, [this] {
-      return window_.App().ReopenClosedWindow();
-    });
+    return FrostInvoke("windows.reopenClosed", CefDictionaryValue::Create());
   };
 
   methods_["page.find"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -206,7 +242,28 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.addActive"] = [this](CefRefPtr<CefDictionaryValue>) {
-    return BoolValue(window_.AddActiveBookmark());
+    auto *tab = window_.Tabs().GetActiveTab();
+    if (!tab || tab->url.empty() || tab->url.rfind("fubuki://", 0) == 0 ||
+        tab->url.rfind("data:", 0) == 0) {
+      return BoolValue(false);
+    }
+    auto list = FrostInvoke("bookmarks.list", CefDictionaryValue::Create());
+    if (list && list->GetType() == VTYPE_LIST) {
+      auto records = list->GetList();
+      for (size_t i = 0; i < records->GetSize(); ++i) {
+        auto record = records->GetDictionary(i);
+        if (record && record->GetString("url").ToString() == tab->url) {
+          auto params = CefDictionaryValue::Create();
+          params->SetString("url", tab->url);
+          return FrostInvoke("bookmarks.remove", params);
+        }
+      }
+    }
+    auto params = CefDictionaryValue::Create();
+    params->SetString("title", tab->title.empty() ? tab->url : tab->title);
+    params->SetString("url", tab->url);
+    params->SetString("faviconUrl", tab->faviconUrl);
+    return FrostInvoke("bookmarks.save", params);
   };
 
   methods_["bookmarks.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -214,23 +271,15 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["bookmarks.save"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("bookmarks.save", params, [this, params] {
-      return window_.SaveBookmark(params->GetString("title"),
-                                  params->GetString("url"),
-                                  params->GetString("faviconUrl"));
-    });
+    return FrostInvoke("bookmarks.save", params);
   };
 
   methods_["bookmarks.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("bookmarks.remove", params, [this, params] {
-      return window_.RemoveBookmark(params->GetString("url"));
-    });
+    return FrostInvoke("bookmarks.remove", params);
   };
 
   methods_["history.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("history.remove", params, [this, params] {
-      return window_.RemoveHistory(params->GetString("url"));
-    });
+    return FrostInvoke("history.remove", params);
   };
 
   methods_["history.list"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -239,22 +288,30 @@ void NativeBridge::RegisterMethods() {
 
   methods_["history.clearRange"] =
       [this](CefRefPtr<CefDictionaryValue> params) {
-        return HostBackedFrostInvoke("history.clearRange", params,
-                                     [this, params] {
-                                       return window_.ClearHistoryRange(
-                                           params->GetString("range"));
-                                     });
+        return FrostInvoke("history.clearRange", params);
       };
+  methods_["history.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("range", "all");
+    return FrostInvoke("history.clearRange", params);
+  };
 
   methods_["downloads.list"] = [this](CefRefPtr<CefDictionaryValue>) {
     return FrostInvoke("downloads.list", CefDictionaryValue::Create());
   };
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("downloads.remove", params, [this, params] {
-      return window_.RemoveDownload(params->GetString("url"),
-                                    params->GetString("path"));
-    });
+    return FrostInvoke("downloads.remove", params);
+  };
+  methods_["downloads.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("target", "downloads");
+    return FrostInvoke("data.clear", params);
+  };
+  methods_["bookmarks.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
+    auto params = CefDictionaryValue::Create();
+    params->SetString("target", "bookmarks");
+    return FrostInvoke("data.clear", params);
   };
 
   methods_["downloads.open"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -266,9 +323,7 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["data.clear"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("data.clear", params, [this, params] {
-      return window_.ClearBrowsingData(params->GetString("target"));
-    });
+    return FrostInvoke("data.clear", params);
   };
 
   methods_["settings.get"] = [this](CefRefPtr<CefDictionaryValue> params) {
@@ -276,39 +331,29 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["settings.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("settings.set", params, [this, params] {
-      return window_.SetSetting(params->GetString("key"),
-                                params->GetString("value"));
-    });
+    return BoolValue(window_.SetSetting(params->GetString("key"),
+                                        params->GetString("value")));
   };
 
   methods_["settings.reset"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("settings.reset", params, [this, params] {
-      return window_.ResetSetting(params->GetString("key"));
-    });
+    return BoolValue(window_.ResetSetting(params->GetString("key")));
   };
 
   methods_["ui.setSidebarWidth"] = [this](
                                        CefRefPtr<CefDictionaryValue> params) {
     return HostBackedFrostInvoke("ui.setSidebarWidth", params, [this, params] {
-      return window_.SetLiveSidebarWidth(params->GetDouble("width"));
+      return window_.SetLiveSidebarWidth(NumberValue(params, "width"));
     });
   };
 
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return HostBackedFrostInvoke("permissions.set", params, [this, params] {
-      return window_.SetPermission(params->GetString("origin"),
-                                   params->GetString("permission"),
-                                   params->GetString("value"));
-    });
+    return FrostInvoke("permissions.set", params);
   };
 
   methods_["ui.setOverlayActive"] = [this](
                                         CefRefPtr<CefDictionaryValue> params) {
-    const double overlayWidth =
-        params->HasKey("width") ? params->GetDouble("width") : 392.0;
-    const double overlayHeight =
-        params->HasKey("height") ? params->GetDouble("height") : 560.0;
+    const double overlayWidth = NumberValue(params, "width", 392.0);
+    const double overlayHeight = NumberValue(params, "height", 560.0);
     return HostBackedFrostInvoke("ui.setOverlayActive", params,
                                  [this, params, overlayWidth, overlayHeight] {
                                    return window_.SetUiOverlayActive(
@@ -328,9 +373,13 @@ void NativeBridge::RegisterMethods() {
     if (params->HasKey("args") && params->GetType("args") == VTYPE_DICTIONARY) {
       args = params->GetDictionary("args");
     }
-    auto result = window_.Commands().Execute(id, args);
-    (void)FrostInvoke("commands.execute", params);
-    return result;
+    // Protocol commands must enter through the same method table as toolbar
+    // actions. Executing the native registry first used to create a host tab
+    // and then create a second engine tab for the same user gesture.
+    if (id != "commands.execute" && methods_.contains(id)) {
+      return Invoke(id, args);
+    }
+    return window_.Commands().Execute(id, args);
   };
 
   methods_["commands.list"] = [this](CefRefPtr<CefDictionaryValue>) {
