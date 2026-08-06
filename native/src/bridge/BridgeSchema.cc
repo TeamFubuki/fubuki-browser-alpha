@@ -36,6 +36,12 @@ Field Number(std::string name, bool required, double minimum, double maximum) {
   return field;
 }
 
+Field Integer(std::string name, bool required, double minimum, double maximum) {
+  Field field = Number(std::move(name), required, minimum, maximum);
+  field.integerOnly = true;
+  return field;
+}
+
 Field Dictionary(std::string name, bool required = false) {
   return {std::move(name), ValueType::kDictionary, required};
 }
@@ -80,7 +86,7 @@ const std::unordered_map<std::string, Method>& Methods() {
     }
     schemas["tabs.pin"] = {{Identifier("tabId", true), Bool("pinned", true)}};
     schemas["tabs.move"] = {
-        {Identifier("tabId", true), Number("toIndex", true, 0, 10000)}};
+        {Identifier("tabId", true), Integer("toIndex", true, 0, 10000)}};
     schemas["tabs.moveToNewWindow"] = {
         {Identifier("tabId", true), Identifier("windowId")}};
     schemas["tabs.navigate"] = {
@@ -164,7 +170,8 @@ std::optional<std::string> Validate(const std::string& method, const Params& par
     }
     if (field.type == ValueType::kNumber) {
       if (!std::isfinite(value.number) || (field.minimum && value.number < *field.minimum) ||
-          (field.maximum && value.number > *field.maximum)) {
+          (field.maximum && value.number > *field.maximum) ||
+          (field.integerOnly && std::trunc(value.number) != value.number)) {
         return Prefix(method, field.name) + "is outside the supported range";
       }
     }

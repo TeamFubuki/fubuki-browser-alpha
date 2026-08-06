@@ -24,8 +24,8 @@ Identifiers (`tabId`, `windowId`, setting keys, and command IDs) are limited to
 256 characters; URLs and tab inputs to 8,192; file paths to 4,096; general text
 to 4,096; and setting values to 16,384 characters. `ui.setSidebarWidth.width`
 is 160–800, overlay dimensions are 100–2,000, and `tabs.move.toIndex` is
-0–10,000. Enumerated values are strictly checked for history range, data-clear
-target, and permission value.
+the integer range 0–10,000. Enumerated values are strictly checked for history
+range, data-clear target, and permission value.
 
 ## Methods
 

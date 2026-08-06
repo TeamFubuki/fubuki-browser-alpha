@@ -82,6 +82,10 @@ TEST(BridgeSchemaTest, RejectsOversizedTabIndex) {
   EXPECT_FALSE(IsValid("tabs.move", {{"tabId", String("tab-1")}, {"toIndex", Number(10001)}}));
 }
 
+TEST(BridgeSchemaTest, RejectsFractionalTabIndex) {
+  EXPECT_FALSE(IsValid("tabs.move", {{"tabId", String("tab-1")}, {"toIndex", Number(1.5)}}));
+}
+
 TEST(BridgeSchemaTest, RequiresNavigationInput) {
   EXPECT_FALSE(IsValid("tabs.navigate", {{"tabId", String("tab-1")}}));
 }

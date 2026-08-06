@@ -25,6 +25,7 @@ struct Field {
   bool required = false;
   size_t maxLength = 0;
   bool rejectEmpty = false;
+  bool integerOnly = false;
   std::optional<double> minimum;
   std::optional<double> maximum;
   std::vector<std::string> allowedValues;
