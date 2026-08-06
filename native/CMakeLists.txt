@@ -36,6 +36,7 @@ set(FUBUKI_SOURCES
   src/browser/FrostStore.cc
   src/browser/Tab.cc
   src/browser/TabManager.cc
+  src/browser/WindowIdPolicy.cc
   src/bridge/FrostBridge.cc
   src/bridge/NativeBridge.cc
   src/commands/CommandRegistry.cc
