@@ -98,6 +98,7 @@ dependencies = [
  "frost-engine-api",
  "frost-protocol",
  "frost-store",
+ "rusqlite",
  "serde_json",
 ]
 
