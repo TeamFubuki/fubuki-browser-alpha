@@ -21,7 +21,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
     "oxc-resolver": "^11.24.2",
-    "oxfmt": "^0.59.0",
+    "oxfmt": "^0.62.0",
     "oxlint": "^1.74.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^7.0.2",
