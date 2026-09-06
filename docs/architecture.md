@@ -96,6 +96,11 @@ Defines the boundary between FrostEngine Core and the host:
 
 Future hosts (e.g., a headless server, a different browser engine) should implement the JSON host boundary rather than reaching into `BrowserCore` internals.
 
+FFI errors include a `retryable` boolean. `request_timeout` means the deadline
+expired before dispatch and may be retried. `outcome_unknown` means the request
+was dispatched but its response missed the deadline; it is not retryable
+because the original operation may already have completed.
+
 ## External Automation Boundary
 
 External automation and MCP-style clients connect at FrostEngine's command layer through `ExternalCommand` and declared capabilities:

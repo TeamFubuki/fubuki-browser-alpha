@@ -6,10 +6,22 @@
 extern "C" {
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define FROST_DEPRECATED(message) __attribute__((deprecated(message)))
+#else
+#define FROST_DEPRECATED(message)
+#endif
+
 // Engine instance ----------------------------------------------------------
+FROST_DEPRECATED(
+    "use frost_engine_new_in_memory() or frost_engine_new_with_store()")
 void *frost_engine_new();
+void *frost_engine_new_in_memory();
 void *frost_engine_new_with_store(const char *path);
 void frost_engine_free(void *handle);
+char *frost_engine_take_last_error_json();
+// Error results include `retryable`. Do not retry `outcome_unknown`: the
+// request was dispatched and may already have completed.
 char *frost_engine_process_json(void *handle, const char *request_json);
 char *frost_engine_poll_event_json(void *handle);
 char *frost_engine_poll_host_command_json(void *handle);
@@ -46,3 +58,5 @@ void frost_store_string_free(char *value);
 #ifdef __cplusplus
 }
 #endif
+
+#undef FROST_DEPRECATED
