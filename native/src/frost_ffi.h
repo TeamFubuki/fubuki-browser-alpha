@@ -29,6 +29,8 @@ void *frost_store_open(const char *path);
 void frost_store_free(void *handle);
 char *frost_store_get_setting(void *handle, const char *key);
 bool frost_store_set_setting(void *handle, const char *key, const char *value);
+char *frost_store_get_session(void *handle);
+bool frost_store_set_session(void *handle, const char *json);
 char *frost_store_get_all_settings(void *handle);
 bool frost_store_add_log(void *handle, const char *level, const char *message);
 char *frost_store_get_logs(void *handle, unsigned long limit);

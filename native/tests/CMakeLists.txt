@@ -23,10 +23,12 @@ add_test(
 add_executable(fubuki_tests
   UrlUtilsTest.cc
   JsonUtilsTest.cc
+  WindowIdPolicyTest.cc
   BridgeSchemaTest.cc
   ProtocolFixtureTest.cc
   # Add more test files here as the project grows
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/utils/UrlUtils.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/browser/WindowIdPolicy.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/bridge/BridgeSchema.cc"
 )
 

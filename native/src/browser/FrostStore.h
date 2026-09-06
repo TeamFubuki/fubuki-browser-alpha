@@ -29,6 +29,10 @@ public:
   // Returns all known settings as a JSON object string.
   std::string GetAllSettings() const;
 
+  // --- Session --------------------------------------------------------------
+  std::string GetSession() const;
+  bool SetSession(const std::string &json);
+
   // --- Logs -----------------------------------------------------------------
   bool AddLog(const std::string &level, const std::string &message);
   std::string GetLogs(size_t limit) const;

@@ -51,15 +51,9 @@ bool FrostStore::SetSetting(const std::string &key, const std::string &value) {
   if (!handle_) {
     return false;
   }
-  // Session restoration is still a host concern and is not part of the public
-  // settings protocol. All user-facing settings go through FrostEngine so the
-  // core remains the single writer and emits the corresponding diff event.
-  if (key != "sessionJson") {
-    const std::string params = "{\"key\":" + JsonEscape(key) +
-                               ",\"value\":" + JsonEscape(value) + "}";
-    return ExecRequest("settings.set", params);
-  }
-  return frost_store_set_setting(handle_, key.c_str(), value.c_str());
+  const std::string params = "{\"key\":" + JsonEscape(key) +
+                             ",\"value\":" + JsonEscape(value) + "}";
+  return ExecRequest("settings.set", params);
 }
 
 std::string FrostStore::GetAllSettings() const {
@@ -67,6 +61,17 @@ std::string FrostStore::GetAllSettings() const {
     return "{}";
   }
   return CStrOrEmpty(frost_store_get_all_settings(handle_));
+}
+
+std::string FrostStore::GetSession() const {
+  if (!handle_) {
+    return "";
+  }
+  return CStrOrEmpty(frost_store_get_session(handle_));
+}
+
+bool FrostStore::SetSession(const std::string &json) {
+  return handle_ && frost_store_set_session(handle_, json.c_str());
 }
 
 bool FrostStore::AddLog(const std::string &level, const std::string &message) {
