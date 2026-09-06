@@ -23,12 +23,17 @@ add_test(
 add_executable(fubuki_tests
   UrlUtilsTest.cc
   JsonUtilsTest.cc
+  ProtocolFixtureTest.cc
   # Add more test files here as the project grows
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/utils/UrlUtils.cc"
 )
 
 target_include_directories(fubuki_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_compile_definitions(fubuki_tests PRIVATE
+  FUBUKI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.."
 )
 
 target_link_libraries(fubuki_tests PRIVATE

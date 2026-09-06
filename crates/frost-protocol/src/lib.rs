@@ -23,3 +23,17 @@ pub use state::{
 };
 
 pub const PROTOCOL_VERSION: u16 = 0;
+
+pub(crate) fn deserialize_protocol_version<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let version = <u16 as serde::Deserialize>::deserialize(deserializer)?;
+    if version == PROTOCOL_VERSION {
+        Ok(version)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "unsupported Frost Protocol version: {version}"
+        )))
+    }
+}

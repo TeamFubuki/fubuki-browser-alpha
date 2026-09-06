@@ -7,6 +7,7 @@ use crate::state::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtocolResponse {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,

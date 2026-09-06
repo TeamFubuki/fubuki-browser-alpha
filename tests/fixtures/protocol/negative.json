@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"name": "malformed-json", "payload": "{", "expected": "invalid"},
+    {"name": "unknown-version", "payload": "{\"version\":99,\"method\":\"tabs.list\"}", "expected": "invalid"},
+    {"name": "missing-field", "payload": "{\"version\":0,\"event\":\"tab.closed\",\"payload\":{}}", "expected": "invalid"},
+    {"name": "wrong-type", "payload": "{\"version\":0,\"commandId\":\"cmd-1\",\"ok\":\"yes\"}", "expected": "invalid"}
+  ]
+}
