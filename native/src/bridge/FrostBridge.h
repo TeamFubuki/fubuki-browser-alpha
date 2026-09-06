@@ -17,7 +17,6 @@ public:
   bool IsAvailable() const {
     return handle_ != nullptr;
   }
-
   // Returns the raw FrostEngine handle. Only used by FrostStore which
   // needs the raw handle for protocol delegation.
   void *RawHandle() const { return handle_; }
@@ -36,6 +35,7 @@ public:
 
 private:
   void *handle_ = nullptr;
+  std::string initializationErrorJson_;
 };
 
 }  // namespace fubuki

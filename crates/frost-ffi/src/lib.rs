@@ -1,8 +1,12 @@
+use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, select};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, select};
 use frost_core::{BrowserCore, ExternalPolicy, HostCommandAdapter};
 use frost_engine_api::EngineAdapter;
 use frost_protocol::{
@@ -23,12 +27,75 @@ pub struct FrostEngineHandle {
     host_result_tx: Sender<HostCommandResultEnvelope>,
     // Channel for external audit/rate-limit events emitted by the FFI layer.
     external_event_tx: Sender<frost_protocol::ExternalEventEnvelope>,
-    external_policy: std::sync::Mutex<ExternalPolicy>,
+    external_policy: Mutex<ExternalPolicy>,
     // Serializes the request_tx send + response_rx recv pair so that the JSON
     // processing path and the external routing path (which share the same
     // request/response channels) never read another caller's response.
-    request_response_lock: std::sync::Mutex<()>,
+    request_response_lock: Mutex<()>,
+    shutdown_tx: Sender<()>,
+    worker_done_rx: Receiver<()>,
+    state: Arc<AtomicU8>,
+    next_request_id: AtomicU64,
     join_handle: Option<JoinHandle<()>>,
+}
+
+const ENGINE_RUNNING: u8 = 0;
+const ENGINE_SHUTTING_DOWN: u8 = 1;
+const ENGINE_STOPPED: u8 = 2;
+#[cfg(not(test))]
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(4_500);
+#[cfg(test)]
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1_500);
+
+#[derive(Clone)]
+struct FfiError {
+    code: &'static str,
+    message: String,
+    retryable: bool,
+}
+
+impl FfiError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            retryable: false,
+        }
+    }
+
+    fn retryable(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code,
+            "message": self.message,
+            "retryable": self.retryable,
+        })
+    }
+}
+
+thread_local! {
+    static LAST_ERROR: RefCell<Option<FfiError>> = const { RefCell::new(None) };
+}
+
+fn set_last_error(error: FfiError) {
+    LAST_ERROR.with(|slot| *slot.borrow_mut() = Some(error));
+}
+
+fn clear_last_error() {
+    LAST_ERROR.with(|slot| *slot.borrow_mut() = None);
+}
+
+fn init_failed(code: &'static str, message: impl Into<String>) -> *mut FrostEngineHandle {
+    set_last_error(FfiError::new(code, message));
+    ptr::null_mut()
 }
 
 /// Creates a new FrostEngine instance and returns a handle to it.
@@ -39,15 +106,20 @@ pub struct FrostEngineHandle {
 ///
 /// Returns a valid non-null handle on success.
 #[unsafe(no_mangle)]
+#[deprecated(
+    note = "use frost_engine_new_in_memory for an explicit temporary store, or frost_engine_new_with_store for SQLite"
+)]
 pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
-    unsafe { frost_engine_new_with_store(ptr::null()) }
+    frost_engine_new_in_memory()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn frost_engine_new_in_memory() -> *mut FrostEngineHandle {
+    clear_last_error();
+    new_engine_handle(frost_core::InMemoryStore::default())
 }
 
 /// Creates a new FrostEngine instance backed by a SQLite store at `path`.
-///
-/// If `path` is null or empty, uses an in-memory store. A non-empty SQLite
-/// path must open and migrate successfully; persistent-store failures are not
-/// silently replaced with temporary storage.
 ///
 /// # Safety
 ///
@@ -57,6 +129,37 @@ pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
 pub unsafe extern "C" fn frost_engine_new_with_store(
     path: *const c_char,
 ) -> *mut FrostEngineHandle {
+    clear_last_error();
+    if path.is_null() {
+        return init_failed("invalid_argument", "SQLite store path was null");
+    }
+    let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(path) if !path.is_empty() => path,
+        Ok(_) => return init_failed("invalid_argument", "SQLite store path was empty"),
+        Err(error) => return init_failed("invalid_utf8", error.to_string()),
+    };
+    match SqliteStore::open(path) {
+        Ok(store) => new_engine_handle(store),
+        Err(error) => init_failed(
+            "store_open_failed",
+            format!("failed to open SQLite store: {error}"),
+        ),
+    }
+}
+
+fn new_engine_handle<S>(store: S) -> *mut FrostEngineHandle
+where
+    S: SettingsRepository
+        + BookmarkRepository
+        + HistoryRepository
+        + DownloadRepository
+        + PermissionRepository
+        + LogRepository
+        + SessionRepository
+        + ClearRepository
+        + Send
+        + 'static,
+{
     let (request_tx, request_rx) = crossbeam_channel::unbounded();
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
@@ -64,43 +167,21 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
     let (host_event_tx, host_event_rx) = crossbeam_channel::unbounded();
     let (host_result_tx, host_result_rx) = crossbeam_channel::unbounded();
     let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
+    let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
+    let (worker_done_tx, worker_done_rx) = crossbeam_channel::bounded(1);
+    let state = Arc::new(AtomicU8::new(ENGINE_RUNNING));
 
-    let store_path = if path.is_null() {
-        None
-    } else {
-        match unsafe { CStr::from_ptr(path) }.to_str() {
-            Ok("") => None,
-            Ok(path) => Some(path.to_owned()),
-            Err(_) => return ptr::null_mut(),
-        }
-    };
-
-    let join_handle = if let Some(path) = store_path {
-        let store = match frost_store::SqliteStore::open(path) {
-            Ok(store) => store,
-            Err(_) => return ptr::null_mut(),
-        };
-        spawn_core(
-            BrowserCore::with_adapter_and_settings(HostCommandAdapter::new(host_command_tx), store),
-            event_tx,
-            request_rx,
-            response_tx,
-            host_event_rx,
-            host_result_rx,
-        )
-    } else {
-        spawn_core(
-            BrowserCore::with_adapter_and_settings(
-                HostCommandAdapter::new(host_command_tx),
-                frost_core::InMemoryStore::default(),
-            ),
-            event_tx.clone(),
-            request_rx.clone(),
-            response_tx.clone(),
-            host_event_rx,
-            host_result_rx,
-        )
-    };
+    let join_handle = spawn_core(
+        BrowserCore::with_adapter_and_settings(HostCommandAdapter::new(host_command_tx), store),
+        event_tx,
+        request_rx,
+        response_tx,
+        host_event_rx,
+        host_result_rx,
+        shutdown_rx,
+        worker_done_tx,
+        Arc::clone(&state),
+    );
 
     Box::into_raw(Box::new(FrostEngineHandle {
         request_tx,
@@ -110,12 +191,17 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
         host_event_tx,
         host_result_tx,
         external_event_tx,
-        external_policy: std::sync::Mutex::new(ExternalPolicy::new()),
-        request_response_lock: std::sync::Mutex::new(()),
+        external_policy: Mutex::new(ExternalPolicy::new()),
+        request_response_lock: Mutex::new(()),
+        shutdown_tx,
+        worker_done_rx,
+        state,
+        next_request_id: AtomicU64::new(1),
         join_handle: Some(join_handle),
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_core<A, S>(
     mut core: BrowserCore<A, S>,
     event_tx: Sender<EventEnvelope>,
@@ -123,6 +209,9 @@ fn spawn_core<A, S>(
     response_tx: Sender<ProtocolResponse>,
     host_event_rx: Receiver<HostEventEnvelope>,
     host_result_rx: Receiver<HostCommandResultEnvelope>,
+    shutdown_rx: Receiver<()>,
+    worker_done_tx: Sender<()>,
+    state: Arc<AtomicU8>,
 ) -> JoinHandle<()>
 where
     A: EngineAdapter + Send + 'static,
@@ -141,6 +230,7 @@ where
     std::thread::spawn(move || {
         loop {
             select! {
+                recv(shutdown_rx) -> _ => break,
                 recv(request_rx) -> message => {
                     let Ok(request) = message else {
                         break;
@@ -164,6 +254,8 @@ where
                 }
             }
         }
+        state.store(ENGINE_STOPPED, Ordering::Release);
+        let _ = worker_done_tx.send(());
     })
 }
 
@@ -178,10 +270,28 @@ pub unsafe extern "C" fn frost_engine_free(handle: *mut FrostEngineHandle) {
     }
     unsafe {
         let mut handle = Box::from_raw(handle);
-        drop(handle.request_tx);
+        handle.state.store(ENGINE_SHUTTING_DOWN, Ordering::Release);
+        let _ = handle.shutdown_tx.try_send(());
         if let Some(join_handle) = handle.join_handle.take() {
-            let _ = join_handle.join();
+            if handle.worker_done_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok() {
+                let _ = join_handle.join();
+            } else {
+                drop(join_handle);
+            }
         }
+    }
+}
+
+/// Returns and clears the most recent FFI initialization/string error on the
+/// calling thread as `{ "code": string, "message": string }` JSON.
+///
+/// The returned string must be released with `frost_engine_string_free`.
+#[unsafe(no_mangle)]
+pub extern "C" fn frost_engine_take_last_error_json() -> *mut c_char {
+    let error = LAST_ERROR.with(|slot| slot.borrow_mut().take());
+    match error {
+        Some(error) => into_c_string(error.json().to_string()),
+        None => ptr::null_mut(),
     }
 }
 
@@ -195,42 +305,131 @@ pub unsafe extern "C" fn frost_engine_process_json(
     request_json: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() || request_json.is_null() {
-        return into_c_string(error_response(None, "handle or request was null"));
+        return error_response_c_string(
+            None,
+            FfiError::new("invalid_argument", "handle or request was null"),
+        );
     }
 
     unsafe {
         let request_text = match CStr::from_ptr(request_json).to_str() {
             Ok(text) => text,
-            Err(error) => return into_c_string(error_response(None, error.to_string())),
+            Err(error) => {
+                return error_response_c_string(
+                    None,
+                    FfiError::new("invalid_utf8", error.to_string()),
+                );
+            }
         };
         let request = match serde_json::from_str::<ProtocolRequest>(request_text) {
             Ok(request) => request,
-            Err(error) => return into_c_string(error_response(None, error.to_string())),
+            Err(error) => {
+                return error_response_c_string(
+                    None,
+                    FfiError::new("invalid_request", error.to_string()),
+                );
+            }
         };
 
         let id = request.id.clone();
         let handle = &*handle;
-        // Hold the lock across send + recv so the shared response channel is
-        // never read by the wrong caller (see route_external_to_core).
-        let _guard = handle
-            .request_response_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Err(error) = handle.request_tx.send(request) {
-            return into_c_string(error_response(id, error.to_string()));
-        }
-        match handle.response_rx.recv() {
+        match send_request(handle, request, Instant::now() + REQUEST_TIMEOUT) {
             Ok(response) => match serde_json::to_string(&response) {
-                Ok(json) => into_c_string(json),
+                Ok(json) => response_c_string(id, json),
                 Err(e) => {
                     eprintln!("[frost-ffi] Failed to serialize response: {e}");
-                    into_c_string(error_response(id, "response serialization failed"))
+                    error_response_c_string(
+                        id,
+                        FfiError::new("serialization_failed", "response serialization failed"),
+                    )
                 }
             },
             Err(error) => {
-                eprintln!("[frost-ffi] Response channel closed: {error}");
-                into_c_string(error_response(id, error.to_string()))
+                eprintln!("[frost-ffi] request failed: {}", error.message);
+                error_response_c_string(id, error)
             }
+        }
+    }
+}
+
+fn send_request(
+    handle: &FrostEngineHandle,
+    mut request: ProtocolRequest,
+    deadline: Instant,
+) -> Result<ProtocolResponse, FfiError> {
+    if handle.state.load(Ordering::Acquire) != ENGINE_RUNNING {
+        return Err(FfiError::new(
+            "engine_stopped",
+            "engine worker is not running",
+        ));
+    }
+    let _guard = lock_until(&handle.request_response_lock, deadline)?;
+    if handle.state.load(Ordering::Acquire) != ENGINE_RUNNING {
+        return Err(FfiError::new("engine_stopped", "engine worker stopped"));
+    }
+
+    // Every FFI request gets an internal correlation id. A request that times
+    // out can still complete on the single core worker later; without a unique
+    // id, its late response would be mistaken for the next caller's response.
+    // Restore the caller's id before returning so this remains an internal
+    // implementation detail (including for requests that omitted an id).
+    let caller_id = request.id.take();
+    let internal_id = format!(
+        "frost-ffi-{}",
+        handle.next_request_id.fetch_add(1, Ordering::Relaxed)
+    );
+    request.id = Some(internal_id.clone());
+    handle.request_tx.send(request).map_err(|_| {
+        handle.state.store(ENGINE_STOPPED, Ordering::Release);
+        FfiError::new("engine_stopped", "engine request channel is disconnected")
+    })?;
+
+    loop {
+        match handle
+            .response_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
+            Ok(mut response) if response.id.as_deref() == Some(internal_id.as_str()) => {
+                response.id = caller_id;
+                return Ok(response);
+            }
+            // Discard a late response from a request whose caller already
+            // timed out, then continue waiting for this request's response.
+            Ok(_) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(FfiError::new(
+                    "outcome_unknown",
+                    "engine response timed out after dispatch; the request may have completed",
+                ));
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                handle.state.store(ENGINE_STOPPED, Ordering::Release);
+                return Err(FfiError::new(
+                    "response_channel_disconnected",
+                    "engine response channel is disconnected",
+                ));
+            }
+        }
+    }
+}
+
+fn lock_until<'a, T>(
+    mutex: &'a Mutex<T>,
+    deadline: Instant,
+) -> Result<MutexGuard<'a, T>, FfiError> {
+    loop {
+        if Instant::now() >= deadline {
+            return Err(FfiError::retryable(
+                "request_timeout",
+                "request timed out before dispatch",
+            ));
+        }
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(FfiError::new("mutex_poisoned", "request mutex is poisoned"));
+            }
+            Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
         }
     }
 }
@@ -342,12 +541,34 @@ pub unsafe extern "C" fn frost_engine_string_free(value: *mut c_char) {
     }
 }
 
-fn error_response(id: Option<String>, message: impl Into<String>) -> String {
-    serde_json::to_string(&ProtocolResponse::error(id, message.into())).unwrap_or_default()
+fn into_c_string(value: String) -> *mut c_char {
+    match CString::new(value) {
+        Ok(value) => value.into_raw(),
+        Err(error) => {
+            set_last_error(FfiError::new("c_string_failed", error.to_string()));
+            ptr::null_mut()
+        }
+    }
 }
 
-fn into_c_string(value: String) -> *mut c_char {
-    CString::new(value).unwrap_or_default().into_raw()
+fn response_c_string(id: Option<String>, value: String) -> *mut c_char {
+    match CString::new(value) {
+        Ok(value) => value.into_raw(),
+        Err(error) => {
+            error_response_c_string(id, FfiError::new("c_string_failed", error.to_string()))
+        }
+    }
+}
+
+fn error_response_c_string(id: Option<String>, error: FfiError) -> *mut c_char {
+    set_last_error(error.clone());
+    let json = serde_json::json!({
+        "version": frost_protocol::PROTOCOL_VERSION, "id": id, "ok": false,
+        "kind": "error", "result": error.json(),
+    });
+    CString::new(json.to_string())
+        .expect("JSON escaped interior NUL")
+        .into_raw()
 }
 
 /// Grants external capabilities to a caller origin.
@@ -420,11 +641,15 @@ pub unsafe extern "C" fn frost_engine_process_external_json(
         }
     };
     let handle = unsafe { &*handle };
-    let mut policy = match handle.external_policy.lock() {
-        Ok(p) => p,
-        Err(_) => {
+    // Start the deadline before acquiring either mutex. Otherwise a caller
+    // can spend the whole request budget waiting for another external call's
+    // policy lock and then receive a fresh full request timeout.
+    let deadline = Instant::now() + REQUEST_TIMEOUT;
+    let mut policy = match lock_until(&handle.external_policy, deadline) {
+        Ok(policy) => policy,
+        Err(error) => {
             return into_c_string(
-                serde_json::json!({ "allowed": false, "error": "policy poisoned" }).to_string(),
+                serde_json::json!({ "allowed": false, "error": error.json() }).to_string(),
             );
         }
     };
@@ -433,26 +658,27 @@ pub unsafe extern "C" fn frost_engine_process_external_json(
     // (gated by the caller `origin`, never by the correlation `id`) because the
     // external path cannot borrow the core owned by the worker thread. The
     // request/response pair is serialized via `request_response_lock`.
-    let response = route_external_to_core(handle, envelope, &mut policy);
+    let capability = match authorize_external(handle, &envelope, &mut policy) {
+        Ok(capability) => capability,
+        Err(response) => return into_c_string(response),
+    };
+    drop(policy);
+    let response = route_external_to_core(handle, envelope, capability, deadline);
     into_c_string(response)
 }
 
-/// Routes an external command to the engine request channel.
-///
-/// This keeps a single command path: external clients go through the same
-/// `ProtocolRequest` pipeline as the UI, so no host/CEF object is ever touched
-/// directly by automation.
-fn route_external_to_core(
+fn authorize_external(
     handle: &FrostEngineHandle,
-    envelope: frost_protocol::ExternalCommandEnvelope,
+    envelope: &frost_protocol::ExternalCommandEnvelope,
     policy: &mut ExternalPolicy,
-) -> String {
-    use frost_protocol::{ExternalCapability, ExternalCommand, ProtocolRequest, Request, Response};
+) -> Result<frost_protocol::ExternalCapability, String> {
+    use frost_protocol::{ExternalCapability, ExternalCommand};
 
     let capability = match &envelope.command {
         ExternalCommand::StateRead => ExternalCapability::ReadState,
-        ExternalCommand::TabCreate { .. } => ExternalCapability::TabControl,
-        ExternalCommand::TabClose { .. } => ExternalCapability::TabControl,
+        ExternalCommand::TabCreate { .. } | ExternalCommand::TabClose { .. } => {
+            ExternalCapability::TabControl
+        }
         ExternalCommand::NavigationOpen { .. } => ExternalCapability::Navigation,
         ExternalCommand::BookmarkSave { .. } => ExternalCapability::Bookmarks,
         ExternalCommand::HistoryClear { .. } => ExternalCapability::History,
@@ -463,7 +689,6 @@ fn route_external_to_core(
     // Gate by the caller origin, never by the correlation id, and never trust
     // the capability declared inside the command envelope.
     if !policy.is_granted(&envelope.origin, &capability) {
-        // Emit audit event for denied capability.
         let _ = handle
             .external_event_tx
             .send(frost_protocol::ExternalEventEnvelope::new(
@@ -474,11 +699,11 @@ fn route_external_to_core(
                     reason: Some("capability not granted".into()),
                 },
             ));
-        return serde_json::json!({ "allowed": false, "error": "capability not granted" })
-            .to_string();
+        return Err(
+            serde_json::json!({ "allowed": false, "error": "capability not granted" }).to_string(),
+        );
     }
     if !policy.check_rate(&envelope.origin) {
-        // Emit rate-limit and audit events.
         let _ = handle
             .external_event_tx
             .send(frost_protocol::ExternalEventEnvelope::new(
@@ -497,8 +722,24 @@ fn route_external_to_core(
                     reason: Some("rate limited".into()),
                 },
             ));
-        return serde_json::json!({ "allowed": false, "error": "rate limited" }).to_string();
+        return Err(serde_json::json!({ "allowed": false, "error": "rate limited" }).to_string());
     }
+
+    Ok(capability)
+}
+
+/// Routes an external command to the engine request channel.
+///
+/// This keeps a single command path: external clients go through the same
+/// `ProtocolRequest` pipeline as the UI, so no host/CEF object is ever touched
+/// directly by automation.
+fn route_external_to_core(
+    handle: &FrostEngineHandle,
+    envelope: frost_protocol::ExternalCommandEnvelope,
+    capability: frost_protocol::ExternalCapability,
+    deadline: Instant,
+) -> String {
+    use frost_protocol::{ExternalCommand, ProtocolRequest, Request, Response};
 
     let request: Option<ProtocolRequest> = match &envelope.command {
         ExternalCommand::StateRead => Some(ProtocolRequest::new(Request::AppSnapshot)),
@@ -546,28 +787,7 @@ fn route_external_to_core(
 
     match request {
         Some(req) => {
-            // Serialize send + recv so the shared response channel is never read
-            // by the wrong caller (see frost_engine_process_json).
-            let _guard = handle
-                .request_response_lock
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if handle.request_tx.send(req).is_err() {
-                // Emit audit for engine unavailable.
-                let _ = handle
-                    .external_event_tx
-                    .send(frost_protocol::ExternalEventEnvelope::new(
-                        frost_protocol::ExternalEvent::Audit {
-                            command_id: envelope.id.clone(),
-                            capability,
-                            allowed: false,
-                            reason: Some("engine unavailable".into()),
-                        },
-                    ));
-                return serde_json::json!({ "allowed": false, "error": "engine unavailable" })
-                    .to_string();
-            }
-            match handle.response_rx.recv() {
+            match send_request(handle, req, deadline) {
                 Ok(resp) => {
                     let mut obj = serde_json::Map::new();
                     obj.insert("allowed".into(), serde_json::json!(resp.ok));
@@ -598,8 +818,7 @@ fn route_external_to_core(
                     }
                     serde_json::Value::Object(obj).to_string()
                 }
-                Err(_) => {
-                    // Emit audit for no response.
+                Err(error) => {
                     let _ =
                         handle
                             .external_event_tx
@@ -608,10 +827,10 @@ fn route_external_to_core(
                                     command_id: envelope.id.clone(),
                                     capability,
                                     allowed: false,
-                                    reason: Some("no response".into()),
+                                    reason: Some(error.message.clone()),
                                 },
                             ));
-                    serde_json::json!({ "allowed": false, "error": "no response" }).to_string()
+                    serde_json::json!({ "allowed": false, "error": error.json() }).to_string()
                 }
             }
         }
@@ -971,6 +1190,8 @@ pub unsafe extern "C" fn frost_store_string_free(value: *mut c_char) {
 mod tests {
     use super::*;
     use std::ffi::CString;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_DB: AtomicU64 = AtomicU64::new(1);
@@ -1061,5 +1282,241 @@ mod tests {
         assert_eq!(version, 10_000);
         drop(connection);
         std::fs::remove_file(path).unwrap();
+    }
+
+    fn json(value: *mut c_char) -> serde_json::Value {
+        assert!(!value.is_null());
+        let result = unsafe { CStr::from_ptr(value) }.to_str().unwrap();
+        let parsed = serde_json::from_str(result).unwrap();
+        unsafe { frost_engine_string_free(value) };
+        parsed
+    }
+
+    fn process(handle: *mut FrostEngineHandle) -> serde_json::Value {
+        let request = CString::new(r#"{"version":0,"method":"app.snapshot"}"#).unwrap();
+        json(unsafe { frost_engine_process_json(handle, request.as_ptr()) })
+    }
+
+    fn fake_handle() -> (
+        Box<FrostEngineHandle>,
+        Receiver<ProtocolRequest>,
+        Sender<ProtocolResponse>,
+    ) {
+        let (request_tx, request_rx) = crossbeam_channel::unbounded();
+        let (response_tx, response_rx) = crossbeam_channel::unbounded();
+        let (_event_tx, event_rx) = crossbeam_channel::unbounded();
+        let (_host_command_tx, host_command_rx) = crossbeam_channel::unbounded();
+        let (host_event_tx, _host_event_rx) = crossbeam_channel::unbounded();
+        let (host_result_tx, _host_result_rx) = crossbeam_channel::unbounded();
+        let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
+        let (shutdown_tx, _shutdown_rx) = crossbeam_channel::bounded(1);
+        let (_worker_done_tx, worker_done_rx) = crossbeam_channel::bounded(1);
+
+        (
+            Box::new(FrostEngineHandle {
+                request_tx,
+                response_rx,
+                event_rx,
+                host_command_rx,
+                host_event_tx,
+                host_result_tx,
+                external_event_tx,
+                external_policy: Mutex::new(ExternalPolicy::new()),
+                request_response_lock: Mutex::new(()),
+                shutdown_tx,
+                worker_done_rx,
+                state: Arc::new(AtomicU8::new(ENGINE_RUNNING)),
+                next_request_id: AtomicU64::new(1),
+                join_handle: None,
+            }),
+            request_rx,
+            response_tx,
+        )
+    }
+
+    #[test]
+    fn explicit_in_memory_constructor_processes_requests() {
+        let handle = frost_engine_new_in_memory();
+        assert!(!handle.is_null());
+        let response = process(handle);
+        assert_eq!(response["ok"], true);
+        unsafe { frost_engine_free(handle) };
+    }
+
+    #[test]
+    fn persistent_constructor_validates_path() {
+        assert!(unsafe { frost_engine_new_with_store(ptr::null()) }.is_null());
+        assert_eq!(
+            json(frost_engine_take_last_error_json())["code"],
+            "invalid_argument"
+        );
+
+        let empty = CString::new("").unwrap();
+        assert!(unsafe { frost_engine_new_with_store(empty.as_ptr()) }.is_null());
+        let invalid = [0xff_u8 as c_char, 0];
+        assert!(unsafe { frost_engine_new_with_store(invalid.as_ptr()) }.is_null());
+        assert_eq!(
+            json(frost_engine_take_last_error_json())["code"],
+            "invalid_utf8"
+        );
+    }
+
+    #[test]
+    fn persistent_constructor_rejects_unusable_targets() {
+        for target in ["/dev/null", "/dev/null/frost.sqlite3"] {
+            let path = CString::new(target).unwrap();
+            assert!(unsafe { frost_engine_new_with_store(path.as_ptr()) }.is_null());
+            assert_eq!(
+                json(frost_engine_take_last_error_json())["code"],
+                "store_open_failed"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatched_request_timeout_reports_unknown_non_retryable_outcome() {
+        let (mut handle, _request_rx, _response_tx) = fake_handle();
+        let started = Instant::now();
+        let response = process(&mut *handle);
+        assert_eq!(response["result"]["code"], "outcome_unknown");
+        assert_eq!(response["result"]["retryable"], false);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(handle.state.load(Ordering::Acquire), ENGINE_RUNNING);
+    }
+
+    #[test]
+    fn request_after_unknown_outcome_discards_late_response_and_recovers() {
+        let (mut handle, request_rx, response_tx) = fake_handle();
+        let (release_late_response_tx, release_late_response_rx) = crossbeam_channel::bounded(1);
+        let (late_response_sent_tx, late_response_sent_rx) = crossbeam_channel::bounded(1);
+        let worker = std::thread::spawn(move || {
+            let first = request_rx.recv().unwrap();
+            release_late_response_rx.recv().unwrap();
+            response_tx
+                .send(ProtocolResponse::ok(
+                    first.id,
+                    frost_protocol::Response::Json(serde_json::json!({ "attempt": 1 })),
+                ))
+                .unwrap();
+            late_response_sent_tx.send(()).unwrap();
+
+            let second = request_rx.recv().unwrap();
+            response_tx
+                .send(ProtocolResponse::ok(
+                    second.id,
+                    frost_protocol::Response::Json(serde_json::json!({ "attempt": 2 })),
+                ))
+                .unwrap();
+        });
+
+        let first = process(&mut *handle);
+        assert_eq!(first["result"]["code"], "outcome_unknown");
+        assert_eq!(first["result"]["retryable"], false);
+        assert_eq!(handle.state.load(Ordering::Acquire), ENGINE_RUNNING);
+
+        release_late_response_tx.send(()).unwrap();
+        late_response_sent_rx.recv().unwrap();
+        let second = process(&mut *handle);
+        assert_eq!(second["ok"], true);
+        assert_eq!(second["result"]["attempt"], 2);
+        assert!(second.get("id").is_none());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn stopped_worker_request_fails_without_blocking() {
+        let (mut handle, request_rx, _response_tx) = fake_handle();
+        drop(request_rx);
+        let started = Instant::now();
+        let response = process(&mut *handle);
+        assert_eq!(response["result"]["code"], "engine_stopped");
+        assert!(started.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn disconnected_response_channel_is_structured_error() {
+        let (mut handle, _request_rx, response_tx) = fake_handle();
+        drop(response_tx);
+        let response = process(&mut *handle);
+        assert_eq!(response["result"]["code"], "response_channel_disconnected");
+    }
+
+    #[test]
+    fn poisoned_request_mutex_is_structured_error() {
+        let (mut handle, _request_rx, _response_tx) = fake_handle();
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = handle.request_response_lock.lock().unwrap();
+            panic!("poison request mutex");
+        }));
+        let response = process(&mut *handle);
+        assert_eq!(response["result"]["code"], "mutex_poisoned");
+    }
+
+    #[test]
+    fn normal_free_completes_within_two_seconds() {
+        let handle = frost_engine_new_in_memory();
+        assert!(!handle.is_null());
+        let started = Instant::now();
+        unsafe { frost_engine_free(handle) };
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn c_string_failure_returns_structured_error_instead_of_empty_string() {
+        let response = json(response_c_string(None, "contains\0nul".to_owned()));
+        assert_eq!(response["result"]["code"], "c_string_failed");
+    }
+
+    #[test]
+    fn concurrent_external_calls_share_the_request_deadline() {
+        let (mut handle, _request_rx, _response_tx) = fake_handle();
+        handle.external_policy.lock().unwrap().grant(
+            "parallel-origin",
+            vec![frost_protocol::ExternalCapability::ReadState],
+        );
+
+        let command = |id: &str| {
+            serde_json::to_string(&frost_protocol::ExternalCommandEnvelope::new(
+                id,
+                "parallel-origin",
+                frost_protocol::ExternalCapability::ReadState,
+                frost_protocol::ExternalCommand::StateRead,
+            ))
+            .unwrap()
+        };
+        let barrier = Arc::new(Barrier::new(3));
+        let handle_addr = (&mut *handle as *mut FrostEngineHandle) as usize;
+        let workers = ["external-1", "external-2"].map(|id| {
+            let barrier = Arc::clone(&barrier);
+            let command = command(id);
+            std::thread::spawn(move || {
+                barrier.wait();
+                json(unsafe {
+                    frost_engine_process_external_json(
+                        handle_addr as *mut FrostEngineHandle,
+                        command.as_ptr().cast(),
+                    )
+                })
+            })
+        });
+
+        barrier.wait();
+        let mut errors = Vec::new();
+        for worker in workers {
+            let response = worker.join().unwrap();
+            assert_eq!(response["allowed"], false);
+            errors.push((
+                response["error"]["code"].as_str().unwrap().to_owned(),
+                response["error"]["retryable"].as_bool().unwrap(),
+            ));
+        }
+        errors.sort();
+        assert_eq!(
+            errors,
+            vec![
+                ("outcome_unknown".to_owned(), false),
+                ("request_timeout".to_owned(), true),
+            ]
+        );
     }
 }

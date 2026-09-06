@@ -123,6 +123,7 @@ impl SqliteStore {
             conn: Connection::open(path)?,
         };
         store.migrate()?;
+        store.verify_writable()?;
         Ok(store)
     }
 
@@ -136,6 +137,18 @@ impl SqliteStore {
 
     fn migrate(&mut self) -> StoreResult<()> {
         migrations::migrate(&mut self.conn)
+    }
+
+    fn verify_writable(&self) -> StoreResult<()> {
+        // Fail initialization if the database cannot start a write transaction.
+        self.conn.execute_batch(
+            "
+            BEGIN IMMEDIATE;
+            DELETE FROM settings WHERE 0;
+            ROLLBACK;
+            ",
+        )?;
+        Ok(())
     }
 }
 
@@ -931,21 +944,29 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT value FROM settings WHERE key = 'sessionJson'",
+                "SELECT snapshot FROM session WHERE id = 1",
                 [],
                 |row| row.get::<_, String>(0),
             )
             .unwrap(),
             session_json
         );
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'sessionJson'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_err()
+            .to_string(),
+            "Query returned no rows"
+        );
 
         let store = SqliteStore { conn };
         let updated_session_json = r#"{"version":1,"windows":[]}"#;
-        store
-            .set_setting("sessionJson", updated_session_json)
-            .unwrap();
+        store.set_session(updated_session_json).unwrap();
         assert_eq!(
-            store.get_setting("sessionJson").unwrap().as_deref(),
+            store.get_session().unwrap().as_deref(),
             Some(updated_session_json)
         );
     }
@@ -998,7 +1019,7 @@ mod tests {
 
     #[test]
     fn migrates_legacy_session_setting_into_dedicated_repository() {
-        let store = SqliteStore::in_memory().unwrap();
+        let mut store = SqliteStore::in_memory().unwrap();
         store
             .set_setting("sessionJson", "{\"version\":1,\"windows\":[]}")
             .unwrap();
