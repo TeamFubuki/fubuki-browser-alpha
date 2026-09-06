@@ -15,6 +15,7 @@ pub enum ExternalCapability {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalCommandEnvelope {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     /// Correlation id for matching the response back to the caller. This is NOT
     /// an identity/authorization key; capability grant and rate-limit lookups
@@ -49,6 +50,7 @@ pub enum ExternalCommand {
     HistoryClear { range: String },
     #[serde(rename = "download.remove", rename_all = "camelCase")]
     DownloadRemove {
+        download_id: Option<String>,
         url: Option<String>,
         path: Option<String>,
     },
@@ -59,6 +61,7 @@ pub enum ExternalCommand {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalEventEnvelope {
+    #[serde(deserialize_with = "crate::deserialize_protocol_version")]
     pub version: u16,
     #[serde(flatten)]
     pub event: ExternalEvent,

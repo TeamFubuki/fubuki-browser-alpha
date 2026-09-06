@@ -1,0 +1,85 @@
+{
+  "version": 0,
+  "scenarios": [
+    {
+      "name": "tabs-create",
+      "request": {"version": 0, "id": "req-create", "method": "tabs.create", "params": {"url": "https://example.com", "active": true, "windowId": "window-1"}},
+      "response": {"version": 0, "id": "req-create", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "tab.created", "payload": {"id": "tab-1", "windowId": "window-1", "title": "Example", "url": "https://example.com", "faviconUrl": "", "errorText": "", "zoomLevel": 0, "isLoading": false, "canGoBack": false, "canGoForward": false, "isActive": true, "isPinned": false}},
+      "hostCommand": {"version": 0, "id": "cmd-create", "command": "page.create", "payload": {"tabId": "tab-1", "windowId": "window-1", "url": "https://example.com", "active": true}},
+      "hostResult": {"version": 0, "commandId": "cmd-create", "ok": true}
+    },
+    {
+      "name": "tabs-close",
+      "request": {"version": 0, "id": "req-close", "method": "tabs.close", "params": {"tabId": "tab-1"}},
+      "response": {"version": 0, "id": "req-close", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "tab.closed", "payload": {"tabId": "tab-1"}},
+      "hostCommand": {"version": 0, "id": "cmd-close", "command": "page.close", "payload": {"tabId": "tab-1"}},
+      "hostResult": {"version": 0, "commandId": "cmd-close", "ok": true}
+    },
+    {
+      "name": "tabs-move",
+      "request": {"version": 0, "id": "req-move", "method": "tabs.move", "params": {"tabId": "tab-2", "toIndex": 0}},
+      "response": {"version": 0, "id": "req-move", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "tab.moved", "payload": {"tabId": "tab-2", "fromWindowId": "window-1", "toWindowId": "window-1", "toIndex": 0}},
+      "hostCommand": {"version": 0, "id": "cmd-move", "command": "page.move", "payload": {"tabId": "tab-2", "toIndex": 0}},
+      "hostResult": {"version": 0, "commandId": "cmd-move", "ok": true}
+    },
+    {
+      "name": "navigation-open",
+      "request": {"version": 0, "id": "req-nav", "method": "tabs.navigate", "params": {"tabId": "tab-2", "input": "https://openai.com"}},
+      "response": {"version": 0, "id": "req-nav", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "tab.updated", "payload": {"tabId": "tab-2", "url": "https://openai.com", "isLoading": true}},
+      "hostCommand": {"version": 0, "id": "cmd-nav", "command": "page.navigate", "payload": {"tabId": "tab-2", "url": "https://openai.com"}},
+      "hostResult": {"version": 0, "commandId": "cmd-nav", "ok": true}
+    },
+    {
+      "name": "window-create",
+      "request": {"version": 0, "id": "req-window", "method": "windows.create", "params": {}},
+      "response": {"version": 0, "id": "req-window", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "window.created", "payload": {"id": "window-2", "activeTabId": null, "isPrivate": false, "tabIds": []}},
+      "hostCommand": {"version": 0, "id": "cmd-window", "command": "window.create", "payload": {"windowId": "window-2", "isPrivate": false}},
+      "hostResult": {"version": 0, "commandId": "cmd-window", "ok": true}
+    },
+    {
+      "name": "tab-activate",
+      "request": {"version": 0, "id": "req-activate", "method": "tabs.activate", "params": {"tabId": "tab-2"}},
+      "response": {"version": 0, "id": "req-activate", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "tab.activated", "payload": {"tabId": "tab-2"}},
+      "hostCommand": {"version": 0, "id": "cmd-activate", "command": "page.activate", "payload": {"tabId": "tab-2"}},
+      "hostResult": {"version": 0, "commandId": "cmd-activate", "ok": true}
+    },
+    {
+      "name": "tab-pin",
+      "request": {"version": 0, "id": "req-pin", "method": "tabs.pin", "params": {"tabId": "tab-2", "pinned": true}},
+      "response": {"version": 0, "id": "req-pin", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "tab.updated", "payload": {"tabId": "tab-2", "isPinned": true}},
+      "hostCommand": {"version": 0, "id": "cmd-pin", "command": "page.pin", "payload": {"tabId": "tab-2", "pinned": true}},
+      "hostResult": {"version": 0, "commandId": "cmd-pin", "ok": true}
+    },
+    {
+      "name": "rollback-failure",
+      "request": {"version": 0, "id": "req-rollback", "method": "tabs.close", "params": {"tabId": "tab-3"}},
+      "response": {"version": 0, "id": "req-rollback", "ok": false, "kind": "error", "result": "host command failed"},
+      "event": {"version": 0, "event": "tab.updated", "payload": {"tabId": "tab-3", "errorText": "rollback"}},
+      "hostCommand": {"version": 0, "id": "cmd-rollback", "command": "page.close", "payload": {"tabId": "tab-3"}},
+      "hostResult": {"version": 0, "commandId": "cmd-rollback", "ok": false, "error": "host command failed"}
+    },
+    {
+      "name": "window-focus",
+      "request": {"version": 0, "id": "req-focus", "method": "app.snapshot", "params": {}},
+      "response": {"version": 0, "id": "req-focus", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "window.closed", "payload": {"windowId": "window-2"}},
+      "hostCommand": {"version": 0, "id": "cmd-focus", "command": "window.close", "payload": {"windowId": "window-2"}},
+      "hostResult": {"version": 0, "commandId": "cmd-focus", "ok": true}
+    },
+    {
+      "name": "browsing-data-clear",
+      "request": {"version": 0, "id": "req-clear", "method": "data.clear", "params": {"target": "history"}},
+      "response": {"version": 0, "id": "req-clear", "ok": true, "kind": "bool", "result": true},
+      "event": {"version": 0, "event": "history.changed", "payload": {"url": null}},
+      "hostCommand": {"version": 0, "id": "cmd-clear", "command": "browsingData.clear", "payload": {"target": "history"}},
+      "hostResult": {"version": 0, "commandId": "cmd-clear", "ok": true}
+    }
+  ]
+}

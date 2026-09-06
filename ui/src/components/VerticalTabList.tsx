@@ -2,6 +2,15 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import { tabs, type Tab } from '../bridge/fubuki';
 import { t } from '../i18n';
 import { browserState, currentLanguage } from '../stores/browserStore';
+import {
+  focusAfterClose,
+  focusTabElement,
+  focusTargetAfterClose,
+  navigationTarget,
+  reorderTargetIndex,
+  tabIndexFor,
+  type TabNavigationKey,
+} from './verticalTabKeyboard';
 
 function titleFor(tab: Tab, lang: string) {
   return (
@@ -26,6 +35,7 @@ export default function VerticalTabList() {
   const [query, setQuery] = createSignal('');
   const [searchExpanded, setSearchExpanded] = createSignal(false);
   const [dragOverId, setDragOverId] = createSignal<string | null>(null);
+  const [focusedTabId, setFocusedTabId] = createSignal('');
 
   const lang = currentLanguage;
 
@@ -43,6 +53,86 @@ export default function VerticalTabList() {
       `${tab.title} ${tab.url}`.toLowerCase().includes(q),
     );
   });
+
+  const focusIds = (list: readonly Tab[]) => list.map((tab) => tab.id);
+
+  const focusAfterCloseAndRestore = (list: readonly Tab[], tab: Tab) => {
+    const ids = focusIds(list);
+    const nextId = focusAfterClose(ids, ids.indexOf(tab.id));
+    setFocusedTabId(nextId ?? '');
+    return nextId;
+  };
+
+  const closeTab = (list: readonly Tab[], tab: Tab) => {
+    const nextId = focusAfterCloseAndRestore(list, tab);
+    void tabs.close(tab.id).then((closed) => {
+      if (closed) {
+        queueMicrotask(() => {
+          const focusId = focusTargetAfterClose(
+            nextId,
+            browserState.activeTabId,
+          );
+          if (focusId) {
+            setFocusedTabId(focusId);
+            focusTabElement(focusId);
+          }
+        });
+      }
+    });
+  };
+
+  const handleTabKeyDown = (
+    event: KeyboardEvent,
+    list: readonly Tab[],
+    tab: Tab,
+  ) => {
+    const navigationKey = event.key as TabNavigationKey;
+    if (
+      !event.altKey &&
+      (navigationKey === 'ArrowUp' ||
+        navigationKey === 'ArrowDown' ||
+        navigationKey === 'Home' ||
+        navigationKey === 'End')
+    ) {
+      const targetId = navigationTarget(focusIds(list), tab.id, navigationKey);
+      if (targetId) {
+        event.preventDefault();
+        setFocusedTabId(targetId);
+        queueMicrotask(() => focusTabElement(targetId));
+      }
+      return;
+    }
+
+    if (
+      event.altKey &&
+      (navigationKey === 'ArrowUp' || navigationKey === 'ArrowDown')
+    ) {
+      const targetIndex = reorderTargetIndex(
+        browserState.tabs,
+        list,
+        tab.id,
+        navigationKey,
+      );
+      if (targetIndex !== null) {
+        event.preventDefault();
+        void tabs.move(tab.id, targetIndex).then(() => {
+          queueMicrotask(() => focusTabElement(tab.id));
+        });
+      }
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      setFocusedTabId(tab.id);
+      void tabs.activate(tab.id);
+      return;
+    }
+    if (event.key === 'Delete') {
+      event.preventDefault();
+      closeTab(list, tab);
+    }
+  };
 
   const showSearch = () =>
     searchExpanded() ||
@@ -92,6 +182,7 @@ export default function VerticalTabList() {
         <div
           class="pinned-tab-list"
           role="tablist"
+          aria-orientation="vertical"
           aria-label={t('tabs.pinned', lang())}
         >
           <For each={pinnedTabs()}>
@@ -99,11 +190,25 @@ export default function VerticalTabList() {
               <div
                 classList={{ 'pinned-tab': true, active: tab.isActive }}
                 title={titleFor(tab, lang())}
-                role="tab"
-                aria-selected={tab.isActive}
+                role="presentation"
               >
                 <button
                   class="pinned-tab-activate"
+                  data-tab-id={tab.id}
+                  role="tab"
+                  aria-label={titleFor(tab, lang())}
+                  aria-selected={tab.isActive}
+                  aria-keyshortcuts="ArrowUp ArrowDown Home End Enter Space Delete Alt+ArrowUp Alt+ArrowDown"
+                  tabIndex={tabIndexFor(
+                    tab.id,
+                    focusIds(pinnedTabs()),
+                    browserState.activeTabId,
+                    focusedTabId(),
+                  )}
+                  onFocus={() => setFocusedTabId(tab.id)}
+                  onKeyDown={(event) =>
+                    handleTabKeyDown(event, pinnedTabs(), tab)
+                  }
                   onClick={() => void tabs.activate(tab.id)}
                 >
                   <Favicon tab={tab} />
@@ -116,6 +221,7 @@ export default function VerticalTabList() {
       <div
         class="vertical-tab-list"
         role="tablist"
+        aria-orientation="vertical"
         aria-label={t('tabs.open', lang())}
       >
         <For each={filteredTabs()}>
@@ -129,9 +235,8 @@ export default function VerticalTabList() {
                   pinned: tab.isPinned,
                   'drag-over': dragOverId() === tab.id,
                 }}
+                role="presentation"
                 title={titleFor(tab, lang())}
-                role="tab"
-                aria-selected={tab.isActive}
                 draggable
                 onDragStart={(event) => {
                   const dt = event.dataTransfer;
@@ -152,6 +257,21 @@ export default function VerticalTabList() {
               >
                 <button
                   class="tab-activate"
+                  data-tab-id={tab.id}
+                  role="tab"
+                  tabIndex={tabIndexFor(
+                    tab.id,
+                    focusIds(filteredTabs()),
+                    browserState.activeTabId,
+                    focusedTabId(),
+                  )}
+                  aria-label={titleFor(tab, lang())}
+                  aria-selected={tab.isActive}
+                  aria-keyshortcuts="ArrowUp ArrowDown Home End Enter Space Delete Alt+ArrowUp Alt+ArrowDown"
+                  onFocus={() => setFocusedTabId(tab.id)}
+                  onKeyDown={(event) =>
+                    handleTabKeyDown(event, filteredTabs(), tab)
+                  }
                   onClick={() => void tabs.activate(tab.id)}
                 >
                   <Favicon tab={tab} />
@@ -163,7 +283,7 @@ export default function VerticalTabList() {
                   aria-label={closeLabel}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void tabs.close(tab.id);
+                    closeTab(filteredTabs(), tab);
                   }}
                 >
                   <span aria-hidden="true">x</span>

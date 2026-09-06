@@ -350,7 +350,12 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["downloads.remove"] = [this](CefRefPtr<CefDictionaryValue> params) {
-    return FrostInvoke("downloads.remove", params);
+    // RemoveDownload already executes downloads.remove through FrostStore.
+    // Mirroring it through HostBackedFrostInvoke would execute the legacy
+    // URL/path fallback twice and can remove a second matching record.
+    return BoolValue(window_.RemoveDownload(params->GetString("downloadId"),
+                                            params->GetString("url"),
+                                            params->GetString("path")));
   };
   methods_["downloads.clear"] = [this](CefRefPtr<CefDictionaryValue>) {
     auto params = CefDictionaryValue::Create();

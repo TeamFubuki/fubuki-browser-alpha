@@ -15,10 +15,16 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+add_test(
+  NAME AppIconMetadataTest
+  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/AppIconMetadataTest.cmake"
+)
+
 add_executable(fubuki_tests
   UrlUtilsTest.cc
   JsonUtilsTest.cc
   BridgeSchemaTest.cc
+  ProtocolFixtureTest.cc
   # Add more test files here as the project grows
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/utils/UrlUtils.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/bridge/BridgeSchema.cc"
@@ -26,6 +32,10 @@ add_executable(fubuki_tests
 
 target_include_directories(fubuki_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_compile_definitions(fubuki_tests PRIVATE
+  FUBUKI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.."
 )
 
 target_link_libraries(fubuki_tests PRIVATE

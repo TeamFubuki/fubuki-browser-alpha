@@ -15,7 +15,10 @@ pub struct ProtocolRequest {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireProtocolRequest {
-    #[serde(default = "default_version")]
+    #[serde(
+        default = "default_version",
+        deserialize_with = "crate::deserialize_protocol_version"
+    )]
     version: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     id: Option<String>,
@@ -167,6 +170,7 @@ pub enum Request {
     DownloadsList,
     #[serde(rename = "downloads.remove", rename_all = "camelCase")]
     DownloadsRemove {
+        download_id: Option<String>,
         url: Option<String>,
         path: Option<String>,
     },
@@ -218,6 +222,14 @@ mod tests {
 
         assert_eq!(request.version, 0);
         assert_eq!(request.request, Request::AppSnapshot);
+    }
+
+    #[test]
+    fn defaults_missing_protocol_version_to_current() {
+        let request: ProtocolRequest =
+            serde_json::from_str(r#"{"method":"app.snapshot","params":{}}"#).unwrap();
+
+        assert_eq!(request.version, crate::PROTOCOL_VERSION);
     }
 
     #[test]

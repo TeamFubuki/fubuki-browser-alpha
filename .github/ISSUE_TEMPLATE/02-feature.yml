@@ -1,0 +1,53 @@
+name: 機能要望
+description: 新しい機能や改善案を提案します
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: 重複確認
+      options:
+        - label: 同様の提案がないか既存のIssueを検索しました
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい問題
+      description: 現在どのような問題や不便がありますか
+      placeholder: 現在は毎回手動で設定を変更する必要があります
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する機能
+      description: どのような機能が必要か説明してください
+    validations:
+      required: true
+
+  - type: textarea
+    id: usage
+    attributes:
+      label: 利用例
+      description: 実際にどのように使用するか説明してください
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案
+      description: 検討した別の方法があれば記載してください
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 希望する優先度
+      options:
+        - 低
+        - 中
+        - 高

@@ -35,7 +35,8 @@ char *frost_store_get_logs(void *handle, unsigned long limit);
 bool frost_store_clear_logs(void *handle);
 bool frost_store_add_history(void *handle, const char *title, const char *url,
                              const char *favicon_url);
-bool frost_store_upsert_download(void *handle, const char *url, const char *path,
+bool frost_store_upsert_download(void *handle, const char *download_id,
+                                 const char *url, const char *path,
                                  const char *state, long long percent);
 // Frees a string previously returned by a frost_store_* function.
 void frost_store_string_free(char *value);

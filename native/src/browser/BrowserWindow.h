@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -74,7 +75,8 @@ class BrowserWindow {
                     const std::string& faviconUrl);
   bool RemoveBookmark(const std::string& url);
   bool RemoveHistory(const std::string& url);
-  bool RemoveDownload(const std::string& url, const std::string& path);
+  bool RemoveDownload(const std::string& downloadId, const std::string& url,
+                      const std::string& path);
   bool OpenDownloadedFile(const std::string& path);
   bool RevealDownloadedFile(const std::string& path);
   bool ClearBrowsingData(const std::string& target);
@@ -158,6 +160,7 @@ class BrowserWindow {
   void ResizeViews();
   void UpdateTabPatch(const std::string& tabId, const std::string& title, const std::string& url,
                       bool isLoading, bool canGoBack, bool canGoForward);
+  std::string DownloadKeyFor(const std::string& downloadId);
   void SetActiveContentView();
   CefWindowHandle ContentParentHandle() const;
   CefWindowHandle UiParentHandle() const;
@@ -171,6 +174,7 @@ class BrowserWindow {
   CefRefPtr<CefRequestContext> privateRequestContext_;
   double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
+  std::unordered_map<std::string, std::string> downloadKeys_;
   std::string windowId_;
   NSWindow* window_ = nullptr;
   NSView* uiHostView_ = nullptr;
