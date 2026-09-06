@@ -45,7 +45,9 @@ pub unsafe extern "C" fn frost_engine_new() -> *mut FrostEngineHandle {
 
 /// Creates a new FrostEngine instance backed by a SQLite store at `path`.
 ///
-/// If `path` is null or empty, falls back to an in-memory store.
+/// If `path` is null or empty, uses an in-memory store. A non-empty SQLite
+/// path must open and migrate successfully; persistent-store failures are not
+/// silently replaced with temporary storage.
 ///
 /// # Safety
 ///
@@ -63,7 +65,30 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
     let (host_result_tx, host_result_rx) = crossbeam_channel::unbounded();
     let (external_event_tx, _external_event_rx) = crossbeam_channel::unbounded();
 
-    let join_handle = if path.is_null() {
+    let store_path = if path.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(path) }.to_str() {
+            Ok("") => None,
+            Ok(path) => Some(path.to_owned()),
+            Err(_) => return ptr::null_mut(),
+        }
+    };
+
+    let join_handle = if let Some(path) = store_path {
+        let store = match frost_store::SqliteStore::open(path) {
+            Ok(store) => store,
+            Err(_) => return ptr::null_mut(),
+        };
+        spawn_core(
+            BrowserCore::with_adapter_and_settings(HostCommandAdapter::new(host_command_tx), store),
+            event_tx,
+            request_rx,
+            response_tx,
+            host_event_rx,
+            host_result_rx,
+        )
+    } else {
         spawn_core(
             BrowserCore::with_adapter_and_settings(
                 HostCommandAdapter::new(host_command_tx),
@@ -75,35 +100,6 @@ pub unsafe extern "C" fn frost_engine_new_with_store(
             host_event_rx,
             host_result_rx,
         )
-    } else {
-        let path = unsafe { CStr::from_ptr(path) }
-            .to_str()
-            .unwrap_or_default()
-            .to_owned();
-        match frost_store::SqliteStore::open(path) {
-            Ok(store) => spawn_core(
-                BrowserCore::with_adapter_and_settings(
-                    HostCommandAdapter::new(host_command_tx.clone()),
-                    store,
-                ),
-                event_tx.clone(),
-                request_rx.clone(),
-                response_tx.clone(),
-                host_event_rx.clone(),
-                host_result_rx.clone(),
-            ),
-            Err(_) => spawn_core(
-                BrowserCore::with_adapter_and_settings(
-                    HostCommandAdapter::new(host_command_tx.clone()),
-                    frost_core::InMemoryStore::default(),
-                ),
-                event_tx.clone(),
-                request_rx.clone(),
-                response_tx.clone(),
-                host_event_rx.clone(),
-                host_result_rx.clone(),
-            ),
-        }
     };
 
     Box::into_raw(Box::new(FrostEngineHandle {
@@ -930,5 +926,44 @@ pub unsafe extern "C" fn frost_store_upsert_download(
 pub unsafe extern "C" fn frost_store_string_free(value: *mut c_char) {
     unsafe {
         frost_engine_string_free(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_DB: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_db_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fubuki-frost-ffi-{name}-{}-{}.sqlite3",
+            std::process::id(),
+            NEXT_TEMP_DB.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn engine_constructor_rejects_future_schema_without_temporary_fallback() {
+        let path = temp_db_path("future-schema");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "user_version", 10_000)
+                .unwrap();
+        }
+
+        let path_string = CString::new(path.to_string_lossy().as_bytes()).unwrap();
+        let handle = unsafe { frost_engine_new_with_store(path_string.as_ptr()) };
+        assert!(handle.is_null());
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 10_000);
+        drop(connection);
+        std::fs::remove_file(path).unwrap();
     }
 }
