@@ -104,6 +104,16 @@ target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper frost_ffi_st
 set(FUBUKI_APP_BUNDLE "$<TARGET_BUNDLE_DIR:FubukiBrowserAlpha>")
 COPY_MAC_FRAMEWORK(FubukiBrowserAlpha "${CEF_BINARY_DIR}" "${FUBUKI_APP_BUNDLE}")
 
+# Copy app icon
+add_custom_command(
+  TARGET FubukiBrowserAlpha
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/fubuki.icns"
+    "${FUBUKI_APP_BUNDLE}/Contents/Resources/fubuki.icns"
+  VERBATIM
+)
+
 foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
   string(REPLACE ":" ";" _suffix_list ${_suffix_list})
   list(GET _suffix_list 0 _name_suffix)
