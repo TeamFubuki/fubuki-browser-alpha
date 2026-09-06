@@ -38,7 +38,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -85,6 +85,9 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: Shared protocol fixture contract tests
+        run: cargo test -p frost-protocol --test protocol_contract
 
   rust-ffi:
     name: Rust FFI build (frost-ffi staticlib)
@@ -178,7 +181,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -210,6 +213,9 @@ jobs:
       - name: Run tests
         run: cd native/tests/build && ctest --output-on-failure
 
+      - name: Shared protocol fixture contract tests
+        run: cd native/tests/build && ctest -R '^ProtocolFixtureTest\.' --output-on-failure
+
   macos-build:
     name: macOS native build (CEF)
     runs-on: macos-15
@@ -237,7 +243,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -253,7 +259,7 @@ jobs:
 
       - name: Cache CEF binaries & archive
         id: cef-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             .cache/cef

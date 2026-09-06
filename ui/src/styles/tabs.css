@@ -105,6 +105,12 @@
   background: transparent;
 }
 
+.pinned-tab-activate:focus-visible,
+.tab-activate:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .vertical-tab-list::-webkit-scrollbar {
   width: 8px;
 }

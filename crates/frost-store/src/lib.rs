@@ -5,12 +5,45 @@ use frost_protocol::{BookmarkRecord, DownloadRecord, HistoryRecord, PermissionRe
 use rusqlite::{Connection, params};
 use thiserror::Error;
 
+pub const VALID_SETTING_KEYS: &[&str] = &[
+    "homepage",
+    "downloadDirectory",
+    "searchEngine",
+    "startupBehavior",
+    "customSearchUrl",
+    "theme",
+    "appearance",
+    "toolbarDensity",
+    "sidebarVisible",
+    "sidebarWidth",
+    "defaultBookmarkDisplay",
+    "openBookmarkIn",
+    "showBookmarkFavicons",
+    "newTabPage",
+    "homeUrl",
+    "askBeforeDownload",
+    "language",
+    "defaultZoomLevel",
+    "closeWindowWithLastTab",
+    "privateSearchEngine",
+    "newTabBackgroundMode",
+    "newTabBackgroundColor",
+    "newTabBackgroundUrl",
+];
+
+/// Store-only keys used by the native host during the transition to dedicated
+/// repositories. These are intentionally excluded from `VALID_SETTING_KEYS`
+/// so they cannot be written through the public settings protocol.
+const INTERNAL_SETTING_KEYS: &[&str] = &["sessionJson"];
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error("invalid setting key: {0}")]
     InvalidKey(String),
+    #[error("database schema version {found} is newer than supported version {supported}")]
+    UnsupportedSchemaVersion { found: i64, supported: i64 },
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -35,8 +68,20 @@ pub trait HistoryRepository {
 
 pub trait DownloadRepository {
     fn list_downloads(&self) -> StoreResult<Vec<DownloadRecord>>;
-    fn upsert_download(&self, url: &str, path: &str, state: &str, percent: i64) -> StoreResult<()>;
-    fn remove_download(&self, url: Option<&str>, path: Option<&str>) -> StoreResult<bool>;
+    fn upsert_download(
+        &self,
+        download_id: &str,
+        url: &str,
+        path: &str,
+        state: &str,
+        percent: i64,
+    ) -> StoreResult<()>;
+    fn remove_download(
+        &self,
+        download_id: Option<&str>,
+        url: Option<&str>,
+        path: Option<&str>,
+    ) -> StoreResult<bool>;
 }
 
 pub trait PermissionRepository {
@@ -74,7 +119,7 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open(path)?,
         };
         store.migrate()?;
@@ -82,16 +127,32 @@ impl SqliteStore {
     }
 
     pub fn in_memory() -> StoreResult<Self> {
-        let store = Self {
+        let mut store = Self {
             conn: Connection::open_in_memory()?,
         };
         store.migrate()?;
         Ok(store)
     }
 
-    fn migrate(&self) -> StoreResult<()> {
-        self.conn.execute_batch(
-            "
+    fn migrate(&mut self) -> StoreResult<()> {
+        migrations::migrate(&mut self.conn)
+    }
+}
+
+mod migrations {
+    use super::{Connection, StoreError, StoreResult};
+
+    pub(super) const LATEST_SCHEMA_VERSION: i64 = 4;
+
+    struct Migration {
+        version: i64,
+        sql: &'static str,
+    }
+
+    const MIGRATIONS: &[Migration] = &[
+        Migration {
+            version: 1,
+            sql: "
             CREATE TABLE IF NOT EXISTS settings (
               key TEXT PRIMARY KEY NOT NULL,
               value TEXT NOT NULL,
@@ -113,6 +174,7 @@ impl SqliteStore {
             );
             CREATE TABLE IF NOT EXISTS downloads (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              download_id TEXT NOT NULL DEFAULT '',
               url TEXT NOT NULL DEFAULT '',
               path TEXT NOT NULL DEFAULT '',
               state TEXT NOT NULL,
@@ -147,7 +209,123 @@ impl SqliteStore {
             DELETE FROM settings
               WHERE key = 'sessionJson' AND EXISTS (SELECT 1 FROM session WHERE id = 1);
             ",
+        },
+        Migration {
+            version: 2,
+            sql: "
+            CREATE INDEX IF NOT EXISTS idx_history_url ON history(url);
+            CREATE INDEX IF NOT EXISTS idx_history_created_at ON history(created_at);
+            CREATE INDEX IF NOT EXISTS idx_downloads_url_path ON downloads(url, path);
+            CREATE INDEX IF NOT EXISTS idx_downloads_path ON downloads(path);
+            ",
+        },
+        Migration {
+            version: 3,
+            sql: "
+            DROP INDEX IF EXISTS idx_history_created_at;
+            CREATE INDEX idx_history_created_at
+              ON history(CAST(created_at AS INTEGER));
+            ",
+        },
+    ];
+
+    pub(super) fn migrate(conn: &mut Connection) -> StoreResult<()> {
+        let current_version = schema_version(conn)?;
+        if current_version > LATEST_SCHEMA_VERSION {
+            return Err(StoreError::UnsupportedSchemaVersion {
+                found: current_version,
+                supported: LATEST_SCHEMA_VERSION,
+            });
+        }
+
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version > current_version)
+        {
+            apply(conn, migration.version, migration.sql)?;
+        }
+        if current_version < 4 {
+            apply_download_identity(conn)?;
+        }
+        // Migrate legacy sessionJson setting to dedicated session table.
+        // This is needed for databases that were already at version 4
+        // before the session repository was introduced. The statement is
+        // idempotent and safe for fresh databases where version 1's SQL
+        // already performed the same migration.
+        conn.execute_batch(
+            "
+            INSERT OR IGNORE INTO session(id, snapshot)
+              SELECT 1, value FROM settings WHERE key = 'sessionJson';
+            DELETE FROM settings
+              WHERE key = 'sessionJson' AND EXISTS (SELECT 1 FROM session WHERE id = 1);
+            ",
         )?;
+        Ok(())
+    }
+
+    fn schema_version(conn: &Connection) -> rusqlite::Result<i64> {
+        conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+    }
+
+    fn apply(conn: &mut Connection, version: i64, sql: &str) -> StoreResult<()> {
+        let transaction = conn.transaction()?;
+        transaction.execute_batch(sql)?;
+        transaction.pragma_update(None, "user_version", version)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn apply_download_identity(conn: &mut Connection) -> StoreResult<()> {
+        let transaction = conn.transaction()?;
+        let has_download_id = transaction.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('downloads') WHERE name = 'download_id'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if !has_download_id {
+            transaction.execute(
+                "ALTER TABLE downloads ADD COLUMN download_id TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE downloads
+             SET download_id = 'legacy-' || id
+             WHERE download_id IS NULL OR download_id = ''",
+            [],
+        )?;
+        transaction.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS downloads_download_id ON downloads(download_id)",
+            [],
+        )?;
+        transaction.pragma_update(None, "user_version", 4)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_for_test(
+        conn: &mut Connection,
+        version: i64,
+        sql: &str,
+    ) -> StoreResult<()> {
+        apply(conn, version, sql)
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_up_to_for_test(
+        conn: &mut Connection,
+        target_version: i64,
+    ) -> StoreResult<()> {
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= target_version)
+        {
+            apply(conn, migration.version, migration.sql)?;
+        }
+        if target_version >= 4 {
+            apply_download_identity(conn)?;
+        }
         Ok(())
     }
 }
@@ -272,50 +450,84 @@ impl HistoryRepository for SqliteStore {
 impl DownloadRepository for SqliteStore {
     fn list_downloads(&self) -> StoreResult<Vec<DownloadRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT url, path, state, percent, created_at FROM downloads ORDER BY id DESC LIMIT 200",
+            "SELECT download_id, url, path, state, percent, created_at FROM downloads ORDER BY id DESC LIMIT 200",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(DownloadRecord {
-                url: row.get(0)?,
-                path: row.get(1)?,
-                state: row.get(2)?,
-                percent: row.get(3)?,
-                created_at: row.get(4)?,
+                download_id: row.get(0)?,
+                url: row.get(1)?,
+                path: row.get(2)?,
+                state: row.get(3)?,
+                percent: row.get(4)?,
+                created_at: row.get(5)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }
 
-    fn upsert_download(&self, url: &str, path: &str, state: &str, percent: i64) -> StoreResult<()> {
+    fn upsert_download(
+        &self,
+        download_id: &str,
+        url: &str,
+        path: &str,
+        state: &str,
+        percent: i64,
+    ) -> StoreResult<()> {
         let now = now_text();
+        let download_id = if download_id.is_empty() {
+            format!("legacy-import:{url}:{path}")
+        } else {
+            download_id.to_owned()
+        };
         let changed = self.conn.execute(
             "
             UPDATE downloads
-            SET state = ?1, percent = ?2, updated_at = ?3
-            WHERE url = ?4 AND path = ?5
+            SET url = ?2,
+                path = CASE WHEN ?3 <> '' THEN ?3 ELSE path END,
+                state = ?4,
+                percent = ?5,
+                updated_at = ?6
+            WHERE download_id = ?1
             ",
-            params![state, percent, now, url, path],
+            params![download_id, url, path, state, percent, now],
         )?;
         if changed == 0 {
             self.conn.execute(
                 "
-                INSERT INTO downloads (url, path, state, percent, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+                INSERT INTO downloads
+                  (download_id, url, path, state, percent, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
                 ",
-                params![url, path, state, percent, now],
+                params![download_id, url, path, state, percent, now],
             )?;
         }
         Ok(())
     }
 
-    fn remove_download(&self, url: Option<&str>, path: Option<&str>) -> StoreResult<bool> {
+    fn remove_download(
+        &self,
+        download_id: Option<&str>,
+        url: Option<&str>,
+        path: Option<&str>,
+    ) -> StoreResult<bool> {
         let changed = self.conn.execute(
             "
             DELETE FROM downloads
-            WHERE (url = ?1 AND ?1 <> '') OR (path = ?2 AND ?2 <> '')
+            WHERE id = (
+              SELECT id FROM downloads
+              WHERE (?1 <> '' AND download_id = ?1)
+                 OR (?1 = '' AND ?3 <> '' AND path = ?3)
+                 OR (?1 = '' AND ?3 = '' AND ?2 <> '' AND url = ?2)
+              ORDER BY id DESC
+              LIMIT 1
+            )
             ",
-            params![url.unwrap_or_default(), path.unwrap_or_default()],
+            params![
+                download_id.unwrap_or_default(),
+                url.unwrap_or_default(),
+                path.unwrap_or_default()
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -334,6 +546,9 @@ impl SettingsRepository for SqliteStore {
     }
 
     fn set_setting(&self, key: &str, value: &str) -> StoreResult<()> {
+        if !VALID_SETTING_KEYS.contains(&key) && !INTERNAL_SETTING_KEYS.contains(&key) {
+            return Err(StoreError::InvalidKey(key.to_owned()));
+        }
         self.conn.execute(
             "
             INSERT INTO settings (key, value, updated_at)
@@ -469,6 +684,272 @@ fn now_text() -> String {
 mod tests {
     use super::*;
 
+    fn schema_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn schema_objects(conn: &Connection, object_type: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = ?1 ORDER BY name")
+            .unwrap();
+        stmt.query_map(params![object_type], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn empty_database_migrates_to_latest_schema() {
+        let store = SqliteStore::in_memory().unwrap();
+
+        assert_eq!(
+            schema_version(&store.conn),
+            migrations::LATEST_SCHEMA_VERSION
+        );
+        let tables = schema_objects(&store.conn, "table");
+        for table in [
+            "settings",
+            "bookmarks",
+            "history",
+            "downloads",
+            "permissions",
+            "logs",
+            "session",
+        ] {
+            assert!(tables.iter().any(|name| name == table), "missing {table}");
+        }
+    }
+
+    #[test]
+    fn version_one_fixture_migrates_and_preserves_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::apply_up_to_for_test(&mut conn, 1).unwrap();
+        conn.execute(
+            "INSERT INTO history(title, url, created_at) VALUES ('Example', 'https://example.com', '1')",
+            [],
+        )
+        .unwrap();
+
+        migrations::migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn), migrations::LATEST_SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row("SELECT url FROM history", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_data_and_version() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        let previous_version = schema_version(&conn);
+
+        let result = migrations::apply_for_test(
+            &mut conn,
+            previous_version + 1,
+            "
+            INSERT INTO settings(key, value) VALUES ('theme', 'dark');
+            INSERT INTO missing_table(value) VALUES ('fail');
+            ",
+        );
+
+        assert!(result.is_err());
+        assert_eq!(schema_version(&conn), previous_version);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM settings", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn rerunning_migrations_is_idempotent() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::migrate(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO bookmarks(title, url, created_at) VALUES ('Example', 'https://example.com', '1')",
+            [],
+        )
+        .unwrap();
+        let objects_before = schema_objects(&conn, "index");
+
+        migrations::migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn), migrations::LATEST_SCHEMA_VERSION);
+        assert_eq!(schema_objects(&conn, "index"), objects_before);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn unknown_setting_key_is_rejected_without_writing() {
+        let store = SqliteStore::in_memory().unwrap();
+
+        let result = store.set_setting("unknownSetting", "value");
+
+        assert!(matches!(
+            result,
+            Err(StoreError::InvalidKey(key)) if key == "unknownSetting"
+        ));
+        assert_eq!(store.get_setting("unknownSetting").unwrap(), None);
+    }
+
+    #[test]
+    fn every_allowlisted_setting_key_can_be_written() {
+        let store = SqliteStore::in_memory().unwrap();
+
+        for key in VALID_SETTING_KEYS {
+            store.set_setting(key, "value").unwrap();
+        }
+
+        let count = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(count, VALID_SETTING_KEYS.len() as i64);
+    }
+
+    #[test]
+    fn internal_session_json_can_be_written_and_read_back() {
+        let store = SqliteStore::in_memory().unwrap();
+        let first_snapshot = r#"{"version":1,"windows":[]}"#;
+        let updated_snapshot = r#"{"version":1,"windows":[{"id":"window-1","tabs":[]}]}"#;
+
+        store.set_setting("sessionJson", first_snapshot).unwrap();
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap().as_deref(),
+            Some(first_snapshot)
+        );
+
+        store.set_setting("sessionJson", updated_snapshot).unwrap();
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap().as_deref(),
+            Some(updated_snapshot)
+        );
+    }
+
+    #[test]
+    fn latest_schema_has_history_and_download_indexes() {
+        let store = SqliteStore::in_memory().unwrap();
+        let indexes = schema_objects(&store.conn, "index");
+
+        for index in [
+            "idx_history_url",
+            "idx_history_created_at",
+            "idx_downloads_url_path",
+            "idx_downloads_path",
+        ] {
+            assert!(indexes.iter().any(|name| name == index), "missing {index}");
+        }
+    }
+
+    #[test]
+    fn history_range_cleanup_uses_created_at_index() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::apply_up_to_for_test(&mut conn, 2).unwrap();
+        migrations::migrate(&mut conn).unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN DELETE FROM history \
+                 WHERE CAST(created_at AS INTEGER) >= ?1",
+            )
+            .unwrap();
+        let plan = statement
+            .query_map(params!["1"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("USING INDEX idx_history_created_at")),
+            "history range cleanup should use the created_at expression index, got {plan:?}"
+        );
+    }
+
+    #[test]
+    fn newer_schema_version_is_rejected_without_changes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let future_version = migrations::LATEST_SCHEMA_VERSION + 1;
+        conn.pragma_update(None, "user_version", future_version)
+            .unwrap();
+
+        let result = migrations::migrate(&mut conn);
+
+        assert!(matches!(
+            result,
+            Err(StoreError::UnsupportedSchemaVersion { found, supported })
+                if found == future_version && supported == migrations::LATEST_SCHEMA_VERSION
+        ));
+        assert_eq!(schema_version(&conn), future_version);
+        assert!(schema_objects(&conn, "table").is_empty());
+    }
+
+    #[test]
+    fn unversioned_legacy_schema_migrates_without_losing_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let session_json = r#"{"version":1,"windows":[{"id":"window-1"}]}"#;
+        conn.execute_batch(
+            "
+            CREATE TABLE settings (
+              key TEXT PRIMARY KEY NOT NULL,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO settings(key, value) VALUES ('theme', 'dark');
+            ",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES ('sessionJson', ?1)",
+            params![session_json],
+        )
+        .unwrap();
+
+        migrations::migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn), migrations::LATEST_SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'theme'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "dark"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'sessionJson'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            session_json
+        );
+
+        let store = SqliteStore { conn };
+        let updated_session_json = r#"{"version":1,"windows":[]}"#;
+        store
+            .set_setting("sessionJson", updated_session_json)
+            .unwrap();
+        assert_eq!(
+            store.get_setting("sessionJson").unwrap().as_deref(),
+            Some(updated_session_json)
+        );
+    }
+
     #[test]
     fn stores_settings() {
         let store = SqliteStore::in_memory().unwrap();
@@ -550,10 +1031,140 @@ mod tests {
         assert!(store.remove_history("https://example.com").unwrap());
 
         store
-            .upsert_download("https://example.com/file", "/tmp/file", "started", 0)
+            .upsert_download(
+                "download-1",
+                "https://example.com/file",
+                "/tmp/file",
+                "started",
+                0,
+            )
             .unwrap();
         assert_eq!(store.list_downloads().unwrap()[0].path, "/tmp/file");
-        assert!(store.remove_download(None, Some("/tmp/file")).unwrap());
+        assert!(
+            store
+                .remove_download(Some("download-1"), None, None)
+                .unwrap()
+        );
+
+        store
+            .upsert_download(
+                "download-2",
+                "blob:null/download-id",
+                "/tmp/planned",
+                "started",
+                0,
+            )
+            .unwrap();
+        store
+            .upsert_download("download-2", "blob:null/download-id", "", "in_progress", 45)
+            .unwrap();
+        store
+            .upsert_download(
+                "download-2",
+                "blob:null/download-id",
+                "/tmp/selected",
+                "completed",
+                100,
+            )
+            .unwrap();
+        let downloads = store.list_downloads().unwrap();
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].path, "/tmp/selected");
+        assert_eq!(downloads[0].state, "completed");
+        assert!(
+            store
+                .remove_download(Some("download-2"), None, None)
+                .unwrap()
+        );
+        assert!(store.list_downloads().unwrap().is_empty());
+    }
+
+    #[test]
+    fn keeps_same_url_downloads_independent() {
+        let store = SqliteStore::in_memory().unwrap();
+        let url = "https://example.com/archive.zip";
+
+        store
+            .upsert_download("download-a", url, "/tmp/archive.zip", "started", 0)
+            .unwrap();
+        store
+            .upsert_download("download-b", url, "/tmp/archive-1.zip", "started", 0)
+            .unwrap();
+        store
+            .upsert_download("download-a", url, "", "in_progress", 40)
+            .unwrap();
+        store
+            .upsert_download("download-b", url, "/tmp/archive-1.zip", "completed", 100)
+            .unwrap();
+
+        let downloads = store.list_downloads().unwrap();
+        assert_eq!(downloads.len(), 2);
+        assert_eq!(
+            downloads
+                .iter()
+                .find(|download| download.download_id == "download-a")
+                .unwrap()
+                .percent,
+            40
+        );
+        assert_eq!(
+            downloads
+                .iter()
+                .find(|download| download.download_id == "download-b")
+                .unwrap()
+                .state,
+            "completed"
+        );
+
+        assert!(
+            store
+                .remove_download(Some("download-a"), None, None)
+                .unwrap()
+        );
+        let remaining = store.list_downloads().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].download_id, "download-b");
+    }
+
+    #[test]
+    fn migrates_legacy_same_url_downloads_to_distinct_ids() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE downloads (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              url TEXT NOT NULL DEFAULT '',
+              path TEXT NOT NULL DEFAULT '',
+              state TEXT NOT NULL,
+              percent INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO downloads (url, path, state, created_at, updated_at)
+            VALUES
+              ('https://example.com/file', '/tmp/file', 'completed', '1', '1'),
+              ('https://example.com/file', '/tmp/file-1', 'completed', '2', '2');
+            ",
+        )
+        .unwrap();
+        let mut store = SqliteStore { conn };
+
+        store.migrate().unwrap();
+
+        let downloads = store.list_downloads().unwrap();
+        assert_eq!(downloads.len(), 2);
+        assert_ne!(downloads[0].download_id, downloads[1].download_id);
+        assert!(
+            downloads
+                .iter()
+                .all(|download| download.download_id.starts_with("legacy-"))
+        );
+        assert!(
+            store
+                .remove_download(Some(&downloads[0].download_id), None, None)
+                .unwrap()
+        );
+        assert_eq!(store.list_downloads().unwrap().len(), 1);
     }
 
     #[test]

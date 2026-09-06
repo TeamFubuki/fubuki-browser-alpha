@@ -199,6 +199,11 @@ void BrowserAppController::DispatchHostCommands() {
         continue;
       }
       CefRefPtr<CefDictionaryValue> envelope = value->GetDictionary();
+      if (!envelope->HasKey("version") ||
+          envelope->GetType("version") != VTYPE_INT ||
+          envelope->GetInt("version") != 0) {
+        continue;
+      }
       const std::string command = envelope->HasKey("command")
                                       ? envelope->GetString("command").ToString()
                                       : "";
