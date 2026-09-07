@@ -4,6 +4,7 @@ import { t } from '../i18n';
 import {
   activeTab,
   browserState,
+  isBookmarkableUrl,
   isTabBookmarked,
   toggleBookmark,
 } from '../stores/browserStore';
@@ -81,6 +82,15 @@ export default function TopBar() {
       >
         <span aria-hidden="true">{isLoading() ? '×' : '↻'}</span>
       </button>
+      <button
+        class="topbar-button"
+        title={t('common.home', lang())}
+        aria-label={t('common.home', lang())}
+        disabled={!currentTab()}
+        onClick={() => void tabs.home(browserState.activeTabId)}
+      >
+        <span aria-hidden="true">⌂</span>
+      </button>
       <Omnibox />
       <button
         classList={{
@@ -97,7 +107,7 @@ export default function TopBar() {
             ? t('action.removeBookmark', lang())
             : t('action.addBookmark', lang())
         }
-        disabled={!currentTab()}
+        disabled={!isBookmarkableUrl(currentTab()?.url)}
         onClick={() => void toggleBookmark()}
       >
         <span aria-hidden="true">{isBookmarked() ? '★' : '☆'}</span>

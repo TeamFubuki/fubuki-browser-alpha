@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { commands, tabs } from './bridge/fubuki';
+import { tabIdForNumberShortcut } from './appShortcuts';
 import BrowserShell from './components/BrowserShell';
 import CommandPalette from './components/commandPalette/CommandPalette';
 import { resolveLanguage } from './i18n';
@@ -17,11 +18,25 @@ import {
 let omniboxInput: HTMLInputElement | null = null;
 
 function onKeyDown(event: KeyboardEvent) {
+  if (event.ctrlKey && event.key === 'Tab' && !event.metaKey) {
+    void (event.shiftKey ? tabs.activatePrevious() : tabs.activateNext());
+    event.preventDefault();
+    return;
+  }
+
   const command = event.metaKey || event.ctrlKey;
   if (!command) return;
 
   const tab = activeTab();
   const key = event.key.toLowerCase();
+  if (!event.altKey && !event.shiftKey) {
+    const shortcutTabId = tabIdForNumberShortcut(browserState.tabs, key);
+    if (shortcutTabId) {
+      void tabs.activate(shortcutTabId);
+      event.preventDefault();
+      return;
+    }
+  }
   if (key === 'k') {
     window.dispatchEvent(new CustomEvent('fubuki:open-palette'));
     event.preventDefault();

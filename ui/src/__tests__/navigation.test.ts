@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildSearchUrl,
   normalizeOmniboxInput,
   shouldTreatAsSearch,
 } from '../utils/navigation';
@@ -46,5 +47,25 @@ describe('omnibox input classification', () => {
     expect(shouldTreatAsSearch('hello world')).toBe(true);
     expect(shouldTreatAsSearch('東京 天気')).toBe(true);
     expect(shouldTreatAsSearch('github fubuki browser')).toBe(true);
+  });
+});
+
+describe('search URL construction', () => {
+  it('supports both custom placeholders', () => {
+    expect(
+      buildSearchUrl('雪 browser', 'custom', 'https://search.test/?q={query}'),
+    ).toBe('https://search.test/?q=%E9%9B%AA+browser');
+    expect(
+      buildSearchUrl('solid js', 'custom', 'https://search.test/?term=%s'),
+    ).toBe('https://search.test/?term=solid+js');
+  });
+
+  it('appends a query to custom URLs without a placeholder', () => {
+    expect(buildSearchUrl('fubuki', 'custom', 'https://search.test/')).toBe(
+      'https://search.test/?q=fubuki',
+    );
+    expect(
+      buildSearchUrl('fubuki', 'custom', 'https://search.test/?safe=1'),
+    ).toBe('https://search.test/?safe=1&q=fubuki');
   });
 });

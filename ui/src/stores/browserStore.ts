@@ -5,6 +5,7 @@ import {
   onBridgeEvent,
   type BookmarkRecord,
   type BrowserState,
+  type DownloadRecord,
   type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
@@ -57,6 +58,10 @@ export const [browserState, setBrowserState] = createStore(initialState);
 let bookmarksPending = false;
 let historyPending = false;
 let commandsPending = false;
+let downloadsPending = false;
+let bookmarksRefreshRequested = false;
+let historyRefreshRequested = false;
+let downloadsRefreshRequested = false;
 
 async function refreshCommands() {
   if (commandsPending) return;
@@ -71,91 +76,122 @@ async function refreshCommands() {
 }
 
 async function refreshBookmarks() {
+  bookmarksRefreshRequested = true;
   if (bookmarksPending) return;
   bookmarksPending = true;
   try {
-    const list = await invokeBridge('bookmarks.list');
-    setBrowserState('bookmarks', list as BookmarkRecord[]);
+    while (bookmarksRefreshRequested) {
+      bookmarksRefreshRequested = false;
+      const list = await invokeBridge('bookmarks.list');
+      setBrowserState('bookmarks', list as BookmarkRecord[]);
+    }
   } catch {
-    // ignore
+    // Keep the last known bookmark list on transient bridge failures.
   } finally {
     bookmarksPending = false;
   }
 }
 
 async function refreshHistory() {
+  historyRefreshRequested = true;
   if (historyPending) return;
   historyPending = true;
   try {
-    const list = await invokeBridge('history.list');
-    setBrowserState('history', list as HistoryRecord[]);
+    while (historyRefreshRequested) {
+      historyRefreshRequested = false;
+      const list = await invokeBridge('history.list');
+      setBrowserState('history', list as HistoryRecord[]);
+    }
   } catch {
-    // ignore
+    // Keep the last known history list on transient bridge failures.
   } finally {
     historyPending = false;
+  }
+}
+
+async function refreshDownloads() {
+  downloadsRefreshRequested = true;
+  if (downloadsPending) return;
+  downloadsPending = true;
+  try {
+    while (downloadsRefreshRequested) {
+      downloadsRefreshRequested = false;
+      const list = await invokeBridge('downloads.list');
+      setBrowserState('downloads', list as DownloadRecord[]);
+    }
+  } catch {
+    // Keep the last known download list on transient bridge failures.
+  } finally {
+    downloadsPending = false;
   }
 }
 
 // --- Full snapshot refresh (used only on startup and app.stateChanged) ---
 
 let pendingFullRefresh: Promise<void> | undefined;
-let fullRefreshCounter = 0;
+let requestedFullRefreshStatus: string | undefined;
 
 /**
  * Full snapshot refresh — only for startup and rare edge cases.
  * Calls app.snapshot (1 bridge call). Commands are cached separately.
  */
 export async function refreshFullState(status = 'Ready') {
+  requestedFullRefreshStatus = status;
   if (pendingFullRefresh) return pendingFullRefresh;
-  const myCounter = ++fullRefreshCounter;
   pendingFullRefresh = (async () => {
-    try {
-      const snapshot = await invokeBridge('app.snapshot');
-      const state = normalizeAppState(snapshot);
-      void refreshCommands();
-      if (myCounter !== fullRefreshCounter) return;
+    while (requestedFullRefreshStatus !== undefined) {
+      const nextStatus = requestedFullRefreshStatus;
+      requestedFullRefreshStatus = undefined;
+      try {
+        const snapshot = await invokeBridge('app.snapshot');
+        const state = normalizeAppState(snapshot);
+        void refreshCommands();
 
-      // Only update slices that actually changed
-      if (state.activeTabId !== browserState.activeTabId) {
-        setBrowserState('activeTabId', state.activeTabId);
+        // Only update slices that actually changed
+        if (state.activeTabId !== browserState.activeTabId) {
+          setBrowserState('activeTabId', state.activeTabId);
+        }
+        if (state.windowId !== browserState.windowId) {
+          setBrowserState('windowId', state.windowId);
+        }
+        if (state.isPrivate !== browserState.isPrivate) {
+          setBrowserState('isPrivate', state.isPrivate);
+        }
+        if (state.bridgeVersion !== browserState.bridgeVersion) {
+          setBrowserState('bridgeVersion', state.bridgeVersion);
+        }
+        if (state.tabs !== browserState.tabs) {
+          setBrowserState('tabs', state.tabs);
+        }
+        if (state.windows !== browserState.windows) {
+          setBrowserState('windows', state.windows);
+        }
+        if (state.settings !== browserState.settings) {
+          setBrowserState('settings', state.settings);
+        }
+        if (state.downloads !== browserState.downloads) {
+          setBrowserState('downloads', state.downloads);
+        }
+        if (state.history !== browserState.history) {
+          setBrowserState('history', state.history);
+        }
+        if (state.bookmarks !== browserState.bookmarks) {
+          setBrowserState('bookmarks', state.bookmarks);
+        }
+        if (state.permissions !== browserState.permissions) {
+          setBrowserState('permissions', state.permissions);
+        }
+        setBrowserState('status', nextStatus);
+      } catch (error) {
+        console.error('[Fubuki] Full state refresh failed:', error);
+        setBrowserState('status', 'Error');
       }
-      if (state.windowId !== browserState.windowId) {
-        setBrowserState('windowId', state.windowId);
-      }
-      if (state.isPrivate !== browserState.isPrivate) {
-        setBrowserState('isPrivate', state.isPrivate);
-      }
-      if (state.bridgeVersion !== browserState.bridgeVersion) {
-        setBrowserState('bridgeVersion', state.bridgeVersion);
-      }
-      if (state.tabs !== browserState.tabs) {
-        setBrowserState('tabs', state.tabs);
-      }
-      if (state.windows !== browserState.windows) {
-        setBrowserState('windows', state.windows);
-      }
-      if (state.settings !== browserState.settings) {
-        setBrowserState('settings', state.settings);
-      }
-      if (state.downloads !== browserState.downloads) {
-        setBrowserState('downloads', state.downloads);
-      }
-      if (state.history !== browserState.history) {
-        setBrowserState('history', state.history);
-      }
-      if (state.bookmarks !== browserState.bookmarks) {
-        setBrowserState('bookmarks', state.bookmarks);
-      }
-      if (state.permissions !== browserState.permissions) {
-        setBrowserState('permissions', state.permissions);
-      }
-      setBrowserState('status', status);
-    } catch (error) {
-      console.error('[Fubuki] Full state refresh failed:', error);
-      setBrowserState('status', 'Error');
     }
   })().finally(() => {
     pendingFullRefresh = undefined;
+    if (requestedFullRefreshStatus !== undefined) {
+      void refreshFullState(requestedFullRefreshStatus);
+    }
   });
   return pendingFullRefresh;
 }
@@ -174,6 +210,12 @@ export function isTabBookmarked(url: string | undefined): boolean {
   return browserState.bookmarks.some((bookmark) => bookmark.url === url);
 }
 
+export function isBookmarkableUrl(url: string | undefined): boolean {
+  return Boolean(
+    url && !url.startsWith('fubuki://') && !url.startsWith('data:'),
+  );
+}
+
 export function activeTabId(): string {
   return browserState.activeTabId;
 }
@@ -186,12 +228,7 @@ export function currentLanguage(): string {
 
 export async function toggleBookmark(): Promise<void> {
   const tab = activeTab();
-  if (
-    !tab?.url ||
-    tab.url.startsWith('fubuki://') ||
-    tab.url.startsWith('data:')
-  )
-    return;
+  if (!tab?.url || !isBookmarkableUrl(tab.url)) return;
   try {
     if (isTabBookmarked(tab.url)) {
       await invokeBridge('bookmarks.remove', { url: tab.url });
@@ -310,11 +347,11 @@ export function bindNativeEvents() {
 
     // --- Downloads (targeted refresh) ---
     onBridgeEvent('downloads.updated', () => {
-      void refreshFullState('downloads.updated');
+      void refreshDownloads();
     }),
 
     onBridgeEvent('download.changed', () => {
-      void refreshFullState('download.changed');
+      void refreshDownloads();
     }),
 
     // --- Full app state changed (edge cases) ---

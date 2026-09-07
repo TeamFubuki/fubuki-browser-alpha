@@ -5,7 +5,7 @@
   min-width: 0;
   height: var(--topbar-height);
   display: grid;
-  grid-template-columns: repeat(3, var(--button-size)) minmax(160px, 1fr) var(
+  grid-template-columns: repeat(4, var(--button-size)) minmax(160px, 1fr) var(
       --button-size
     );
   align-items: center;
@@ -24,7 +24,7 @@
 .top-bar.private {
   background: color-mix(in srgb, var(--topbar-bg) 72%, #17151f);
   border-bottom: 2px solid #a855f7;
-  grid-template-columns: max-content repeat(3, var(--button-size)) minmax(
+  grid-template-columns: max-content repeat(4, var(--button-size)) minmax(
       160px,
       1fr
     ) var(--button-size);
