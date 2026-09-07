@@ -104,10 +104,15 @@ range, data-clear target, and permission value.
 - `permission.changed`
 - `app.stateChanged`
 
-The UI listens for native events using:
+The UI listens for native events using targeted updates and reserves a full snapshot for startup
+or recovery:
 
 ```ts
 window.fubuki.on("app.stateChanged", () => {
-  void window.fubuki.invoke("app.getState");
+  void window.fubuki.invoke("app.snapshot");
+});
+
+window.fubuki.on("bookmark.changed", () => {
+  void window.fubuki.invoke("bookmarks.list");
 });
 ```

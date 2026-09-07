@@ -68,3 +68,35 @@ export function normalizeOmniboxInput(input: string): {
   const value = input.trim();
   return { kind: shouldTreatAsSearch(value) ? 'search' : 'url', value };
 }
+
+export function buildSearchUrl(
+  query: string,
+  engine = 'google',
+  customSearchUrl = 'https://www.google.com/search?q={query}',
+): string {
+  const encoded = encodeURIComponent(query).replaceAll('%20', '+');
+  if (engine === 'duckduckgo') return `https://duckduckgo.com/?q=${encoded}`;
+  if (engine === 'bing') return `https://www.bing.com/search?q=${encoded}`;
+  if (engine !== 'custom' || !customSearchUrl) {
+    return `https://www.google.com/search?q=${encoded}`;
+  }
+  if (customSearchUrl.includes('{query}')) {
+    return customSearchUrl.replaceAll('{query}', encoded);
+  }
+  if (customSearchUrl.includes('%s')) {
+    return customSearchUrl.replaceAll('%s', encoded);
+  }
+  const fragmentIndex = customSearchUrl.indexOf('#');
+  const base =
+    fragmentIndex < 0
+      ? customSearchUrl
+      : customSearchUrl.slice(0, fragmentIndex);
+  const fragment =
+    fragmentIndex < 0 ? '' : customSearchUrl.slice(fragmentIndex);
+  const separator = base.includes('?')
+    ? base.endsWith('?') || base.endsWith('&')
+      ? ''
+      : '&'
+    : '?';
+  return `${base}${separator}q=${encoded}${fragment}`;
+}

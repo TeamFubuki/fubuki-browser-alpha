@@ -396,11 +396,12 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
     return false;
   }
   const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0;
+  const bool controlDown = (event.modifiers & EVENTFLAG_CONTROL_DOWN) != 0;
   const bool altDown = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
   const bool shiftDown = (event.modifiers & EVENTFLAG_SHIFT_DOWN) != 0;
   const char character = static_cast<char>(event.unmodified_character);
   const bool handled =
-      window_->HandleShortcut(commandDown, altDown, shiftDown,
+      window_->HandleShortcut(commandDown, controlDown, altDown, shiftDown,
                               event.windows_key_code, character, tabId_);
   if (handled && is_keyboard_shortcut) {
     *is_keyboard_shortcut = true;

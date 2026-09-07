@@ -16,17 +16,17 @@
     "format:check": "oxfmt src/ --check"
   },
   "dependencies": {
-    "solid-js": "^1.9.14"
+    "solid-js": "^1.9.15"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.2",
+    "@tailwindcss/vite": "^4.3.3",
     "oxc-resolver": "^11.24.2",
-    "oxfmt": "^0.64.0",
-    "oxlint": "^1.74.0",
-    "tailwindcss": "^4.3.2",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.1.4",
-    "vite-plugin-solid": "^2.11.12",
-    "vitest": "^4.1.10"
+    "vite": "^8.2.2",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^5.0.0"
   }
 }

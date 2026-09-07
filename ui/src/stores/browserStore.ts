@@ -5,6 +5,7 @@ import {
   onBridgeEvent,
   type BookmarkRecord,
   type BrowserState,
+  type DownloadRecord,
   type HistoryRecord,
   type Tab,
 } from '../bridge/fubuki';
@@ -54,15 +55,65 @@ export const [browserState, setBrowserState] = createStore(initialState);
 
 // --- Lightweight targeted refresh (no full snapshot) ---
 
-let bookmarksPending = false;
-let historyPending = false;
 let commandsPending = false;
+let bookmarksPending: Promise<void> | undefined;
+let historyPending: Promise<void> | undefined;
+let bookmarksRefreshRequested = false;
+let historyRefreshRequested = false;
+
+const DOWNLOAD_REFRESH_INTERVAL_MS = 100;
+let downloadsRefreshRequested = false;
+let downloadsRefreshScheduled = false;
+let downloadsRefreshInFlight = false;
+let downloadsRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let downloadsLastRefreshAt = Number.NEGATIVE_INFINITY;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Snapshots are freshly deserialized on every request, so reference equality
+ * cannot tell us whether a state slice changed. Keep the existing Solid
+ * references when the JSON-shaped values are structurally equal.
+ */
+function sameValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    return (
+      left.length === right.length &&
+      left.every((value, index) => sameValue(value, right[index]))
+    );
+  }
+  if (!isRecord(left) || !isRecord(right)) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => key in right && sameValue(left[key], right[key]))
+  );
+}
+
+function setStateSliceIfChanged<K extends keyof BrowserState>(
+  key: K,
+  value: BrowserState[K],
+): void {
+  if (!sameValue(browserState[key], value)) {
+    // Solid's variadic setter cannot preserve the key/value relationship for
+    // a generic key, although the value is safe after the comparison above.
+    (setBrowserState as unknown as (key: K, value: BrowserState[K]) => void)(
+      key,
+      value,
+    );
+  }
+}
 
 async function refreshCommands() {
   if (commandsPending) return;
   commandsPending = true;
   try {
-    setBrowserState('commands', await invokeBridge('commands.list'));
+    setStateSliceIfChanged('commands', await invokeBridge('commands.list'));
   } catch {
     // Keep the last known command list on transient bridge failures.
   } finally {
@@ -71,91 +122,142 @@ async function refreshCommands() {
 }
 
 async function refreshBookmarks() {
-  if (bookmarksPending) return;
-  bookmarksPending = true;
-  try {
-    const list = await invokeBridge('bookmarks.list');
-    setBrowserState('bookmarks', list as BookmarkRecord[]);
-  } catch {
-    // ignore
-  } finally {
-    bookmarksPending = false;
-  }
+  bookmarksRefreshRequested = true;
+  if (bookmarksPending) return bookmarksPending;
+  const run = (async () => {
+    try {
+      while (bookmarksRefreshRequested) {
+        bookmarksRefreshRequested = false;
+        const list = await invokeBridge('bookmarks.list');
+        setStateSliceIfChanged('bookmarks', list as BookmarkRecord[]);
+      }
+    } catch {
+      // Keep the last known bookmark list on transient bridge failures.
+    }
+  })();
+  bookmarksPending = run.finally(() => {
+    bookmarksPending = undefined;
+    // Do not lose a refresh request that arrived while the request failed.
+    if (bookmarksRefreshRequested) void refreshBookmarks();
+  });
+  return bookmarksPending;
 }
 
 async function refreshHistory() {
-  if (historyPending) return;
-  historyPending = true;
-  try {
-    const list = await invokeBridge('history.list');
-    setBrowserState('history', list as HistoryRecord[]);
-  } catch {
-    // ignore
-  } finally {
-    historyPending = false;
+  historyRefreshRequested = true;
+  if (historyPending) return historyPending;
+  const run = (async () => {
+    try {
+      while (historyRefreshRequested) {
+        historyRefreshRequested = false;
+        const list = await invokeBridge('history.list');
+        setStateSliceIfChanged('history', list as HistoryRecord[]);
+      }
+    } catch {
+      // Keep the last known history list on transient bridge failures.
+    }
+  })();
+  historyPending = run.finally(() => {
+    historyPending = undefined;
+    // Do not lose a refresh request that arrived while the request failed.
+    if (historyRefreshRequested) void refreshHistory();
+  });
+  return historyPending;
+}
+
+function scheduleDownloadsRefresh(): void {
+  if (
+    !downloadsRefreshRequested ||
+    downloadsRefreshScheduled ||
+    downloadsRefreshInFlight
+  ) {
+    return;
+  }
+
+  const elapsed = Date.now() - downloadsLastRefreshAt;
+  const delay = Math.max(0, DOWNLOAD_REFRESH_INTERVAL_MS - elapsed);
+  downloadsRefreshScheduled = true;
+  downloadsRefreshTimer = setTimeout(() => {
+    downloadsRefreshScheduled = false;
+    downloadsRefreshTimer = undefined;
+    if (!downloadsRefreshRequested) return;
+
+    downloadsRefreshRequested = false;
+    downloadsRefreshInFlight = true;
+    downloadsLastRefreshAt = Date.now();
+    void invokeBridge('downloads.list')
+      .then((list) => {
+        setStateSliceIfChanged('downloads', list as DownloadRecord[]);
+      })
+      .catch(() => {
+        // Keep the last known download list on transient bridge failures.
+      })
+      .finally(() => {
+        downloadsRefreshInFlight = false;
+        scheduleDownloadsRefresh();
+      });
+  }, delay);
+}
+
+function refreshDownloads(): void {
+  downloadsRefreshRequested = true;
+  scheduleDownloadsRefresh();
+}
+
+function cancelScheduledDownloadsRefresh(): void {
+  downloadsRefreshRequested = false;
+  if (downloadsRefreshTimer !== undefined) {
+    clearTimeout(downloadsRefreshTimer);
+    downloadsRefreshTimer = undefined;
+    downloadsRefreshScheduled = false;
   }
 }
 
 // --- Full snapshot refresh (used only on startup and app.stateChanged) ---
 
 let pendingFullRefresh: Promise<void> | undefined;
-let fullRefreshCounter = 0;
+let requestedFullRefreshStatus: string | undefined;
 
 /**
  * Full snapshot refresh — only for startup and rare edge cases.
  * Calls app.snapshot (1 bridge call). Commands are cached separately.
  */
 export async function refreshFullState(status = 'Ready') {
+  requestedFullRefreshStatus = status;
   if (pendingFullRefresh) return pendingFullRefresh;
-  const myCounter = ++fullRefreshCounter;
   pendingFullRefresh = (async () => {
-    try {
-      const snapshot = await invokeBridge('app.snapshot');
-      const state = normalizeAppState(snapshot);
-      void refreshCommands();
-      if (myCounter !== fullRefreshCounter) return;
+    while (requestedFullRefreshStatus !== undefined) {
+      const nextStatus = requestedFullRefreshStatus;
+      requestedFullRefreshStatus = undefined;
+      try {
+        const snapshot = await invokeBridge('app.snapshot');
+        const state = normalizeAppState(snapshot);
 
-      // Only update slices that actually changed
-      if (state.activeTabId !== browserState.activeTabId) {
-        setBrowserState('activeTabId', state.activeTabId);
+        // Only update slices that actually changed
+        setStateSliceIfChanged('activeTabId', state.activeTabId);
+        setStateSliceIfChanged('windowId', state.windowId);
+        setStateSliceIfChanged('isPrivate', state.isPrivate);
+        setStateSliceIfChanged('bridgeVersion', state.bridgeVersion);
+        setStateSliceIfChanged('tabs', state.tabs);
+        setStateSliceIfChanged('windows', state.windows);
+        setStateSliceIfChanged('settings', state.settings);
+        setStateSliceIfChanged('downloads', state.downloads);
+        setStateSliceIfChanged('history', state.history);
+        setStateSliceIfChanged('bookmarks', state.bookmarks);
+        setStateSliceIfChanged('permissions', state.permissions);
+        if (browserState.status !== nextStatus) {
+          setBrowserState('status', nextStatus);
+        }
+      } catch (error) {
+        console.error('[Fubuki] Full state refresh failed:', error);
+        setBrowserState('status', 'Error');
       }
-      if (state.windowId !== browserState.windowId) {
-        setBrowserState('windowId', state.windowId);
-      }
-      if (state.isPrivate !== browserState.isPrivate) {
-        setBrowserState('isPrivate', state.isPrivate);
-      }
-      if (state.bridgeVersion !== browserState.bridgeVersion) {
-        setBrowserState('bridgeVersion', state.bridgeVersion);
-      }
-      if (state.tabs !== browserState.tabs) {
-        setBrowserState('tabs', state.tabs);
-      }
-      if (state.windows !== browserState.windows) {
-        setBrowserState('windows', state.windows);
-      }
-      if (state.settings !== browserState.settings) {
-        setBrowserState('settings', state.settings);
-      }
-      if (state.downloads !== browserState.downloads) {
-        setBrowserState('downloads', state.downloads);
-      }
-      if (state.history !== browserState.history) {
-        setBrowserState('history', state.history);
-      }
-      if (state.bookmarks !== browserState.bookmarks) {
-        setBrowserState('bookmarks', state.bookmarks);
-      }
-      if (state.permissions !== browserState.permissions) {
-        setBrowserState('permissions', state.permissions);
-      }
-      setBrowserState('status', status);
-    } catch (error) {
-      console.error('[Fubuki] Full state refresh failed:', error);
-      setBrowserState('status', 'Error');
     }
   })().finally(() => {
     pendingFullRefresh = undefined;
+    if (requestedFullRefreshStatus !== undefined) {
+      void refreshFullState(requestedFullRefreshStatus);
+    }
   });
   return pendingFullRefresh;
 }
@@ -174,6 +276,12 @@ export function isTabBookmarked(url: string | undefined): boolean {
   return browserState.bookmarks.some((bookmark) => bookmark.url === url);
 }
 
+export function isBookmarkableUrl(url: string | undefined): boolean {
+  return Boolean(
+    url && !url.startsWith('fubuki://') && !url.startsWith('data:'),
+  );
+}
+
 export function activeTabId(): string {
   return browserState.activeTabId;
 }
@@ -186,12 +294,7 @@ export function currentLanguage(): string {
 
 export async function toggleBookmark(): Promise<void> {
   const tab = activeTab();
-  if (
-    !tab?.url ||
-    tab.url.startsWith('fubuki://') ||
-    tab.url.startsWith('data:')
-  )
-    return;
+  if (!tab?.url || !isBookmarkableUrl(tab.url)) return;
   try {
     if (isTabBookmarked(tab.url)) {
       await invokeBridge('bookmarks.remove', { url: tab.url });
@@ -242,16 +345,20 @@ export async function clearHistory(): Promise<boolean> {
   // `history.clear` is a legacy native alias. Use the Frost Protocol method
   // directly so bulk deletion also works with the engine-only bridge.
   const cleared = await invokeBridge('history.clearRange', { range: 'all' });
-  if (cleared) setBrowserState('history', []);
+  if (cleared) setStateSliceIfChanged('history', []);
   return cleared;
 }
 
 export async function clearDownloadHistory(): Promise<boolean> {
-  return invokeBridge('downloads.clear');
+  const cleared = await invokeBridge('downloads.clear');
+  if (cleared) setStateSliceIfChanged('downloads', []);
+  return cleared;
 }
 
 export async function clearBookmarks(): Promise<boolean> {
-  return invokeBridge('bookmarks.clear');
+  const cleared = await invokeBridge('bookmarks.clear');
+  if (cleared) setStateSliceIfChanged('bookmarks', []);
+  return cleared;
 }
 
 // --- Event binding ---
@@ -310,11 +417,11 @@ export function bindNativeEvents() {
 
     // --- Downloads (targeted refresh) ---
     onBridgeEvent('downloads.updated', () => {
-      void refreshFullState('downloads.updated');
+      void refreshDownloads();
     }),
 
     onBridgeEvent('download.changed', () => {
-      void refreshFullState('download.changed');
+      void refreshDownloads();
     }),
 
     // --- Full app state changed (edge cases) ---
@@ -327,7 +434,10 @@ export function bindNativeEvents() {
   void refreshFullState('Ready');
   void refreshCommands();
 
-  return () => disposers.forEach((dispose) => dispose());
+  return () => {
+    disposers.forEach((dispose) => dispose());
+    cancelScheduledDownloadsRefresh();
+  };
 }
 
 // --- Event application ---

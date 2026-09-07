@@ -1,6 +1,6 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { fubuki } from '../bridge/fubuki';
-import { browserState, refreshState } from '../stores/browserStore';
+import { browserState } from '../stores/browserStore';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from '../sidebarSizing';
 
 function applyLiveSidebarWidth(width: number) {
@@ -57,9 +57,10 @@ export function useSidebarResize() {
   let animationFrame = 0;
 
   const saveWidth = (width: number) =>
-    fubuki
-      .invoke('settings.set', { key: 'sidebarWidth', value: String(width) })
-      .then(() => refreshState('settings.saved'));
+    fubuki.invoke('settings.set', {
+      key: 'sidebarWidth',
+      value: String(width),
+    });
 
   const flushLiveWidth = () => {
     animationFrame = 0;

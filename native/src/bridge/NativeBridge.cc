@@ -152,7 +152,11 @@ void NativeBridge::RegisterMethods() {
     const size_t index = static_cast<size_t>(std::distance(tabs.begin(), current));
     auto params = CefDictionaryValue::Create();
     params->SetString("tabId", tabs[(index + 1) % tabs.size()].id);
-    return FrostInvoke("tabs.activate", params);
+    auto result = FrostInvoke("tabs.activate", params);
+    if (result && result->GetType() == VTYPE_BOOL && result->GetBool()) {
+      window_.ActivateTab(params->GetString("tabId").ToString());
+    }
+    return result;
   };
 
   methods_["tabs.activatePrevious"] = [this](CefRefPtr<CefDictionaryValue>) {
@@ -169,7 +173,11 @@ void NativeBridge::RegisterMethods() {
     const size_t index = static_cast<size_t>(std::distance(tabs.begin(), current));
     auto params = CefDictionaryValue::Create();
     params->SetString("tabId", tabs[(index + tabs.size() - 1) % tabs.size()].id);
-    return FrostInvoke("tabs.activate", params);
+    auto result = FrostInvoke("tabs.activate", params);
+    if (result && result->GetType() == VTYPE_BOOL && result->GetBool()) {
+      window_.ActivateTab(params->GetString("tabId").ToString());
+    }
+    return result;
   };
 
   methods_["tabs.close"] = [this](CefRefPtr<CefDictionaryValue> params) {

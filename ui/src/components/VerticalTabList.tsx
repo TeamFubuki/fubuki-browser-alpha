@@ -38,6 +38,7 @@ export default function VerticalTabList() {
   const [focusedTabId, setFocusedTabId] = createSignal('');
 
   const lang = currentLanguage;
+  const focusIds = (list: readonly Tab[]) => list.map((tab) => tab.id);
 
   const pinnedTabs = createMemo(() =>
     browserState.tabs.filter((tab) => tab.isPinned),
@@ -53,8 +54,8 @@ export default function VerticalTabList() {
       `${tab.title} ${tab.url}`.toLowerCase().includes(q),
     );
   });
-
-  const focusIds = (list: readonly Tab[]) => list.map((tab) => tab.id);
+  const pinnedFocusIds = createMemo(() => focusIds(pinnedTabs()));
+  const filteredFocusIds = createMemo(() => focusIds(filteredTabs()));
 
   const focusAfterCloseAndRestore = (list: readonly Tab[], tab: Tab) => {
     const ids = focusIds(list);
@@ -201,7 +202,7 @@ export default function VerticalTabList() {
                   aria-keyshortcuts="ArrowUp ArrowDown Home End Enter Space Delete Alt+ArrowUp Alt+ArrowDown"
                   tabIndex={tabIndexFor(
                     tab.id,
-                    focusIds(pinnedTabs()),
+                    pinnedFocusIds(),
                     browserState.activeTabId,
                     focusedTabId(),
                   )}
@@ -261,7 +262,7 @@ export default function VerticalTabList() {
                   role="tab"
                   tabIndex={tabIndexFor(
                     tab.id,
-                    focusIds(filteredTabs()),
+                    filteredFocusIds(),
                     browserState.activeTabId,
                     focusedTabId(),
                   )}

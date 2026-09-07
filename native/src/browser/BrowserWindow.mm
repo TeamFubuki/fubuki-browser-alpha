@@ -23,6 +23,7 @@ namespace {
 constexpr CGFloat kMinSidebarWidth = 168.0;
 constexpr CGFloat kDefaultSidebarWidth = 196.0;
 constexpr CGFloat kMaxSidebarWidth = 280.0;
+constexpr auto kDownloadUpdateInterval = std::chrono::milliseconds(100);
 }  // namespace
 
 @interface FubukiUiHostView : NSView
@@ -776,7 +777,8 @@ CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId,
       "tabs.create", "tabs.close", "tabs.reopenClosed", "tabs.duplicate",
       "tabs.pin", "tabs.unpin", "tabs.closeOther", "tabs.closeToRight",
       "tabs.moveToNewWindow", "tabs.reload", "tabs.stop", "tabs.goBack",
-      "tabs.goForward", "tabs.home", "tabs.activateNext", "tabs.activatePrevious",
+      "tabs.goForward", "tabs.home", "tabs.activate", "tabs.activateNext",
+      "tabs.activatePrevious",
       "windows.create", "windows.createPrivate",
       "windows.close", "windows.reopenClosed", "bookmarks.save",
       "bookmarks.remove", "bookmarks.addActive", "history.clear",
@@ -791,7 +793,8 @@ CefRefPtr<CefValue> BrowserWindow::ExecuteCommand(const std::string& commandId,
   return commands_.Execute(commandId, args);
 }
 
-bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDown,
+bool BrowserWindow::HandleShortcut(bool commandDown, bool controlDown,
+                                   bool altDown, bool shiftDown,
                                    int keyCode, char character,
                                    const std::string& sourceTabId) {
   // The content CEF client knows which tab received the key event. Prefer it
@@ -803,14 +806,33 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDow
     tab = tabManager_.GetActiveTab();
   }
   const std::string tabId = tab ? tab->id : "";
+  if (controlDown && !commandDown && !altDown && keyCode == 9) {
+    auto value = ExecuteCommand(
+        shiftDown ? "tabs.activatePrevious" : "tabs.activateNext",
+        CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
+  }
+  if (commandDown && !altDown && !shiftDown && character >= '1' &&
+      character <= '9') {
+    const auto tabs = tabManager_.GetTabs();
+    const size_t index = character == '9'
+                             ? (tabs.empty() ? 0 : tabs.size() - 1)
+                             : static_cast<size_t>(character - '1');
+    if (index < tabs.size()) {
+      auto args = CefDictionaryValue::Create();
+      args->SetString("tabId", tabs[index].id);
+      auto value = ExecuteCommand("tabs.activate", args);
+      return value && value->GetType() == VTYPE_BOOL && value->GetBool();
+    }
+  }
   if ((commandDown && character == 'l') || (commandDown && character == 'L')) {
     return FocusOmnibox();
   }
-  if (commandDown && character == 'N') {
+  if (commandDown && shiftDown && (character == 'n' || character == 'N')) {
     auto value = ExecuteCommand("windows.createPrivate", CefDictionaryValue::Create());
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
-  if (commandDown && character == 'n') {
+  if (commandDown && !shiftDown && (character == 'n' || character == 'N')) {
     auto value = ExecuteCommand("windows.create", CefDictionaryValue::Create());
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
@@ -832,7 +854,7 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDow
     auto value = ExecuteCommand("bookmarks.addActive", CefDictionaryValue::Create());
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
-  if (commandDown && character == 'T') {
+  if (commandDown && shiftDown && (character == 't' || character == 'T')) {
     auto value = ExecuteCommand("tabs.reopenClosed", CefDictionaryValue::Create());
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
@@ -859,13 +881,17 @@ bool BrowserWindow::HandleShortcut(bool commandDown, bool altDown, bool shiftDow
     auto value = ExecuteCommand("tabs.reload", args);
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
-  if (commandDown && character == 't') {
+  if (commandDown && !shiftDown && (character == 't' || character == 'T')) {
     auto args = CefDictionaryValue::Create();
     args->SetString("url", "fubuki://newtab/");
     auto value = ExecuteCommand("tabs.create", args);
     return value && value->GetType() == VTYPE_BOOL && value->GetBool();
   }
-  if (commandDown && (character == 'w' || character == 'W')) {
+  if (commandDown && shiftDown && (character == 'w' || character == 'W')) {
+    auto value = ExecuteCommand("windows.close", CefDictionaryValue::Create());
+    return value && value->GetType() == VTYPE_BOOL && value->GetBool();
+  }
+  if (commandDown && !shiftDown && (character == 'w' || character == 'W')) {
     auto args = CefDictionaryValue::Create();
     args->SetString("tabId", tabId);
     auto value = ExecuteCommand("tabs.close", args);
@@ -915,7 +941,6 @@ bool BrowserWindow::AddActiveBookmark() {
   const bool ok = Store().AddBookmark(tab->title, tab->url, tab->faviconUrl);
   Store().AddLog("info", "Bookmark added: " + tab->url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", *tab, windowId_, tab->id, tab->url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
@@ -923,7 +948,6 @@ bool BrowserWindow::AddActiveBookmark() {
 bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& url, const std::string& faviconUrl) {
   const bool ok = Store().AddBookmark(title, url, faviconUrl);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
@@ -931,7 +955,6 @@ bool BrowserWindow::SaveBookmark(const std::string& title, const std::string& ur
 bool BrowserWindow::RemoveBookmark(const std::string& url) {
   const bool ok = Store().RemoveBookmark(url);
   eventBus_.Publish({EventType::BookmarkChanged, "bookmark.changed", {}, windowId_, "", url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://bookmarks");
   return ok;
 }
@@ -939,7 +962,6 @@ bool BrowserWindow::RemoveBookmark(const std::string& url) {
 bool BrowserWindow::RemoveHistory(const std::string& url) {
   const bool ok = Store().RemoveHistory(url);
   eventBus_.Publish({EventType::HistoryChanged, "history.changed", {}, windowId_, "", url});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://history");
   return ok;
 }
@@ -950,7 +972,6 @@ bool BrowserWindow::RemoveDownload(const std::string& downloadId, const std::str
   PageCache::Instance().Invalidate("fubuki://downloads");
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "",
                      path.empty() ? (url.empty() ? downloadId : url) : path});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   return ok;
 }
 
@@ -1020,7 +1041,6 @@ bool BrowserWindow::ClearBrowsingData(const std::string& target) {
     if (target != "logs" && target != "all") {
       Store().AddLog("info", "Browsing data cleared: " + target);
     }
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
@@ -1031,7 +1051,6 @@ bool BrowserWindow::ClearHistoryRange(const std::string& range) {
     PageCache::Instance().Invalidate("fubuki://history");
     eventBus_.Publish(
         {EventType::HistoryChanged, "history.changed", {}, windowId_, "", "clear:" + range});
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
@@ -1074,7 +1093,6 @@ bool BrowserWindow::SetSetting(const std::string& key, const std::string& value)
   if (!privateWindow_) {
     app_.PersistSession();
   }
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://");
   return true;
 }
@@ -1084,7 +1102,6 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
     return false;
   }
   eventBus_.Publish({EventType::SettingChanged, "setting.changed", {}, windowId_, "", key});
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://");
   return true;
 }
@@ -1094,7 +1111,6 @@ bool BrowserWindow::SetPermission(const std::string& origin, const std::string& 
   if (ok) {
     eventBus_.Publish(
         {EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
-    bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   }
   return ok;
 }
@@ -1524,11 +1540,12 @@ void BrowserWindow::OnDownloadStarted(const std::string& downloadId, const std::
     return;
   }
   const std::string downloadKey = DownloadKeyFor(downloadId);
+  downloadUpdateStates_[downloadKey] = {
+      std::chrono::steady_clock::now(), url, path, "started", 0};
   Store().AddDownload(downloadKey, url, path, "started");
   Store().AddLog("info", "Download started: " + path);
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
   PageCache::Instance().Invalidate("fubuki://downloads");
 }
 
@@ -1539,6 +1556,22 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
     return;
   }
   const std::string downloadKey = DownloadKeyFor(downloadId);
+  // CEF can report progress much faster than the UI can render it. Bound the
+  // SQLite, engine-queue, and bridge work while keeping terminal states eager.
+  const auto now = std::chrono::steady_clock::now();
+  const bool terminal = state != "in_progress";
+  const auto previous = downloadUpdateStates_.find(downloadKey);
+  if (previous != downloadUpdateStates_.end()) {
+    const bool same = previous->second.url == url &&
+                      previous->second.path == path &&
+                      previous->second.state == state &&
+                      previous->second.percent == percent;
+    if (same || (!terminal &&
+                 now - previous->second.lastPublished < kDownloadUpdateInterval)) {
+      return;
+    }
+  }
+  downloadUpdateStates_[downloadKey] = {now, url, path, state, percent};
   const bool updated = Store().UpdateDownload(downloadKey, url, path, state, percent);
   if (updated) {
     PageCache::Instance().Invalidate("fubuki://downloads");
@@ -1554,7 +1587,6 @@ void BrowserWindow::OnDownloadUpdated(const std::string& downloadId, const std::
                                    { "percent", JsonIntValue(percent) }}));
   eventBus_.Publish({EventType::DownloadChanged, "download.changed", {}, windowId_, "", path});
   bridge_->EmitToUi("download.changed", CefDictionaryValue::Create());
-  bridge_->EmitToUi("app.stateChanged", CefDictionaryValue::Create());
 }
 
 void BrowserWindow::OnUiDraggableRegionsChanged(const std::vector<CefDraggableRegion>& regions) {

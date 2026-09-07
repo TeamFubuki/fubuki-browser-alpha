@@ -943,12 +943,10 @@ mod tests {
             "dark"
         );
         assert_eq!(
-            conn.query_row(
-                "SELECT snapshot FROM session WHERE id = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap(),
+            conn.query_row("SELECT snapshot FROM session WHERE id = 1", [], |row| {
+                row.get::<_, String>(0)
+            },)
+                .unwrap(),
             session_json
         );
         assert_eq!(
