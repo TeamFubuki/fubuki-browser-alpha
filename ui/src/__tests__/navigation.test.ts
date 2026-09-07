@@ -68,4 +68,13 @@ describe('search URL construction', () => {
       buildSearchUrl('fubuki', 'custom', 'https://search.test/?safe=1'),
     ).toBe('https://search.test/?safe=1&q=fubuki');
   });
+
+  it('inserts the query before a URL fragment', () => {
+    expect(
+      buildSearchUrl('fubuki', 'custom', 'https://search.test/#results'),
+    ).toBe('https://search.test/?q=fubuki#results');
+    expect(
+      buildSearchUrl('fubuki', 'custom', 'https://search.test/?safe=1#results'),
+    ).toBe('https://search.test/?safe=1&q=fubuki#results');
+  });
 });

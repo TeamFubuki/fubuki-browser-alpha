@@ -13,7 +13,6 @@ import {
   activeTabId,
   browserState,
   currentLanguage,
-  refreshState,
 } from '../../stores/browserStore';
 import { filterCommands, type PaletteCommand } from './commands';
 
@@ -91,7 +90,6 @@ export default function CommandPalette(props: Props) {
             return;
           }
           await commands.execute(command.id);
-          await refreshState(command.id);
         },
       }));
 

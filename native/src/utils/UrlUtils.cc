@@ -296,9 +296,16 @@ std::string SearchUrlFor(const std::string &engine,
     if (customSearchUrl.find("%s") != std::string::npos) {
       return ReplaceAll(customSearchUrl, "%s", escaped);
     }
-    return customSearchUrl +
-           (customSearchUrl.find('?') == std::string::npos ? "?q=" : "&q=") +
-           escaped;
+    const size_t fragment = customSearchUrl.find('#');
+    const std::string base = customSearchUrl.substr(0, fragment);
+    const std::string suffix =
+        fragment == std::string::npos ? "" : customSearchUrl.substr(fragment);
+    const bool hasQuery = base.find('?') != std::string::npos;
+    const bool hasSeparator = !base.empty() &&
+                              (base.back() == '?' || base.back() == '&');
+    const std::string separator =
+        hasQuery ? (hasSeparator ? "" : "&") : "?";
+    return base + separator + "q=" + escaped + suffix;
   }
   if (engine == "google") {
     return "https://www.google.com/search?q=" + escaped;

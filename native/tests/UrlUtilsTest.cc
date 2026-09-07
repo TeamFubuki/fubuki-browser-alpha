@@ -242,6 +242,17 @@ TEST(NormalizeNavigationInputTest, CustomSearchUrlWithExistingQueryUsesAmpersand
       "https://search.example.com?foo=bar&q=test");
 }
 
+TEST(NormalizeNavigationInputTest, CustomSearchUrlInsertsQueryBeforeFragment) {
+  EXPECT_EQ(
+      NormalizeNavigationInput("test", "custom",
+                               "https://search.example.com/#results"),
+      "https://search.example.com/?q=test#results");
+  EXPECT_EQ(
+      NormalizeNavigationInput("test", "custom",
+                               "https://search.example.com?foo=bar#results"),
+      "https://search.example.com?foo=bar&q=test#results");
+}
+
 TEST(NormalizeNavigationInputTest, CustomSearchUrlEmptyUsesDuckDuckGo) {
   // customSearchUrl が空の場合 → フォールバック
   EXPECT_EQ(NormalizeNavigationInput("test", "custom", ""),

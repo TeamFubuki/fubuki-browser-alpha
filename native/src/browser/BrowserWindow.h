@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -66,7 +67,8 @@ class BrowserWindow {
   bool FocusOmnibox();
   CefRefPtr<CefValue> ExecuteCommand(const std::string& commandId,
                                      CefRefPtr<CefDictionaryValue> args);
-  bool HandleShortcut(bool commandDown, bool altDown, bool shiftDown,
+  bool HandleShortcut(bool commandDown, bool controlDown, bool altDown,
+                      bool shiftDown,
                       int keyCode, char character,
                       const std::string& sourceTabId = "");
   bool OpenDevTools();
@@ -184,6 +186,14 @@ class BrowserWindow {
   bool privateWindow_ = false;
   double uiOverlayWidth_ = 392.0;
   double uiOverlayHeight_ = 560.0;
+  struct DownloadUpdateState {
+    std::chrono::steady_clock::time_point lastPublished;
+    std::string url;
+    std::string path;
+    std::string state;
+    int percent = -1;
+  };
+  std::unordered_map<std::string, DownloadUpdateState> downloadUpdateStates_;
 };
 
 }  // namespace fubuki

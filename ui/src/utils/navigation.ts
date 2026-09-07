@@ -86,6 +86,17 @@ export function buildSearchUrl(
   if (customSearchUrl.includes('%s')) {
     return customSearchUrl.replaceAll('%s', encoded);
   }
-  const separator = customSearchUrl.includes('?') ? '&' : '?';
-  return `${customSearchUrl}${separator}q=${encoded}`;
+  const fragmentIndex = customSearchUrl.indexOf('#');
+  const base =
+    fragmentIndex < 0
+      ? customSearchUrl
+      : customSearchUrl.slice(0, fragmentIndex);
+  const fragment =
+    fragmentIndex < 0 ? '' : customSearchUrl.slice(fragmentIndex);
+  const separator = base.includes('?')
+    ? base.endsWith('?') || base.endsWith('&')
+      ? ''
+      : '&'
+    : '?';
+  return `${base}${separator}q=${encoded}${fragment}`;
 }

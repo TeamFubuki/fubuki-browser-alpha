@@ -62,13 +62,21 @@ else()
   set(FUBUKI_CARGO_PROFILE_ARG "--release")
 endif()
 set(FUBUKI_FROST_FFI_LIB "${CMAKE_SOURCE_DIR}/../target/${FUBUKI_RUST_PROFILE}/libfrost_ffi.a")
-add_custom_target(frost_ffi ALL
+file(GLOB_RECURSE FUBUKI_RUST_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/../crates/*.rs"
+)
+list(APPEND FUBUKI_RUST_SOURCES
+  "${CMAKE_SOURCE_DIR}/../Cargo.toml"
+  "${CMAKE_SOURCE_DIR}/../Cargo.lock"
+)
+add_custom_command(
+  OUTPUT "${FUBUKI_FROST_FFI_LIB}"
   COMMAND ${CMAKE_COMMAND} -E env "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}" cargo build -p frost-ffi ${FUBUKI_CARGO_PROFILE_ARG}
   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/.."
-  BYPRODUCTS "${FUBUKI_FROST_FFI_LIB}"
-  COMMENT "Building FrostEngine FFI for macOS ${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  DEPENDS ${FUBUKI_RUST_SOURCES}
   VERBATIM
 )
+add_custom_target(frost_ffi ALL DEPENDS "${FUBUKI_FROST_FFI_LIB}")
 add_library(frost_ffi_static STATIC IMPORTED GLOBAL)
 set_target_properties(frost_ffi_static PROPERTIES IMPORTED_LOCATION "${FUBUKI_FROST_FFI_LIB}")
 
