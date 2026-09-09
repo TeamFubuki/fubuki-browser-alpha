@@ -1114,6 +1114,7 @@ bool BrowserWindow::SetPermission(const std::string& origin, const std::string& 
   if (ok) {
     eventBus_.Publish(
         {EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
+    PageCache::Instance().Invalidate("fubuki://settings");
   }
   return ok;
 }
@@ -1173,6 +1174,8 @@ bool BrowserWindow::SetUiOverlayActive(bool active, double overlayWidth, double 
 bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::string& url) {
   const std::string key = QueryParam(url, "key");
   const std::string value = QueryParam(url, "value");
+  const std::string origin = QueryParam(url, "origin");
+  const std::string permission = QueryParam(url, "permission");
   const std::string returnPage = QueryParam(url, "return");
   bool ok = false;
   if (key == "removeBookmark") {
@@ -1193,6 +1196,10 @@ bool BrowserWindow::HandleSettingsUrl(const std::string& tabId, const std::strin
     ok = ClearHistoryRange(value);
   } else if (key == "resetSetting") {
     ok = ResetSetting(value);
+  } else if (key == "setPermission") {
+    ok = SetPermission(origin, permission, value);
+  } else if (key == "removePermission") {
+    ok = SetPermission(origin, permission, "ask");
   } else {
     ok = SetSetting(key, value);
   }
