@@ -184,6 +184,13 @@ pub enum Request {
         permission: PermissionType,
         value: PermissionDecision,
     },
+    #[serde(rename = "permissions.resolve", rename_all = "camelCase")]
+    PermissionsResolve {
+        prompt_id: String,
+        decision: PermissionDecision,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+    },
     #[serde(rename = "commands.list")]
     CommandsList,
     #[serde(rename = "commands.execute", rename_all = "camelCase")]

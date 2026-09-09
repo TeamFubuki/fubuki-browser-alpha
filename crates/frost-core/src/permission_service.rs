@@ -14,6 +14,15 @@ pub enum PermissionError {
     Store(#[from] StoreError),
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingPermission {
+    pub(crate) tab_id: String,
+    pub(crate) window_id: String,
+    pub(crate) origin: String,
+    pub(crate) permissions: Vec<PermissionType>,
+    pub(crate) is_private: bool,
+}
+
 /// Engine-owned permission policy and origin normalization boundary.
 pub struct PermissionService;
 

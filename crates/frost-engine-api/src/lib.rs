@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use frost_protocol::PermissionDecision;
+
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error("{0}")]
@@ -30,6 +32,13 @@ pub trait EngineAdapter {
     fn go_forward(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
     fn create_window(&mut self, window_id: &str, is_private: bool) -> EngineResult<HostCommandId>;
     fn close_window(&mut self, window_id: &str) -> EngineResult<HostCommandId>;
+    fn resolve_permission(
+        &mut self,
+        prompt_id: &str,
+        tab_id: &str,
+        window_id: &str,
+        decision: PermissionDecision,
+    ) -> EngineResult<HostCommandId>;
 }
 
 pub trait PageAdapter {
@@ -102,6 +111,16 @@ impl EngineAdapter for NoopEngineAdapter {
     }
 
     fn close_window(&mut self, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
+    }
+
+    fn resolve_permission(
+        &mut self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: PermissionDecision,
+    ) -> EngineResult<HostCommandId> {
         Ok(String::new())
     }
 }
