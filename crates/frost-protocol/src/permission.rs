@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Permission kinds understood by the Frost permission broker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionType {
     Camera,
@@ -38,7 +38,7 @@ impl PermissionType {
 }
 
 /// A persisted permission decision. Missing records are interpreted as ask.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PermissionDecision {
     #[serde(rename = "ask")]
     Ask,
