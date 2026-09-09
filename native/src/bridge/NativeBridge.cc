@@ -409,7 +409,20 @@ void NativeBridge::RegisterMethods() {
   };
 
   methods_["permissions.set"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    if (window_.IsPrivate()) {
+      return ErrorValue("Permission settings are unavailable in private windows");
+    }
     return FrostInvoke("permissions.set", params);
+  };
+
+  methods_["permissions.resolve"] = [this](CefRefPtr<CefDictionaryValue> params) {
+    if (!params) {
+      params = CefDictionaryValue::Create();
+    }
+    // Scope a UI response to the window that displayed the prompt. Ignore a
+    // caller-supplied value so another window cannot resolve this prompt.
+    params->SetString("windowId", window_.WindowId());
+    return FrostInvoke("permissions.resolve", params);
   };
 
   methods_["ui.setOverlayActive"] = [this](
