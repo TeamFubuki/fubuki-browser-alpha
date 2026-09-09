@@ -2,6 +2,7 @@ mod bookmark_service;
 mod download_service;
 mod external_router;
 mod history_service;
+mod permission_service;
 mod settings_service;
 mod tab_service;
 mod transaction;
@@ -34,6 +35,7 @@ use transaction::{
 pub use bookmark_service::BookmarkService;
 pub use download_service::DownloadService;
 pub use history_service::HistoryService;
+pub use permission_service::{PermissionError, PermissionService};
 pub use settings_service::SettingsService;
 pub use tab_service::TabService;
 pub use window_service::WindowService;
@@ -1106,10 +1108,15 @@ where
             Request::PermissionsSet {
                 origin,
                 permission,
-                value,
+                value: decision,
             } => {
-                let _ = self.repository.set_permission(&origin, &permission, &value);
-                self.emit(Event::PermissionChanged { origin, permission });
+                let origin =
+                    PermissionService::set(&self.repository, &origin, permission, decision)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::PermissionChanged {
+                    origin,
+                    permission: permission.as_str().to_owned(),
+                });
                 Ok(Response::Bool(true))
             }
             Request::CommandsList => Ok(Response::CommandsList(default_commands())),
@@ -1164,7 +1171,8 @@ where
                     }
                 }
                 for permission in &state.permissions {
-                    if let Err(e) = self.repository.set_permission(
+                    if let Err(e) = PermissionService::set_value(
+                        &self.repository,
                         &permission.origin,
                         &permission.permission,
                         &permission.value,
@@ -1461,12 +1469,15 @@ where
             HostEvent::PermissionChanged {
                 origin,
                 permission,
-                value,
+                value: decision,
             } => {
-                self.repository
-                    .set_permission(&origin, &permission, &value)
-                    .map_err(|e| CoreError::Message(e.to_string()))?;
-                self.emit(Event::PermissionChanged { origin, permission });
+                let origin =
+                    PermissionService::set(&self.repository, &origin, permission, decision)
+                        .map_err(|e| CoreError::Message(e.to_string()))?;
+                self.emit(Event::PermissionChanged {
+                    origin,
+                    permission: permission.as_str().to_owned(),
+                });
                 Ok(())
             }
             HostEvent::WindowFocused { window_id } => {
@@ -1900,6 +1911,19 @@ impl PermissionRepository for InMemoryStore {
         Ok(self.permissions.borrow().clone())
     }
 
+    fn get_permission(
+        &self,
+        origin: &str,
+        permission: &str,
+    ) -> frost_store::StoreResult<Option<frost_protocol::PermissionRecord>> {
+        Ok(self
+            .permissions
+            .borrow()
+            .iter()
+            .find(|record| record.origin == origin && record.permission == permission)
+            .cloned())
+    }
+
     fn set_permission(
         &self,
         origin: &str,
@@ -2161,6 +2185,38 @@ mod tests {
             value: "restore".into(),
         }));
         assert_eq!(startup.response, Response::Bool(true));
+    }
+
+    #[test]
+    fn permission_policy_normalizes_origin_and_treats_ask_as_unset() {
+        let mut core = BrowserCore::new();
+        let allow = core.process(ProtocolRequest::new(Request::PermissionsSet {
+            origin: " HTTPS://Example.COM/path ".into(),
+            permission: frost_protocol::PermissionType::Camera,
+            value: frost_protocol::PermissionDecision::Allow,
+        }));
+        assert_eq!(allow.response, Response::Bool(true));
+
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(state.permissions.len(), 1);
+        assert_eq!(state.permissions[0].origin, "https://example.com");
+        assert_eq!(state.permissions[0].permission, "camera");
+        assert_eq!(state.permissions[0].value, "allow");
+
+        let ask = core.process(ProtocolRequest::new(Request::PermissionsSet {
+            origin: "https://example.com".into(),
+            permission: frost_protocol::PermissionType::Camera,
+            value: frost_protocol::PermissionDecision::Ask,
+        }));
+        assert_eq!(ask.response, Response::Bool(true));
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        assert!(state.permissions.is_empty());
     }
 
     #[test]

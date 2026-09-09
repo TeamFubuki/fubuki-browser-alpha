@@ -135,6 +135,18 @@ TEST(BridgeSchemaTest, RejectsUnsupportedPermissionValue) {
                                            {"value", String("always")}}));
 }
 
+TEST(BridgeSchemaTest, RejectsUnsupportedPermissionType) {
+  EXPECT_FALSE(IsValid("permissions.set", {{"origin", String("https://example.com")},
+                                           {"permission", String("clipboard")},
+                                           {"value", String("allow")}}));
+}
+
+TEST(BridgeSchemaTest, AcceptsLegacyPermissionDenyValue) {
+  EXPECT_TRUE(IsValid("permissions.set", {{"origin", String("https://example.com")},
+                                          {"permission", String("camera")},
+                                          {"value", String("deny")}}));
+}
+
 TEST(BridgeSchemaTest, RejectsSidebarWidthBelowMinimum) {
   EXPECT_FALSE(IsValid("ui.setSidebarWidth", {{"width", Number(159)}}));
 }

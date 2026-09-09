@@ -25,7 +25,9 @@ Identifiers (`tabId`, `windowId`, setting keys, and command IDs) are limited to
 to 4,096; and setting values to 16,384 characters. `ui.setSidebarWidth.width`
 is 160–800, overlay dimensions are 100–2,000, and `tabs.move.toIndex` is
 the integer range 0–10,000. Enumerated values are strictly checked for history
-range, data-clear target, and permission value.
+range, data-clear target, permission type, and permission value. Permission
+values use `ask`, `allow`, or `block`; legacy `deny` input is accepted and
+normalized to `block`.
 
 ## Methods
 
@@ -76,7 +78,7 @@ range, data-clear target, and permission value.
 - `settings.get({ key: string })`
 - `settings.set({ key: string, value: string })`
 - `settings.reset({ key: string })`
-- `permissions.set({ origin: string, permission: string, value: "ask" | "allow" | "deny" })`
+- `permissions.set({ origin: string, permission: "camera" | "microphone" | "geolocation" | "notifications" | "pointerLock" | "keyboardLock", value: "ask" | "allow" | "block" })`
 - `commands.execute({ id: string, args?: object })`
 - `commands.list()`
 - `frost.coreSnapshot()` diagnostic endpoint for native-to-Rust bridge verification
