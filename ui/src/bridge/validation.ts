@@ -9,6 +9,8 @@ import type {
   FrostWindowState,
   HistoryRecord,
   PermissionRecord,
+  PermissionPrompt,
+  PermissionType,
   Settings,
   TabSnapshot,
   WindowSnapshot,
@@ -362,6 +364,8 @@ const booleanMethods = new Set([
   'downloads.reveal',
   'settings.set',
   'settings.reset',
+  'permissions.set',
+  'permissions.resolve',
   'ui.setSidebarWidth',
   'ui.setOverlayActive',
 ]);
@@ -469,6 +473,44 @@ function validatePermissionEvent(value: unknown, path: string) {
   };
 }
 
+const permissionTypes = new Set<PermissionType>([
+  'camera',
+  'microphone',
+  'geolocation',
+  'notifications',
+  'pointerLock',
+  'keyboardLock',
+]);
+function permissionType(value: unknown, path: string): PermissionType {
+  const result = string(value, path, true);
+  if (!permissionTypes.has(result as PermissionType)) {
+    fail(path, 'a supported permission type');
+  }
+  return result as PermissionType;
+}
+
+function validatePermissionPrompt(
+  value: unknown,
+  path: string,
+): PermissionPrompt {
+  const item = record(value, path);
+  const permissions = array(
+    item.permissions,
+    `${path}.permissions`,
+    permissionType,
+  );
+  if (permissions.length === 0)
+    fail(`${path}.permissions`, 'a non-empty array');
+  return {
+    promptId: string(item.promptId, `${path}.promptId`, true),
+    tabId: string(item.tabId, `${path}.tabId`, true),
+    windowId: string(item.windowId, `${path}.windowId`, true),
+    origin: string(item.origin, `${path}.origin`, true),
+    permissions,
+    isPrivate: boolean(item.isPrivate, `${path}.isPrivate`),
+  };
+}
+
 const externalCapabilities = new Set([
   'read_state',
   'tab_control',
@@ -538,6 +580,15 @@ const eventValidators = new Map<string, Validator>([
   ['history.changed', validateOptionalUrl],
   ['download.changed', validateDownloadEvent],
   ['permission.changed', validatePermissionEvent],
+  ['permission.requested', validatePermissionPrompt],
+  [
+    'permission.resolved',
+    (value, path) => validateIdEvent(value, path, 'promptId'),
+  ],
+  [
+    'permission.dismissed',
+    (value, path) => validateIdEvent(value, path, 'promptId'),
+  ],
   [
     'window.created',
     (value, path) =>

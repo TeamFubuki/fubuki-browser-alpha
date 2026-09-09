@@ -3,6 +3,7 @@ import { commands, tabs } from './bridge/fubuki';
 import { tabIdForNumberShortcut } from './appShortcuts';
 import BrowserShell from './components/BrowserShell';
 import CommandPalette from './components/commandPalette/CommandPalette';
+import PermissionPrompt from './components/PermissionPrompt';
 import { resolveLanguage } from './i18n';
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH } from './sidebarSizing';
 import {
@@ -198,6 +199,7 @@ export default function App() {
         onClose={() => setPaletteOpen(false)}
         onToggleQuietMode={() => setQuietMode((value) => !value)}
       />
+      <PermissionPrompt />
     </>
   );
 }

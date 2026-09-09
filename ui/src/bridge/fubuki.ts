@@ -87,6 +87,25 @@ export type PermissionRecord = {
   createdAt: string;
 };
 
+export type PermissionType =
+  | 'camera'
+  | 'microphone'
+  | 'geolocation'
+  | 'notifications'
+  | 'pointerLock'
+  | 'keyboardLock';
+
+export type PermissionDecision = 'ask' | 'allow' | 'block';
+
+export type PermissionPrompt = {
+  promptId: string;
+  tabId: string;
+  windowId: string;
+  origin: string;
+  permissions: PermissionType[];
+  isPrivate: boolean;
+};
+
 export type LogRecord = {
   level: string;
   message: string;
@@ -270,6 +289,18 @@ export type BridgeMethodMap = {
   'settings.get': { params: { key: string }; result: string | null };
   'settings.set': { params: { key: string; value: string }; result: boolean };
   'settings.reset': { params: { key: string }; result: boolean };
+  'permissions.set': {
+    params: {
+      origin: string;
+      permission: PermissionType;
+      value: PermissionDecision;
+    };
+    result: boolean;
+  };
+  'permissions.resolve': {
+    params: { promptId: string; decision: PermissionDecision };
+    result: boolean;
+  };
   'ui.setSidebarWidth': { params: { width: number }; result: boolean };
   'ui.setOverlayActive': {
     params: { active: boolean; width?: number; height?: number };
@@ -301,6 +332,9 @@ export type EventMap = {
   'history.changed': { url?: string } | void;
   'setting.changed': { key: string; value: string };
   'permission.changed': { origin: string; permission: string };
+  'permission.requested': PermissionPrompt;
+  'permission.resolved': { promptId: string };
+  'permission.dismissed': { promptId: string };
   'host.synced': void;
   'external.audit': {
     commandId: string;
@@ -672,6 +706,16 @@ export const tabs = {
     invokeBridge('tabs.moveToNewWindow', { tabId }),
   activateNext: () => invokeBridge('tabs.activateNext'),
   activatePrevious: () => invokeBridge('tabs.activatePrevious'),
+};
+
+export const permissions = {
+  set: (
+    origin: string,
+    permission: PermissionType,
+    value: PermissionDecision,
+  ) => invokeBridge('permissions.set', { origin, permission, value }),
+  resolve: (promptId: string, decision: PermissionDecision) =>
+    invokeBridge('permissions.resolve', { promptId, decision }),
 };
 
 export const page = {
