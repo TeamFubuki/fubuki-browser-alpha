@@ -1,3 +1,4 @@
+import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import {
   invokeBridge,
@@ -7,6 +8,7 @@ import {
   type BrowserState,
   type DownloadRecord,
   type HistoryRecord,
+  type PermissionPrompt,
   type Tab,
 } from '../bridge/fubuki';
 import {
@@ -52,6 +54,27 @@ const initialState: BrowserState & { status: string } = {
 };
 
 export const [browserState, setBrowserState] = createStore(initialState);
+export const [permissionPrompts, setPermissionPrompts] = createSignal<
+  PermissionPrompt[]
+>([]);
+
+const permissionOverlay = { width: 392, height: 248 };
+
+function setPermissionOverlay(active: boolean): void {
+  void invokeBridge('ui.setOverlayActive', {
+    active,
+    ...(active ? permissionOverlay : {}),
+  }).catch((error) => {
+    console.error('[Fubuki] Failed to update permission overlay:', error);
+  });
+}
+
+function removePermissionPrompt(promptId: string): void {
+  setPermissionPrompts((current) =>
+    current.filter((prompt) => prompt.promptId !== promptId),
+  );
+  if (permissionPrompts().length === 0) setPermissionOverlay(false);
+}
 
 // --- Lightweight targeted refresh (no full snapshot) ---
 
@@ -415,6 +438,26 @@ export function bindNativeEvents() {
       // Will be available on next full refresh (startup, settings page).
     }),
 
+    onBridgeEvent('permission.requested', (payload) => {
+      if (browserState.windowId && payload.windowId !== browserState.windowId) {
+        return;
+      }
+      setPermissionPrompts((current) =>
+        current.some((prompt) => prompt.promptId === payload.promptId)
+          ? current
+          : [...current, payload],
+      );
+      setPermissionOverlay(true);
+    }),
+
+    onBridgeEvent('permission.resolved', ({ promptId }) => {
+      removePermissionPrompt(promptId);
+    }),
+
+    onBridgeEvent('permission.dismissed', ({ promptId }) => {
+      removePermissionPrompt(promptId);
+    }),
+
     // --- Downloads (targeted refresh) ---
     onBridgeEvent('downloads.updated', () => {
       void refreshDownloads();
@@ -437,6 +480,8 @@ export function bindNativeEvents() {
   return () => {
     disposers.forEach((dispose) => dispose());
     cancelScheduledDownloadsRefresh();
+    setPermissionPrompts([]);
+    setPermissionOverlay(false);
   };
 }
 

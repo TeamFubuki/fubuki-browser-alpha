@@ -3,6 +3,7 @@ import type {
   BridgeMethodMap,
   CommandId,
   EventMap,
+  PermissionPrompt,
   Settings,
   Tab,
 } from '../bridge/fubuki';
@@ -129,6 +130,11 @@ describe('EventMap types', () => {
     expectTypeOf<TabsCreated>().toBeVoid();
     expectTypeOf<TabsUpdated>().toBeVoid();
     expectTypeOf<BookmarkChanged>().toMatchTypeOf<{ url?: string } | void>();
+  });
+
+  it('has a typed permission prompt payload', () => {
+    type Prompt = EventMap['permission.requested'];
+    expectTypeOf<Prompt>().toEqualTypeOf<PermissionPrompt>();
   });
 });
 
