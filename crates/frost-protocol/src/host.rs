@@ -61,6 +61,13 @@ pub enum HostCommand {
         width: Option<f64>,
         height: Option<f64>,
     },
+    #[serde(rename = "permission.resolve", rename_all = "camelCase")]
+    PermissionResolve {
+        prompt_id: String,
+        tab_id: String,
+        window_id: String,
+        decision: PermissionDecision,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -134,6 +141,21 @@ pub enum HostEvent {
         origin: String,
         permission: PermissionType,
         value: PermissionDecision,
+    },
+    #[serde(rename = "permission.requested", rename_all = "camelCase")]
+    PermissionRequested {
+        prompt_id: String,
+        tab_id: String,
+        window_id: String,
+        origin: String,
+        permissions: Vec<PermissionType>,
+        is_private: bool,
+    },
+    #[serde(rename = "permission.dismissed", rename_all = "camelCase")]
+    PermissionDismissed {
+        prompt_id: String,
+        tab_id: String,
+        window_id: String,
     },
     #[serde(rename = "window.focused", rename_all = "camelCase")]
     WindowFocused { window_id: String },
