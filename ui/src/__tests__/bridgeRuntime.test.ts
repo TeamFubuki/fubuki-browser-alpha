@@ -364,6 +364,32 @@ describe('event validation and listener isolation', () => {
     );
   });
 
+  it('accepts a validated permission.requested payload', () => {
+    expect(
+      validateBridgeEvent('permission.requested', {
+        promptId: 'prompt-1',
+        tabId: 'tab-1',
+        windowId: 'window-1',
+        origin: 'https://example.com',
+        permissions: ['camera', 'microphone'],
+        isPrivate: true,
+      }),
+    ).toMatchObject({ promptId: 'prompt-1', isPrivate: true });
+  });
+
+  it('rejects unsupported permission prompt types', () => {
+    expect(() =>
+      validateBridgeEvent('permission.requested', {
+        promptId: 'prompt-1',
+        tabId: 'tab-1',
+        windowId: 'window-1',
+        origin: 'https://example.com',
+        permissions: ['clipboard'],
+        isPrivate: false,
+      }),
+    ).toThrow(/permission\.requested.*permissions/);
+  });
+
   it('accepts Frost Protocol external audit events', () => {
     expect(
       validateBridgeEvent('external.audit', {

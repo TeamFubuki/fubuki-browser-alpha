@@ -1,0 +1,109 @@
+.permission-prompt {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  width: min(368px, calc(100vw - 24px));
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--accent));
+  color: var(--text);
+  box-shadow: 0 14px 38px rgb(15 23 42 / 0.24);
+  pointer-events: auto;
+  animation: permissionPromptIn 0.2s ease-out;
+}
+
+.permission-prompt-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.permission-prompt-origin {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--accent);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-prompt-message {
+  margin: 12px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.permission-prompt-message span {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.permission-prompt-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.permission-prompt-list li {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.permission-prompt-private {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.permission-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.permission-prompt-actions button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  pointer-events: auto;
+}
+
+.permission-prompt-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.permission-prompt-actions .permission-allow {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--content-bg);
+}
+
+@keyframes permissionPromptIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .permission-prompt {
+    animation: none;
+  }
+}
