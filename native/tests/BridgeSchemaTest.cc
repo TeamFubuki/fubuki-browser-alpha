@@ -147,6 +147,16 @@ TEST(BridgeSchemaTest, AcceptsLegacyPermissionDenyValue) {
                                           {"value", String("deny")}}));
 }
 
+TEST(BridgeSchemaTest, AcceptsPermissionResolution) {
+  EXPECT_TRUE(IsValid("permissions.resolve", {{"promptId", String("prompt-1")},
+                                               {"decision", String("allow")}}));
+}
+
+TEST(BridgeSchemaTest, RejectsUnsupportedPermissionResolution) {
+  EXPECT_FALSE(IsValid("permissions.resolve", {{"promptId", String("prompt-1")},
+                                                {"decision", String("deny")}}));
+}
+
 TEST(BridgeSchemaTest, RejectsSidebarWidthBelowMinimum) {
   EXPECT_FALSE(IsValid("ui.setSidebarWidth", {{"width", Number(159)}}));
 }

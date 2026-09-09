@@ -1107,12 +1107,30 @@ bool BrowserWindow::ResetSetting(const std::string& key) {
 }
 
 bool BrowserWindow::SetPermission(const std::string& origin, const std::string& permission, const std::string& value) {
+  if (privateWindow_) {
+    return false;
+  }
   const bool ok = Store().SetPermission(origin, permission, value);
   if (ok) {
     eventBus_.Publish(
         {EventType::PermissionChanged, "permission.changed", {}, windowId_, "", origin});
   }
   return ok;
+}
+
+bool BrowserWindow::ResolvePermission(const std::string& promptId,
+                                      const std::string& tabId,
+                                      const std::string& decision) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !tab->browser || promptId.empty()) {
+    return false;
+  }
+  CefRefPtr<CefClient> client = tab->browser->GetHost()->GetClient();
+  if (!client) {
+    return false;
+  }
+  auto* fubukiClient = static_cast<FubukiClient*>(client.get());
+  return fubukiClient->ResolvePermission(promptId, decision);
 }
 
 bool BrowserWindow::SetLiveSidebarWidth(double width) {
@@ -1379,6 +1397,13 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
                        JsonString(payload, "value"));
     if (!ok) {
       error = "failed to set permission";
+    }
+  } else if (command == "permission.resolve") {
+    ok = ResolvePermission(JsonString(payload, "promptId"),
+                           JsonString(payload, "tabId"),
+                           JsonString(payload, "decision"));
+    if (!ok) {
+      error = "permission prompt is no longer available";
     }
   } else {
     // file.open / file.reveal / browsingData.clear are not yet routed to host
