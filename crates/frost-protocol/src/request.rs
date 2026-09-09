@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::permission::{PermissionDecision, PermissionType};
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtocolRequest {
@@ -179,8 +181,8 @@ pub enum Request {
     #[serde(rename = "permissions.set", rename_all = "camelCase")]
     PermissionsSet {
         origin: String,
-        permission: String,
-        value: String,
+        permission: PermissionType,
+        value: PermissionDecision,
     },
     #[serde(rename = "commands.list")]
     CommandsList,
@@ -245,6 +247,23 @@ mod tests {
                 title: "Example".into(),
                 url: "https://example.com".into(),
                 favicon_url: Some(String::new()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_canonical_permission_request_and_legacy_deny() {
+        let request: ProtocolRequest = serde_json::from_str(
+            r#"{"version":0,"method":"permissions.set","params":{"origin":"https://example.com","permission":"pointerLock","value":"deny"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            request.request,
+            Request::PermissionsSet {
+                origin: "https://example.com".into(),
+                permission: crate::PermissionType::PointerLock,
+                value: crate::PermissionDecision::Block,
             }
         );
     }

@@ -111,9 +111,11 @@ const std::unordered_map<std::string, Method>& Methods() {
     schemas["settings.set"] = {
         {String("key", true, kMaxIdLength), String("value", true, kMaxSettingValueLength)}};
     schemas["settings.reset"] = {{String("key", true, kMaxIdLength)}};
-    schemas["permissions.set"] = {{String("origin", true, kMaxUrlLength),
-                                   String("permission", true, kMaxIdLength),
-                                   OneOf("value", {"ask", "allow", "deny"}, true)}};
+    schemas["permissions.set"] = {
+        {String("origin", true, kMaxUrlLength),
+         OneOf("permission", {"camera", "microphone", "geolocation", "notifications",
+                               "pointerLock", "keyboardLock"}, true),
+         OneOf("value", {"ask", "allow", "block", "deny"}, true)}};
     schemas["ui.setSidebarWidth"] = {{Number("width", true, 160, 800)}};
     schemas["ui.setOverlayActive"] = {{Bool("active", true), Number("width", false, 100, 2000),
                                        Number("height", false, 100, 2000)}};
