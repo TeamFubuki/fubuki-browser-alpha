@@ -87,6 +87,8 @@ class BrowserWindow {
   bool ResetSetting(const std::string& key);
   bool SetPermission(const std::string& origin, const std::string& permission,
                      const std::string& value);
+  bool ResolvePermission(const std::string& promptId, const std::string& tabId,
+                         const std::string& decision);
   bool SetLiveSidebarWidth(double width);
   bool SetUiOverlayActive(bool active, double overlayWidth = 392.0,
                           double overlayHeight = 560.0);
