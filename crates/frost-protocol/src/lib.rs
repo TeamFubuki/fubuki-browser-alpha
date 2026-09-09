@@ -1,6 +1,7 @@
 pub mod event;
 pub mod external;
 pub mod host;
+pub mod permission;
 pub mod request;
 pub mod response;
 pub mod state;
@@ -15,6 +16,7 @@ pub use external::{
 pub use host::{
     HostCommand, HostCommandEnvelope, HostCommandResultEnvelope, HostEvent, HostEventEnvelope,
 };
+pub use permission::{PermissionDecision, PermissionType};
 pub use request::{ProtocolRequest, Request};
 pub use response::{ProtocolResponse, Response};
 pub use state::{
