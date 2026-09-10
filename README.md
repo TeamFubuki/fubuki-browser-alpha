@@ -141,6 +141,7 @@ make audit-deny   # cargo-deny を実行
 - [Commands](docs/commands.md)
 - [Events](docs/events.md)
 - [Internal Pages](docs/internal-pages.md)
+- [CEF Runtime Evaluation](docs/cef-runtime-evaluation.md)
 - [Known Limitations](docs/known-limitations.md)
 
 ## Contributing / 貢献
