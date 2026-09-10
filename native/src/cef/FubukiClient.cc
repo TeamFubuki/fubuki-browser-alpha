@@ -1,5 +1,8 @@
 #include "cef/FubukiClient.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <sstream>
 
 #include "browser/BrowserAppController.h"
@@ -58,6 +61,18 @@ bool IsBlankPopupUrl(const std::string& url) {
 
 bool IsFubukiInternalUrl(const std::string& url) {
   return StartsWith(url, "fubuki://");
+}
+
+bool EnvFlagEnabled(const char* key) {
+  const char* value = std::getenv(key);
+  if (!value) {
+    return false;
+  }
+  std::string normalized(value);
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return normalized == "1" || normalized == "true" || normalized == "yes" ||
+         normalized == "on";
 }
 
 std::string DecodeFormValue(const std::string &value) {
@@ -476,11 +491,32 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
     return false;
   }
 
-  if (window_ && !window_->IsPrivate()) {
-    window_->Store().AddLog("info", "Permission denied for " + requesting_origin.ToString() + " (" +
-                                     std::to_string(requested_permissions) + ")");
+  uint32_t allowed_permissions = 0;
+  if (EnvFlagEnabled("FUBUKI_ALLOW_POINTER_LOCK")) {
+    allowed_permissions |= CEF_PERMISSION_TYPE_POINTER_LOCK;
   }
-  callback->Continue(CEF_PERMISSION_RESULT_DENY);
+  if (EnvFlagEnabled("FUBUKI_ALLOW_KEYBOARD_LOCK")) {
+    allowed_permissions |= CEF_PERMISSION_TYPE_KEYBOARD_LOCK;
+  }
+
+  const bool has_disallowed_permissions =
+      (requested_permissions & ~allowed_permissions) != 0;
+  const bool has_allowable_permissions =
+      (requested_permissions & allowed_permissions) != 0;
+  const cef_permission_request_result_t result =
+      (!has_disallowed_permissions && has_allowable_permissions)
+          ? CEF_PERMISSION_RESULT_ACCEPT
+          : CEF_PERMISSION_RESULT_DENY;
+
+  if (window_ && !window_->IsPrivate()) {
+    window_->Store().AddLog(
+        "info", "Permission " +
+                    std::string(result == CEF_PERMISSION_RESULT_ACCEPT ? "accepted"
+                                                                        : "denied") +
+                    " for " + requesting_origin.ToString() + " (" +
+                    std::to_string(requested_permissions) + ")");
+  }
+  callback->Continue(result);
   return true;
 }
 

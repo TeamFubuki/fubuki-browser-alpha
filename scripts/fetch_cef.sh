@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CEF_ROOT="${CEF_ROOT:-"$ROOT_DIR/third_party/cef"}"
 CEF_CHANNEL="${CEF_CHANNEL:-stable}"
 CEF_PLATFORM="${CEF_PLATFORM:-}"
+CEF_VERSION="${CEF_VERSION:-}"
 FORCE="${FORCE:-0}"
 CACHE_DIR="${CACHE_DIR:-"$ROOT_DIR/.cache/cef"}"
 INDEX_URL="${CEF_INDEX_URL:-https://cef-builds.spotifycdn.com/index.json}"
@@ -32,7 +33,7 @@ mkdir -p "$CACHE_DIR"
 
 selection_file="$(mktemp "$CACHE_DIR/selection.XXXXXX.json")"
 
-CEF_PLATFORM="$CEF_PLATFORM" CEF_CHANNEL="$CEF_CHANNEL" INDEX_URL="$INDEX_URL" python3 - <<'PY' > "$selection_file"
+CEF_PLATFORM="$CEF_PLATFORM" CEF_CHANNEL="$CEF_CHANNEL" CEF_VERSION="$CEF_VERSION" INDEX_URL="$INDEX_URL" python3 - <<'PY' > "$selection_file"
 import json
 import os
 import re
@@ -41,6 +42,7 @@ import urllib.request
 
 platform = os.environ["CEF_PLATFORM"]
 channel = os.environ["CEF_CHANNEL"]
+requested_cef_version = os.environ.get("CEF_VERSION", "").strip()
 index_url = os.environ["INDEX_URL"]
 archive_pattern = re.compile(rf"cef_binary_[A-Za-z0-9.+_-]+_{re.escape(platform)}\.tar\.bz2")
 
@@ -73,12 +75,15 @@ candidates = []
 for version in index[platform].get("versions", []):
     if version.get("channel") != channel:
         continue
+    if requested_cef_version and version.get("cef_version") != requested_cef_version:
+        continue
     name = standard_archive(version.get("files", []))
     if name:
         candidates.append((version_key(version), version, name))
 
 if not candidates:
-    raise SystemExit(f"No standard CEF archive found for {platform} channel={channel}")
+    version_suffix = f" version={requested_cef_version}" if requested_cef_version else ""
+    raise SystemExit(f"No standard CEF archive found for {platform} channel={channel}{version_suffix}")
 
 _, version, name = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
 # Resolve the archive entry to read its checksum from the index.

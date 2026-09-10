@@ -108,6 +108,12 @@ make run
 CEF_ROOT=/path/to/cef_binary make configure
 ```
 
+Pointer Lock / Keyboard Lock の検証時は、権限プロンプトのテスト許可を環境変数で有効化できます。
+
+```bash
+FUBUKI_ALLOW_POINTER_LOCK=1 FUBUKI_ALLOW_KEYBOARD_LOCK=1 make run
+```
+
 ## Common Commands / よく使うコマンド
 
 ```bash
@@ -135,6 +141,7 @@ make audit-deny   # cargo-deny を実行
 - [Commands](docs/commands.md)
 - [Events](docs/events.md)
 - [Internal Pages](docs/internal-pages.md)
+- [CEF Runtime Evaluation](docs/cef-runtime-evaluation.md)
 - [Known Limitations](docs/known-limitations.md)
 
 ## Contributing / 貢献
