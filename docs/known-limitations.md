@@ -9,3 +9,4 @@
 - Cache/site-data clearing is conservative and depends on CEF request-context support.
 - Bookmark folders and browser-compatible import/export need more complete UX and persistence work.
 - macOS Apple Silicon is the primary target; Intel compatibility depends on the CEF build used.
+- Permission prompts are denied by default in Alloy-style flows unless explicitly allowed (currently test flags: `FUBUKI_ALLOW_POINTER_LOCK=1`, `FUBUKI_ALLOW_KEYBOARD_LOCK=1`).
