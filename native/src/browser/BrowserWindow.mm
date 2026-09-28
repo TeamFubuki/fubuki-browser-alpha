@@ -2096,8 +2096,10 @@ void BrowserWindow::UpdateContentFrame() {
       (settingsValue && settingsValue->GetType() == VTYPE_DICTIONARY)
           ? settingsValue->GetDictionary()
           : CefDictionaryValue::Create();
-  const std::string sidebarState = settings->GetString("sidebarVisible");
-  const bool sidebarVisible = sidebarState == "show";
+  // Match the UI's default: an unset sidebarVisible setting means "show".
+  // Treating an absent value as hidden lets the content view cover the UI
+  // sidebar until the setting is toggled for the first time.
+  const bool sidebarVisible = settings->GetString("sidebarVisible") != "hide";
   double sidebarWidth = sidebarVisible ? kDefaultSidebarWidth : 0.0;
   if (sidebarVisible) {
     if (liveSidebarWidth_ > 0.0) {

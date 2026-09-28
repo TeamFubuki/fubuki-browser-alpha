@@ -88,7 +88,17 @@ export function reduceTabCreated(
   state: BrowserEventState,
   nextFrostTab: FrostTabState,
 ): BrowserEventResult {
-  if (nextFrostTab.windowId !== state.windowId) return unchanged(state);
+  if (nextFrostTab.windowId !== state.windowId) {
+    // During startup the first snapshot can beat the host's page.created
+    // event, leaving this UI bound to the engine's placeholder window. If the
+    // event belongs to a window the snapshot does not know about, refresh so
+    // the UI can bind to the host window and recover its tabs. Known foreign
+    // windows remain safely ignored.
+    const windowIsKnown = state.windows.some(
+      (window) => window.id === nextFrostTab.windowId,
+    );
+    return windowIsKnown ? unchanged(state) : refresh(state);
+  }
 
   const nextTab = fromFrostTab(nextFrostTab);
   const existingIndex = state.tabs.findIndex((tab) => tab.id === nextTab.id);
