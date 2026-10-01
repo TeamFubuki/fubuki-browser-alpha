@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frost_protocol::{BookmarkRecord, DownloadRecord, HistoryRecord, PermissionRecord};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
 pub const VALID_SETTING_KEYS: &[&str] = &[
@@ -86,6 +86,11 @@ pub trait DownloadRepository {
 
 pub trait PermissionRepository {
     fn list_permissions(&self) -> StoreResult<Vec<PermissionRecord>>;
+    fn get_permission(
+        &self,
+        origin: &str,
+        permission: &str,
+    ) -> StoreResult<Option<PermissionRecord>>;
     fn set_permission(&self, origin: &str, permission: &str, value: &str) -> StoreResult<()>;
     fn remove_permission(&self, origin: &str, permission: &str) -> StoreResult<bool>;
 }
@@ -660,6 +665,29 @@ impl PermissionRepository for SqliteStore {
             .map_err(StoreError::from)
     }
 
+    fn get_permission(
+        &self,
+        origin: &str,
+        permission: &str,
+    ) -> StoreResult<Option<PermissionRecord>> {
+        self.conn
+            .query_row(
+                "SELECT origin, permission, value, created_at FROM permissions
+                 WHERE origin = ?1 AND permission = ?2",
+                params![origin, permission],
+                |row| {
+                    Ok(PermissionRecord {
+                        origin: row.get(0)?,
+                        permission: row.get(1)?,
+                        value: row.get(2)?,
+                        created_at: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
     fn set_permission(&self, origin: &str, permission: &str, value: &str) -> StoreResult<()> {
         self.conn.execute(
             "
@@ -1184,6 +1212,26 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(store.list_downloads().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn looks_up_permission_by_normalized_storage_key() {
+        let store = SqliteStore::in_memory().unwrap();
+        store
+            .set_permission("https://example.com", "camera", "allow")
+            .unwrap();
+
+        let permission = store
+            .get_permission("https://example.com", "camera")
+            .unwrap()
+            .unwrap();
+        assert_eq!(permission.value, "allow");
+        assert!(
+            store
+                .get_permission("https://example.com", "microphone")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

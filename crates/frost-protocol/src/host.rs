@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::permission::{PermissionDecision, PermissionType};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostCommandEnvelope {
@@ -130,8 +132,8 @@ pub enum HostEvent {
     #[serde(rename = "permission.changed", rename_all = "camelCase")]
     PermissionChanged {
         origin: String,
-        permission: String,
-        value: String,
+        permission: PermissionType,
+        value: PermissionDecision,
     },
     #[serde(rename = "window.focused", rename_all = "camelCase")]
     WindowFocused { window_id: String },
