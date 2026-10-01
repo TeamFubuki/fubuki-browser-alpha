@@ -10,6 +10,7 @@ mod window_service;
 
 pub use external_router::{ExternalPolicy, ExternalResponse};
 
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
@@ -18,8 +19,9 @@ use frost_engine_api::{
 };
 use frost_protocol::{
     BrowserCommand, Event, EventEnvelope, HostCommand, HostCommandEnvelope,
-    HostCommandResultEnvelope, HostEvent, HostEventEnvelope, ProtocolRequest, ProtocolResponse,
-    Request, Response, SettingChanged, TabActivated, TabClosed, TabMoved, TabPatch,
+    HostCommandResultEnvelope, HostEvent, HostEventEnvelope, PermissionDecision, PermissionType,
+    ProtocolRequest, ProtocolResponse, Request, Response, SettingChanged, TabActivated, TabClosed,
+    TabMoved, TabPatch,
 };
 use frost_store::{
     BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRepository,
@@ -35,6 +37,7 @@ use transaction::{
 pub use bookmark_service::BookmarkService;
 pub use download_service::DownloadService;
 pub use history_service::HistoryService;
+use permission_service::PendingPermission;
 pub use permission_service::{PermissionError, PermissionService};
 pub use settings_service::SettingsService;
 pub use tab_service::TabService;
@@ -162,6 +165,21 @@ impl EngineAdapter for HostCommandAdapter {
             window_id: window_id.to_owned(),
         })
     }
+
+    fn resolve_permission(
+        &mut self,
+        prompt_id: &str,
+        tab_id: &str,
+        window_id: &str,
+        decision: PermissionDecision,
+    ) -> EngineResult<HostCommandId> {
+        self.send(HostCommand::PermissionResolve {
+            prompt_id: prompt_id.to_owned(),
+            tab_id: tab_id.to_owned(),
+            window_id: window_id.to_owned(),
+            decision,
+        })
+    }
 }
 
 pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
@@ -174,6 +192,8 @@ pub struct BrowserCore<A = NoopEngineAdapter, S = InMemoryStore> {
     events: Vec<EventEnvelope>,
     event_tx: Option<Sender<EventEnvelope>>,
     pending: PendingOperations,
+    pending_permissions: HashMap<String, PendingPermission>,
+    private_permissions: HashMap<(String, String, PermissionType), PermissionDecision>,
 }
 
 impl BrowserCore<NoopEngineAdapter, InMemoryStore> {
@@ -215,6 +235,8 @@ where
             events: Vec::new(),
             event_tx: None,
             pending: PendingOperations::default(),
+            pending_permissions: HashMap::new(),
+            private_permissions: HashMap::new(),
         }
     }
 
@@ -398,6 +420,7 @@ where
                             self.adapter
                                 .close_window(&wid)
                                 .map_err(|e| CoreError::Message(e.to_string()))?;
+                            self.dismiss_permissions_for_window(&wid);
                             self.emit(Event::WindowClosed {
                                 window_id: wid.clone(),
                             });
@@ -945,6 +968,7 @@ where
                             return Err(CoreError::Message(e.to_string()));
                         }
                     };
+                    self.dismiss_permissions_for_window(&target);
                     self.record_pending(command_id, PendingOperation::StateSnapshot(snapshot));
                     self.emit(Event::WindowClosed { window_id: target });
                 }
@@ -1117,6 +1141,14 @@ where
                     origin,
                     permission: permission.as_str().to_owned(),
                 });
+                Ok(Response::Bool(true))
+            }
+            Request::PermissionsResolve {
+                prompt_id,
+                decision,
+                window_id,
+            } => {
+                self.resolve_permission_prompt(&prompt_id, decision, window_id.as_deref())?;
                 Ok(Response::Bool(true))
             }
             Request::CommandsList => Ok(Response::CommandsList(default_commands())),
@@ -1374,6 +1406,7 @@ where
                 let closed = self.tabs.close_tab(&tab_id);
                 if closed {
                     self.windows.detach_tab(&tab_id);
+                    self.dismiss_permissions_for_tab(&tab_id);
                     self.emit(Event::TabClosed(TabClosed { tab_id }));
                 }
                 Ok(())
@@ -1480,6 +1513,31 @@ where
                 });
                 Ok(())
             }
+            HostEvent::PermissionRequested {
+                prompt_id,
+                tab_id,
+                window_id,
+                origin,
+                permissions,
+                is_private,
+            } => self.handle_permission_request(
+                prompt_id,
+                tab_id,
+                window_id,
+                origin,
+                permissions,
+                is_private,
+            ),
+            HostEvent::PermissionDismissed {
+                prompt_id,
+                tab_id: _,
+                window_id: _,
+            } => {
+                if self.pending_permissions.remove(&prompt_id).is_some() {
+                    self.emit(Event::PermissionDismissed { prompt_id });
+                }
+                Ok(())
+            }
             HostEvent::WindowFocused { window_id } => {
                 self.windows.set_active_window(&window_id);
                 Ok(())
@@ -1520,6 +1578,7 @@ where
             }
             HostEvent::WindowClosed { window_id } => {
                 if self.windows.close_window(&window_id) {
+                    self.dismiss_permissions_for_window(&window_id);
                     let tab_ids: Vec<String> = self
                         .tabs
                         .list()
@@ -1536,6 +1595,198 @@ where
                 Ok(())
             }
         }
+    }
+
+    fn handle_permission_request(
+        &mut self,
+        prompt_id: String,
+        tab_id: String,
+        window_id: String,
+        origin: String,
+        permissions: Vec<PermissionType>,
+        is_private: bool,
+    ) -> CoreResult<()> {
+        let window = self
+            .windows
+            .get_window(&window_id)
+            .ok_or_else(|| CoreError::Message("Permission request has an unknown window".into()))?;
+        let tab = self
+            .tabs
+            .get_tab(&tab_id)
+            .ok_or_else(|| CoreError::Message("Permission request has an unknown tab".into()))?;
+        if tab.window_id != window_id || window.is_private != is_private {
+            return Err(CoreError::Message(
+                "Permission request ownership does not match engine state".into(),
+            ));
+        }
+        if self.pending_permissions.contains_key(&prompt_id) {
+            return Err(CoreError::Message("Duplicate permission prompt id".into()));
+        }
+        let origin = PermissionService::normalize_origin(&origin)
+            .map_err(|error| CoreError::Message(error.to_string()))?;
+        let mut requested = Vec::new();
+        let mut seen = HashSet::new();
+        for permission in permissions {
+            if seen.insert(permission) {
+                requested.push(permission);
+            }
+        }
+        if requested.is_empty() {
+            return Err(CoreError::Message(
+                "Permission request has no supported permissions".into(),
+            ));
+        }
+
+        let mut unresolved = Vec::new();
+        for permission in requested {
+            let decision = if is_private {
+                self.private_permissions
+                    .get(&(window_id.clone(), origin.clone(), permission))
+                    .copied()
+                    .unwrap_or(PermissionDecision::Ask)
+            } else {
+                PermissionService::lookup(&self.repository, &origin, permission)
+                    .unwrap_or(PermissionDecision::Block)
+            };
+            match decision {
+                PermissionDecision::Allow => {}
+                PermissionDecision::Ask => unresolved.push(permission),
+                PermissionDecision::Block => {
+                    self.send_permission_resolution(
+                        &prompt_id,
+                        &tab_id,
+                        &window_id,
+                        PermissionDecision::Block,
+                    )?;
+                    return Ok(());
+                }
+            }
+        }
+
+        if unresolved.is_empty() {
+            self.send_permission_resolution(
+                &prompt_id,
+                &tab_id,
+                &window_id,
+                PermissionDecision::Allow,
+            )?;
+            return Ok(());
+        }
+
+        let pending = PendingPermission {
+            tab_id,
+            window_id,
+            origin,
+            permissions: unresolved.clone(),
+            is_private,
+        };
+        let event_tab_id = pending.tab_id.clone();
+        let event_window_id = pending.window_id.clone();
+        let event_origin = pending.origin.clone();
+        self.pending_permissions.insert(prompt_id.clone(), pending);
+        self.emit(Event::PermissionRequested {
+            prompt_id,
+            tab_id: event_tab_id,
+            window_id: event_window_id,
+            origin: event_origin,
+            permissions: unresolved,
+            is_private,
+        });
+        Ok(())
+    }
+
+    fn resolve_permission_prompt(
+        &mut self,
+        prompt_id: &str,
+        decision: PermissionDecision,
+        request_window_id: Option<&str>,
+    ) -> CoreResult<()> {
+        let pending = self
+            .pending_permissions
+            .get(prompt_id)
+            .cloned()
+            .ok_or_else(|| CoreError::Message("Permission prompt not found".into()))?;
+        if request_window_id.is_some_and(|window_id| window_id != pending.window_id) {
+            return Err(CoreError::Message(
+                "Permission prompt belongs to another window".into(),
+            ));
+        }
+
+        if pending.is_private {
+            for permission in &pending.permissions {
+                let key = (
+                    pending.window_id.clone(),
+                    pending.origin.clone(),
+                    *permission,
+                );
+                if decision == PermissionDecision::Ask {
+                    self.private_permissions.remove(&key);
+                } else {
+                    self.private_permissions.insert(key, decision);
+                }
+            }
+        } else {
+            for permission in &pending.permissions {
+                PermissionService::set(&self.repository, &pending.origin, *permission, decision)
+                    .map_err(|error| CoreError::Message(error.to_string()))?;
+            }
+        }
+
+        self.send_permission_resolution(prompt_id, &pending.tab_id, &pending.window_id, decision)?;
+        self.pending_permissions.remove(prompt_id);
+        if !pending.is_private {
+            for permission in pending.permissions {
+                self.emit(Event::PermissionChanged {
+                    origin: pending.origin.clone(),
+                    permission: permission.as_str().to_owned(),
+                });
+            }
+        }
+        self.emit(Event::PermissionResolved {
+            prompt_id: prompt_id.to_owned(),
+        });
+        Ok(())
+    }
+
+    fn send_permission_resolution(
+        &mut self,
+        prompt_id: &str,
+        tab_id: &str,
+        window_id: &str,
+        decision: PermissionDecision,
+    ) -> CoreResult<()> {
+        self.adapter
+            .resolve_permission(prompt_id, tab_id, window_id, decision)
+            .map_err(|error| CoreError::Message(error.to_string()))?;
+        Ok(())
+    }
+
+    fn dismiss_permissions_for_tab(&mut self, tab_id: &str) {
+        let prompt_ids: Vec<String> = self
+            .pending_permissions
+            .iter()
+            .filter(|(_, pending)| pending.tab_id == tab_id)
+            .map(|(prompt_id, _)| prompt_id.clone())
+            .collect();
+        for prompt_id in prompt_ids {
+            self.pending_permissions.remove(&prompt_id);
+            self.emit(Event::PermissionDismissed { prompt_id });
+        }
+    }
+
+    fn dismiss_permissions_for_window(&mut self, window_id: &str) {
+        let prompt_ids: Vec<String> = self
+            .pending_permissions
+            .iter()
+            .filter(|(_, pending)| pending.window_id == window_id)
+            .map(|(prompt_id, _)| prompt_id.clone())
+            .collect();
+        for prompt_id in prompt_ids {
+            self.pending_permissions.remove(&prompt_id);
+            self.emit(Event::PermissionDismissed { prompt_id });
+        }
+        self.private_permissions
+            .retain(|(permission_window_id, _, _), _| permission_window_id != window_id);
     }
 
     pub fn process_host_command_result(
@@ -2220,6 +2471,150 @@ mod tests {
     }
 
     #[test]
+    fn permission_request_is_resolved_by_the_engine_and_host_command() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+        let window_id = match core
+            .process(ProtocolRequest::new(Request::AppSnapshot))
+            .response
+        {
+            Response::AppSnapshot(state) => state.active_window_id.unwrap(),
+            _ => panic!("expected snapshot"),
+        };
+        let tab_response = core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://example.com".into()),
+            active: true,
+            window_id: Some(window_id.clone()),
+        }));
+        assert_eq!(tab_response.response, Response::Bool(true));
+        let tab_id = match core
+            .process(ProtocolRequest::new(Request::TabsList))
+            .response
+        {
+            Response::TabsList(tabs) => tabs.first().unwrap().id.clone(),
+            _ => panic!("expected tabs"),
+        };
+
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+            prompt_id: "prompt-1".into(),
+            tab_id: tab_id.clone(),
+            window_id: window_id.clone(),
+            origin: "HTTPS://Example.COM/path".into(),
+            permissions: vec![PermissionType::Camera],
+            is_private: false,
+        }))
+        .unwrap();
+
+        let response = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+            prompt_id: "prompt-1".into(),
+            decision: PermissionDecision::Allow,
+            window_id: Some(window_id.clone()),
+        }));
+        assert_eq!(response.response, Response::Bool(true));
+        let command = host_rx
+            .try_iter()
+            .find(|command| matches!(command.command, HostCommand::PermissionResolve { .. }))
+            .expect("permission resolution host command");
+        assert!(matches!(
+            command.command,
+            HostCommand::PermissionResolve {
+                prompt_id,
+                decision: PermissionDecision::Allow,
+                ..
+            } if prompt_id == "prompt-1"
+        ));
+
+        let Response::AppSnapshot(state) = core
+            .process(ProtocolRequest::new(Request::AppSnapshot))
+            .response
+        else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(state.permissions[0].origin, "https://example.com");
+        assert_eq!(state.permissions[0].value, "allow");
+        assert!(core.recent_events().iter().any(|event| matches!(
+            event.event,
+            Event::PermissionResolved { ref prompt_id } if prompt_id == "prompt-1"
+        )));
+    }
+
+    #[test]
+    fn private_permission_decision_is_window_scoped_and_not_persisted() {
+        let mut core = BrowserCore::new();
+        core.process(ProtocolRequest::new(Request::WindowsCreatePrivate));
+        let Response::AppSnapshot(state) = core
+            .process(ProtocolRequest::new(Request::AppSnapshot))
+            .response
+        else {
+            panic!("expected snapshot");
+        };
+        let window = state
+            .windows
+            .iter()
+            .find(|window| window.is_private)
+            .unwrap();
+        let window_id = window.id.clone();
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://private.example".into()),
+            active: true,
+            window_id: Some(window_id.clone()),
+        }));
+        let tab_id = match core
+            .process(ProtocolRequest::new(Request::TabsList))
+            .response
+        {
+            Response::TabsList(tabs) => {
+                tabs.into_iter()
+                    .find(|tab| tab.window_id == window_id)
+                    .unwrap()
+                    .id
+            }
+            _ => panic!("expected tabs"),
+        };
+
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+            prompt_id: "private-1".into(),
+            tab_id: tab_id.clone(),
+            window_id: window_id.clone(),
+            origin: "https://example.com/path".into(),
+            permissions: vec![PermissionType::Microphone],
+            is_private: true,
+        }))
+        .unwrap();
+        assert_eq!(
+            core.process(ProtocolRequest::new(Request::PermissionsResolve {
+                prompt_id: "private-1".into(),
+                decision: PermissionDecision::Allow,
+                window_id: Some(window_id.clone()),
+            }))
+            .response,
+            Response::Bool(true)
+        );
+        let Response::AppSnapshot(state) = core
+            .process(ProtocolRequest::new(Request::AppSnapshot))
+            .response
+        else {
+            panic!("expected snapshot");
+        };
+        assert!(state.permissions.is_empty());
+
+        let event_count = core.recent_events().len();
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+            prompt_id: "private-2".into(),
+            tab_id,
+            window_id,
+            origin: "https://EXAMPLE.com".into(),
+            permissions: vec![PermissionType::Microphone],
+            is_private: true,
+        }))
+        .unwrap();
+        assert_eq!(core.recent_events().len(), event_count);
+    }
+
+    #[test]
     fn close_other_tabs_emits_page_close_for_every_removed_host_page() {
         let (host_tx, host_rx) = crossbeam_channel::unbounded();
         let mut core = BrowserCore::with_adapter_and_settings(
@@ -2675,6 +3070,15 @@ mod tests {
                 Ok(String::new())
             }
             fn close_window(&mut self, _: &str) -> frost_engine_api::EngineResult<String> {
+                Ok(String::new())
+            }
+            fn resolve_permission(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: frost_protocol::PermissionDecision,
+            ) -> frost_engine_api::EngineResult<String> {
                 Ok(String::new())
             }
         }

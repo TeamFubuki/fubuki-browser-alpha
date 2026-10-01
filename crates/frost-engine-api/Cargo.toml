@@ -6,4 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+frost-protocol.workspace = true
 thiserror.workspace = true

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::permission::PermissionType;
 use crate::state::{TabState, WindowState};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,6 +42,19 @@ pub enum Event {
     },
     #[serde(rename = "permission.changed")]
     PermissionChanged { origin: String, permission: String },
+    #[serde(rename = "permission.requested", rename_all = "camelCase")]
+    PermissionRequested {
+        prompt_id: String,
+        tab_id: String,
+        window_id: String,
+        origin: String,
+        permissions: Vec<PermissionType>,
+        is_private: bool,
+    },
+    #[serde(rename = "permission.resolved", rename_all = "camelCase")]
+    PermissionResolved { prompt_id: String },
+    #[serde(rename = "permission.dismissed", rename_all = "camelCase")]
+    PermissionDismissed { prompt_id: String },
     #[serde(rename = "host.synced")]
     HostSynced,
     #[serde(rename = "external.audit")]
