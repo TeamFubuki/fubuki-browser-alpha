@@ -116,6 +116,10 @@ const std::unordered_map<std::string, Method>& Methods() {
          OneOf("permission", {"camera", "microphone", "geolocation", "notifications",
                                "pointerLock", "keyboardLock"}, true),
          OneOf("value", {"ask", "allow", "block", "deny"}, true)}};
+    schemas["permissions.resolve"] = {
+        {Identifier("promptId", true),
+         OneOf("decision", {"ask", "allow", "block"}, true),
+         Identifier("windowId")}};
     schemas["ui.setSidebarWidth"] = {{Number("width", true, 160, 800)}};
     schemas["ui.setOverlayActive"] = {{Bool("active", true), Number("width", false, 100, 2000),
                                        Number("height", false, 100, 2000)}};

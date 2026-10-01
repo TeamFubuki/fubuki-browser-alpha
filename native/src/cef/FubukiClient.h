@@ -1,5 +1,6 @@
 #pragma once
 
+#include <unordered_map>
 #include <string>
 
 #include "include/cef_client.h"
@@ -99,12 +100,34 @@ public:
       CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
       const CefString &requesting_origin, uint32_t requested_permissions,
       CefRefPtr<CefPermissionPromptCallback> callback) override;
+  bool OnRequestMediaAccessPermission(
+      CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+      const CefString &requesting_origin, uint32_t requested_permissions,
+      CefRefPtr<CefMediaAccessCallback> callback) override;
+  void OnDismissPermissionPrompt(
+      CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+      cef_permission_request_result_t result) override;
+
+  // Completes a permission callback previously reported to FrostEngine.
+  // Calls are made on CEF's UI thread and are idempotent by prompt id.
+  bool ResolvePermission(const std::string &promptId,
+                         const std::string &decision);
 
 private:
+  struct PendingPermission {
+    CefRefPtr<CefPermissionPromptCallback> promptCallback;
+    CefRefPtr<CefMediaAccessCallback> mediaCallback;
+    uint32_t mediaPermissions = CEF_MEDIA_PERMISSION_NONE;
+  };
+
+  void CancelPendingPermissions();
+  void SchedulePermissionTimeout(const std::string &promptId);
+
   BrowserWindow *window_;
   std::string tabId_;
   bool isUi_;
   CefRefPtr<CefMessageRouterBrowserSide> messageRouter_;
+  std::unordered_map<std::string, PendingPermission> pendingPermissions_;
 
   IMPLEMENT_REFCOUNTING(FubukiClient);
 };
