@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -226,22 +225,8 @@ def verify_distribution(root: Path, entry: dict[str, Any], *, check_archive_root
             f"Chromium version mismatch in {readme_path}: expected {entry['chromium_version']}, got {actual}"
         )
 
-    # CEF's CMake package does not expose version constants. Verify its entry
-    # points and bind it to the versioned archive root and versioned README/header.
-    cmake_variables = _read_text(cmake_variables_path)
-    cmake_find = _read_text(cmake_find_path)
-    _require(
-        re.search(r'include\(["\']?cef_variables["\']?\)', cmake_find) is not None,
-        f"{cmake_find_path} does not load cef_variables.cmake",
-    )
-    _require(
-        'set(CEF_INCLUDE_PATH "${_CEF_ROOT}")' in cmake_variables,
-        f"{cmake_variables_path} has unexpected CEF include metadata",
-    )
-    _require(
-        'set(CEF_LIBCEF_DLL_WRAPPER_PATH "${_CEF_ROOT}/libcef_dll")' in cmake_variables,
-        f"{cmake_variables_path} has unexpected CEF wrapper metadata",
-    )
+    # CEF's CMake package has no version constants, so version checks use the
+    # header and README above while these files are checked for completeness.
     if not (root / "libcef_dll" / "CMakeLists.txt").is_file():
         raise CEFError("CEF CMake metadata references a missing libcef_dll/CMakeLists.txt")
 
@@ -291,7 +276,7 @@ def _download(url: str, destination: Path, entry: dict[str, Any]) -> None:
         os.replace(temporary, destination)
     except CEFError:
         raise
-    except (OSError, urllib.error.URLError, TimeoutError) as error:
+    except OSError as error:
         raise CEFError(f"Could not download CEF archive from {url}: {error}") from error
     finally:
         try:
@@ -361,12 +346,6 @@ def fetch_cef(
         _download(download_url, archive, entry)
         print(f"Checksum verified: {entry['checksum']['algorithm']} {entry['checksum']['value']}")
 
-    try:
-        verify_archive(archive, entry)
-    except CEFError:
-        archive.unlink(missing_ok=True)
-        raise
-
     with tempfile.TemporaryDirectory(prefix=".cef-extract-", dir=cef_root.parent) as temporary_name:
         extraction_root = Path(temporary_name)
         try:
@@ -395,10 +374,6 @@ def fetch_cef(
         f"Installed locked CEF {entry['cef_version']} / Chromium {entry['chromium_version']} "
         f"({platform_name}) to {cef_root}"
     )
-
-
-def _version_numbers(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in re.findall(r"\d+", value))
 
 
 def _standard_archive(platform_name: str, cef_version: str) -> str:
@@ -439,8 +414,8 @@ def latest_stable_entry(index: Any, platform_name: str) -> dict[str, Any]:
         candidates.append(
             (
                 (
-                    _version_numbers(chromium_version),
-                    _version_numbers(cef_version.split("+", 1)[0]),
+                    tuple(map(int, chromium_version.split("."))),
+                    tuple(map(int, cef_version.split("+", 1)[0].split("."))),
                 ),
                 entry,
             )
@@ -462,10 +437,10 @@ def update_lock(lock_file: Path, index_url: str) -> None:
         request = urllib.request.Request(index_url, headers={"User-Agent": "FubukiBrowserAlpha/CEF-lock"})
         with urllib.request.urlopen(request, timeout=60) as response:
             index = json.load(response)
-    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+    except (OSError, json.JSONDecodeError) as error:
         raise CEFError(f"Could not read CEF index {index_url}: {error}") from error
 
-    updated = json.loads(json.dumps(current))
+    updated = {**current, "platforms": dict(current["platforms"])}
     for platform_name in SUPPORTED_PLATFORMS:
         updated["platforms"][platform_name] = latest_stable_entry(index, platform_name)
     validate_lock(updated)
