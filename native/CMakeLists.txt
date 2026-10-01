@@ -94,6 +94,7 @@ target_include_directories(FubukiBrowserAlpha PRIVATE
 target_compile_definitions(FubukiBrowserAlpha PRIVATE ${CEF_COMPILER_DEFINES})
 target_compile_definitions(FubukiBrowserAlpha PRIVATE
   FUBUKI_UI_DIST="${CMAKE_CURRENT_SOURCE_DIR}/../ui/dist"
+  FUBUKI_INTERNAL_PAGES_DIST="${CMAKE_CURRENT_SOURCE_DIR}/../internal-pages/dist"
 )
 target_compile_options(FubukiBrowserAlpha PRIVATE
   ${FUBUKI_CEF_COMPILER_FLAGS}
