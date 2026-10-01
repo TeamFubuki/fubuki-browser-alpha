@@ -1,0 +1,28 @@
+# Keep pnpm's one-day release delay, while allowing the exact versions already
+# resolved in this initial lockfile to pass frozen installs immediately.
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@rolldown/binding-android-arm-eabi@1.2.12'
+  - '@rolldown/binding-android-arm64@1.2.12'
+  - '@rolldown/binding-darwin-arm64@1.2.12'
+  - '@rolldown/binding-darwin-x64@1.2.12'
+  - '@rolldown/binding-freebsd-x64@1.2.12'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.12'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.12'
+  - '@rolldown/binding-linux-arm64-musl@1.2.12'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.12'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.12'
+  - '@rolldown/binding-linux-x64-gnu@1.2.12'
+  - '@rolldown/binding-linux-x64-musl@1.2.12'
+  - '@rolldown/binding-openharmony-arm64@1.2.12'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.12'
+  - '@rolldown/binding-win32-x64-msvc@1.2.12'
+  - '@vitest/mocker@5.0.3'
+  - '@vitest/spy@5.0.3'
+  - caniuse-lite@1.0.30001814
+  - chai@6.3.0
+  - electron-to-chromium@1.5.443
+  - rolldown@1.2.12
+  - vite@8.3.1
+  - vitest@5.0.3
+  - source-map-js@1.2.2
