@@ -22,6 +22,9 @@ echo "[3/4] Building UI..."
 pnpm run build
 echo ""
 
+# Internal pages (independent package)
+"$ROOT_DIR/scripts/build_internal_pages.sh"
+
 # 4. Configure native
 echo "[4/4] Configuring native build..."
 "$ROOT_DIR/scripts/configure_native.sh"

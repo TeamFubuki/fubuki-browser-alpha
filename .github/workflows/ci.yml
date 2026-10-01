@@ -339,6 +339,12 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
 
+      - name: Install internal pages dependencies & build
+        run: |
+          cd internal-pages
+          pnpm install --frozen-lockfile
+          pnpm run build
+
       - name: Configure native build
         run: make configure
 
