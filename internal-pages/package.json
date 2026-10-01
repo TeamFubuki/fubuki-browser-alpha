@@ -1,0 +1,27 @@
+{
+  "name": "fubuki-internal-pages",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.4.0",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "lint": "oxlint src/",
+    "format": "oxfmt src/ --write",
+    "format:check": "oxfmt src/ --check"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.15"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^5.0.0",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0"
+  }
+}
