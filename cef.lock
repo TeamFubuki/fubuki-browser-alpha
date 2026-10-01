@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "channel": "stable",
+  "download_base_url": "https://cef-builds.spotifycdn.com",
+  "provenance": {
+    "index_url": "https://cef-builds.spotifycdn.com/index.json",
+    "initial_distribution_date": "2026-09-22",
+    "initial_version_basis": "CEF README.txt and include/cef_version.h from the existing macosarm64 distribution",
+    "initial_checksum_basis": "CEF published index.json SHA-1 values for the macosarm64 and macosx64 standard archives"
+  },
+  "platforms": {
+    "macosarm64": {
+      "platform": "macosarm64",
+      "cef_version": "154.0.23+g062ebe4+chromium-154.0.8037.17",
+      "chromium_version": "154.0.8037.17",
+      "archive": "cef_binary_154.0.23+g062ebe4+chromium-154.0.8037.17_macosarm64.tar.bz2",
+      "checksum": {
+        "algorithm": "sha1",
+        "value": "d38756ace3047e4e5ffadf544e2dbe5ed66a40ef"
+      }
+    },
+    "macosx64": {
+      "platform": "macosx64",
+      "cef_version": "154.0.23+g062ebe4+chromium-154.0.8037.17",
+      "chromium_version": "154.0.8037.17",
+      "archive": "cef_binary_154.0.23+g062ebe4+chromium-154.0.8037.17_macosx64.tar.bz2",
+      "checksum": {
+        "algorithm": "sha1",
+        "value": "b81ca30c8bbe42934934ba89712816f860797cc7"
+      }
+    }
+  }
+}
