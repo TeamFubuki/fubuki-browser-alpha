@@ -219,7 +219,8 @@ bool IsDestructiveSettingsAction(const std::string &key) {
          key == "removeDownload" || key == "openDownload" ||
          key == "revealDownload" || key == "openDevTools" ||
          key == "clearData" || key == "clearHistoryRange" ||
-         key == "resetSetting";
+         key == "resetSetting" || key == "setPermission" ||
+         key == "removePermission";
 }
 
 std::string PostBody(CefRefPtr<CefRequest> request) {

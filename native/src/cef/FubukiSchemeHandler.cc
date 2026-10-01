@@ -31,6 +31,13 @@ struct Record {
   std::string downloadId;
 };
 
+struct PermissionRecord {
+  std::string origin;
+  std::string permission;
+  std::string value;
+  std::string createdAt;
+};
+
 std::filesystem::path ProfilePath() {
   const char* home = std::getenv("HOME");
   return home ? std::filesystem::path(home) / "Library/Application Support/Fubuki Browser Alpha"
@@ -216,7 +223,17 @@ static const std::unordered_map<std::string, std::string> kJaLabels = {
     {"Downloading", "ダウンロード中"},
     {"Failed", "失敗"},
     {"Canceled", "キャンセル済み"},
-};
+    {"Permissions", "権限"},
+    {"Permission decisions", "権限の決定"},
+    {"Camera", "カメラ"},
+    {"Microphone", "マイク"},
+    {"Location", "位置情報"},
+    {"Notifications", "通知"},
+    {"Pointer lock", "ポインターロック"},
+    {"Keyboard lock", "キーボードロック"},
+    {"Allow", "許可"},
+    {"Block", "ブロック"},
+  };
 
 std::string Label(const std::string& key) {
   const bool ja = BrowserLanguage() == "ja";
@@ -347,6 +364,51 @@ DatabaseResult<std::vector<Record>> QueryRecords(const std::string& table, int l
   return result;
 }
 
+DatabaseResult<std::vector<PermissionRecord>> QueryPermissions() {
+  DatabaseResult<std::vector<PermissionRecord>> result;
+  sqlite3* db = OpenDatabase();
+  if (!db) {
+    result.error = DatabaseErrorKind::kOpenFailed;
+    return result;
+  }
+  sqlite3_stmt* statement = nullptr;
+  const int rc = sqlite3_prepare_v2(
+      db,
+      "SELECT origin,permission,value,created_at FROM permissions ORDER BY id DESC LIMIT 200",
+      -1, &statement, nullptr);
+  if (rc != SQLITE_OK) {
+    result.error = DatabaseErrorFor(rc, DatabaseErrorKind::kPrepareFailed);
+    return result;
+  }
+  int step = SQLITE_OK;
+  while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+    result.value.push_back({ColumnText(statement, 0), ColumnText(statement, 1),
+                            ColumnText(statement, 2), ColumnText(statement, 3)});
+  }
+  sqlite3_finalize(statement);
+  if (step != SQLITE_DONE) {
+    result.value.clear();
+    result.error = DatabaseErrorFor(step, DatabaseErrorKind::kStepFailed);
+  }
+  return result;
+}
+
+std::string PermissionLabel(const std::string& permission) {
+  if (permission == "camera") return Label("Camera");
+  if (permission == "microphone") return Label("Microphone");
+  if (permission == "geolocation") return Label("Location");
+  if (permission == "notifications") return Label("Notifications");
+  if (permission == "pointerLock") return Label("Pointer lock");
+  if (permission == "keyboardLock") return Label("Keyboard lock");
+  return permission;
+}
+
+std::string PermissionDecisionLabel(const std::string& value) {
+  if (value == "allow") return Label("Allow");
+  if (value == "block" || value == "deny") return Label("Block");
+  return value;
+}
+
 std::string FubukiLogoSvg(const std::string& className = "logo") {
   return "<svg class=\"" + className +
          "\" width=\"512\" height=\"512\" viewBox=\"0 0 512 512\" "
@@ -417,6 +479,24 @@ std::string ActionForm(const std::string &key, const std::string &value,
          HiddenInput("key", key) + HiddenInput("value", value) +
          HiddenInput("return", returnUrl) + "<button class=\"" +
          HtmlEscape(classes) + "\">" + HtmlEscape(label) + "</button></form>";}
+
+std::string PermissionForm(const std::string& key, const std::string& origin,
+                           const std::string& permission, const std::string& value,
+                           const std::string& returnUrl, const std::string& label,
+                           const std::string& classes) {
+  const std::string query =
+      "key=" + CefURIEncode(key, false).ToString() +
+      "&origin=" + CefURIEncode(origin, false).ToString() +
+      "&permission=" + CefURIEncode(permission, false).ToString() +
+      "&value=" + CefURIEncode(value, false).ToString() +
+      "&return=" + CefURIEncode(returnUrl, false).ToString();
+  return "<form method=\"post\" action=\"fubuki://settings/set?" + query +
+         "\" style=\"display:inline\">" + HiddenInput("key", key) +
+         HiddenInput("origin", origin) + HiddenInput("permission", permission) +
+         HiddenInput("value", value) + HiddenInput("return", returnUrl) +
+         "<button class=\"" + HtmlEscape(classes) + "\">" +
+         HtmlEscape(label) + "</button></form>";
+}
 
 std::string SettingForm(const std::string &key, const std::string &value,
                         const std::string &returnUrl, const std::string &label,
@@ -596,6 +676,7 @@ std::string SettingsHtml() {
   const std::string askBeforeDownload = Setting("askBeforeDownload", "off");
   const std::string sidebarVisible = Setting("sidebarVisible", "show") == "hide" ? "hide" : "show";
   const std::string language = Setting("language", "system");
+  const auto permissions = QueryPermissions();
 
   auto chip = [](const std::string &key, const std::string &current,
                  const std::string &value, const std::string &label) {
@@ -614,6 +695,7 @@ std::string SettingsHtml() {
       << "<a href=\"#windows\">" << Label("Windows")
       << "</a><a href=\"#search\">" << Label("Search")
       << "</a><a href=\"#privacy\">" << Label("Privacy") << "</a>"
+      << "<a href=\"#permissions\">" << Label("Permissions") << "</a>"
       << "<a href=\"#downloads\">" << Label("Downloads section")
       << "</a><a href=\"#developer\">" << Label("Developer") << "</a>"
       << "</nav><section class=\"settings-content\">"
@@ -733,6 +815,41 @@ std::string SettingsHtml() {
       << ActionForm("clearData", "all", "fubuki://settings/",
                     Label("Clear all"), "chip danger")
       << "</div></div>"
+      << "<div id=\"permissions\" class=\"field\" data-setting-section><span>"
+      << Label("Permission decisions")
+      << "</span><div class=\"section-kicker\">Review the saved decisions for web origins.</div>";
+  if (!permissions.Ok()) {
+    body << "<p class=\"meta\">Unable to load saved permission decisions.</p>";
+  } else if (permissions.value.empty()) {
+    body << "<p class=\"empty\">No saved permission decisions.</p>";
+  } else {
+    body << "<div class=\"list\">";
+    for (const auto& permission : permissions.value) {
+      const bool allows = permission.value == "allow";
+      const bool blocks = permission.value == "block" || permission.value == "deny";
+      body << "<div class=\"row\"><span class=\"favicon\"></span><div>"
+           << "<span class=\"title\">" << HtmlEscape(permission.origin)
+           << "</span><span class=\"meta\">"
+           << HtmlEscape(PermissionLabel(permission.permission) + " · " +
+                         PermissionDecisionLabel(permission.value) +
+                         (permission.createdAt.empty()
+                              ? ""
+                              : " · " + FormatRecordTime(permission.createdAt, false)))
+           << "</span></div><div class=\"download-actions\">"
+           << PermissionForm("setPermission", permission.origin, permission.permission,
+                             "allow", "fubuki://settings/", Label("Allow"),
+                             "chip" + std::string(allows ? " selected" : ""))
+           << PermissionForm("setPermission", permission.origin, permission.permission,
+                             "block", "fubuki://settings/", Label("Block"),
+                             "chip" + std::string(blocks ? " selected" : ""))
+           << PermissionForm("removePermission", permission.origin, permission.permission,
+                             "ask", "fubuki://settings/", Label("Reset"),
+                             "chip danger")
+           << "</div></div>";
+    }
+    body << "</div>";
+  }
+  body << "</div>"
       << "<div id=\"downloads\" class=\"field\" data-setting-section><span>"
       << Label("Downloads section")
       << "</span><div class=\"section-kicker\">Set download confirmation and "
