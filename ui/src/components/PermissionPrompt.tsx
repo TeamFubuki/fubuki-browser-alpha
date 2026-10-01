@@ -17,20 +17,23 @@ const permissionLabels: Record<PermissionType, I18nKey> = {
 };
 
 export default function PermissionPrompt() {
-  const [busy, setBusy] = createSignal(false);
+  const [busyPromptId, setBusyPromptId] = createSignal<string | null>(null);
   const lang = () => browserState.settings.language;
 
   const respond = (decision: PermissionDecision) => {
     const prompt = permissionPrompts()[0];
-    if (!prompt || busy()) return;
-    setBusy(true);
+    if (!prompt || busyPromptId() === prompt.promptId) return;
+    const promptId = prompt.promptId;
+    setBusyPromptId(promptId);
     void permissions
-      .resolve(prompt.promptId, decision)
+      .resolve(promptId, decision)
       .then((resolved) => {
-        if (!resolved) setBusy(false);
+        if (!resolved) {
+          setBusyPromptId((current) => (current === promptId ? null : current));
+        }
       })
       .catch((error) => {
-        setBusy(false);
+        setBusyPromptId((current) => (current === promptId ? null : current));
         console.error('[Fubuki] Permission response failed:', error);
       });
   };
@@ -67,14 +70,14 @@ export default function PermissionPrompt() {
           <div class="permission-prompt-actions">
             <button
               type="button"
-              disabled={busy()}
+              disabled={busyPromptId() === prompt().promptId}
               onClick={() => respond('ask')}
             >
               {t('permission.notNow', lang())}
             </button>
             <button
               type="button"
-              disabled={busy()}
+              disabled={busyPromptId() === prompt().promptId}
               onClick={() => respond('block')}
             >
               {t('permission.block', lang())}
@@ -82,7 +85,7 @@ export default function PermissionPrompt() {
             <button
               class="permission-allow"
               type="button"
-              disabled={busy()}
+              disabled={busyPromptId() === prompt().promptId}
               onClick={() => respond('allow')}
             >
               {t('permission.allow', lang())}
