@@ -5,6 +5,8 @@ import { Logo } from "./components";
 import { japaneseLabels } from "./labels";
 import { NewTab } from "./pages/NewTab";
 import { Records } from "./pages/Records";
+import { Settings } from "./pages/Settings";
+import { Debug } from "./pages/Debug";
 import "./styles.css";
 
 function App() {
@@ -60,6 +62,12 @@ function App() {
                 <h1>{title()}</h1>
               </header>
               <Switch>
+                <Match when={page === "settings"}>
+                  <Settings data={loaded()} t={t} />
+                </Match>
+                <Match when={page === "debug"}>
+                  <Debug data={loaded()} t={t} />
+                </Match>
                 <Match when={["history", "bookmarks", "downloads"].includes(page)}>
                   <Records page={page} data={loaded()} t={t} />
                 </Match>
