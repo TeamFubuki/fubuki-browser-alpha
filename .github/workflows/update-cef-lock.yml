@@ -1,0 +1,52 @@
+name: Propose CEF lock update
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-cef-lock:
+    name: Check for a stable CEF update
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Cache locked CEF archives
+        uses: actions/cache@v6
+        with:
+          path: .cache/cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cef.lock') }}
+
+      - name: Update lock candidate
+        run: ./scripts/update_cef_lock.sh
+
+      - name: Validate lock and both candidate distributions
+        run: |
+          python3 scripts/cef_lock.py validate
+          CEF_PLATFORM=macosarm64 CEF_ROOT="$RUNNER_TEMP/cef-arm64" CACHE_DIR="$GITHUB_WORKSPACE/.cache/cef" ./scripts/fetch_cef.sh
+          CEF_PLATFORM=macosx64 CEF_ROOT="$RUNNER_TEMP/cef-x86_64" CACHE_DIR="$GITHUB_WORKSPACE/.cache/cef" ./scripts/fetch_cef.sh
+          python3 -m unittest discover -s tests -p 'test_cef_lock.py'
+
+      - name: Propose lock update
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/update-cef-lock
+          delete-branch: true
+          commit-message: "chore: update CEF lock"
+          title: "chore: update CEF lock"
+          body: |
+            Refresh the macOS CEF and Chromium versions, archive names, and published checksums from the official CEF stable-build index.
+
+            This is a review proposal. The workflow does not auto-merge CEF updates.

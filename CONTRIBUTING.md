@@ -46,7 +46,7 @@ Contributions are welcome, but architecture comes first.
 | pnpm | 11.x。`ui/package.json` では `pnpm@11.9.0` を指定しています。 |
 | LLVM via Homebrew | `clang-format` / `clang-tidy` 用 |
 | cppcheck | ネイティブコードのリント用 |
-| python3 / curl / tar | CEF 取得スクリプトで使用 |
+| python3 / tar | CEF lock の検証、取得、展開に使用 |
 
 Apple Silicon macOS を主なターゲットにしています。Intel macOS でも対応する CEF binary distribution を使えば動作する可能性はありますが、互換性は選択した CEF ビルドに依存します。
 
@@ -58,7 +58,9 @@ cd fubuki-browser-alpha
 make bootstrap
 ```
 
-`make bootstrap` は、CEF の取得、UI 依存関係のインストール、ネイティブ CMake ビルド設定をまとめて実行します。
+`make bootstrap` は、`cef.lock` に固定された CEF の取得、UI 依存関係のインストール、ネイティブ CMake ビルド設定をまとめて実行します。CEF archive の checksum と展開後の version metadata は取得時に検証されます。
+
+CEF を更新するときは `make update-cef` を実行します。macOS arm64 / x86_64 の最新 stable 候補を `cef.lock` に反映し、CEF / Chromium version と checksum の差分を表示します。差分を確認して pull request に含めてください。通常の `make cef` や build は latest index を参照しません。GitHub Actions も毎週更新候補の pull request を作りますが、自動 merge はしません。
 
 ### Build and Run / ビルドと実行
 
