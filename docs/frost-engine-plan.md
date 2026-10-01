@@ -1,5 +1,7 @@
 # FrostEngine 実装計画
 
+> この文書の Phase 0–5 は移行時の履歴です。現在の責務分担と通信フローは [docs/architecture.md](architecture.md) を正とします。
+
 ## 1. コンポーネントバージョニング
 
 Fubuki Browser Alpha は 2 つのコンポーネントで構成され、それぞれ独立してバージョニングする。
@@ -15,43 +17,30 @@ Fubuki Browser Alpha は 2 つのコンポーネントで構成され、それ�
 
 ---
 
-## 2. 目標アーキテクチャ
+## 2. 現在のアーキテクチャ
 
 ```
 Fubuki Browser UI (SolidJS)
-    ↓ Frost Protocol (JSON over CEF message router)
-CEF/macOS Host (C++)
-    ↓ channel (crossbeam)
-FrostEngine Core (Rust, 専用スレッド)
+    ↓ Frost Protocol
+FrostEngine Core (Rust, logical state owner)
+    ↓ HostCommand / HostEvent
+Native Host / CEF (C++, side effects and CEF lifecycle)
 ```
 
-### チャネル隔離
+### Request と HostEvent の流れ
 
-CEF のスレッドモデルを回避するため、Rust Core は専用スレッドで動作する。
+- UI は `fubuki://app/` から Frost Protocol の request を送ります。
+- FrostEngine が論理状態とポリシーを更新し、必要な CEF / OS 副作用を `HostCommand` として要求します。
+- Native Host は CEF または macOS の副作用を実行し、その結果を `HostEvent` として FrostEngine に返します。
+- FrostEngine が差分 event を UI へ配信します。起動時の `app.snapshot` 以外に逆向きの snapshot 同期は行いません。
 
-```
-CEF UI Thread (C++)                Rust Core Thread
-─────────────────                  ─────────────────
-  cefQuery 受信
-    ↓
-  JSON にシリアライズ
-    ↓
-  channel.send(request)  ──────→  channel.recv()
-                                     ↓
-                                   process()
-                                     ↓
-  channel.recv()          ←──────  channel.send(response)
-    ↓
-  callback->Success()
-```
-
-- **Rust Core は CEF を知らない**。JSON の入出力だけ担当
-- **C++ Host がすべての CEF スレッド処理を担当**
-- Rust Core は `RefCell` が使える単一スレッド動作（`Mutex` 不要）
+Rust Core は CEF / macOS API に依存しません。C++ 側の `FrostBridge` と FFI が呼び出し境界を担当し、CEF thread affinity と browser lifecycle は Native Host に閉じます。
 
 ---
 
-## 3. Phase 実装計画
+## 3. 移行履歴（Historical migration plan）
+
+以下は移行を段階的に進めた時点の計画と実装記録です。新しい機能や現状の設計を追加するときは、上記の現在アーキテクチャと [docs/architecture.md](architecture.md) を参照してください。
 
 ### Phase 0: workspace + Protocol 型（1-2 日） - implemented
 
@@ -114,8 +103,7 @@ Current implementation:
 - `native/src/bridge/FrostBridge.*` owns the Rust Core thread bridge
 - CMake builds and links `frost-ffi` into the native host
 - `NativeBridge` delegates protocol state reads to FrostEngine and unwraps `ProtocolResponse.result` for UI compatibility
-- Host-backed operations still perform CEF/OS side effects in C++, then call `host.syncSnapshot` so FrostEngine owns the UI-visible state
-- `frost.coreSnapshot` remains as a diagnostic endpoint for native-to-Rust JSON request/response wiring
+- Host-backed operations are issued by FrostEngine as `HostCommand`; the Native Host returns `HostEvent` and does not synchronize snapshots in reverse
 
 ### Phase 3: イベント接続（2-3 日） - implemented
 
@@ -131,9 +119,9 @@ CEF callback → Rust Core へのイベント通知を接続する。
 Current implementation:
 
 - native `EventBus` emits Frost differential tab events (`tab.created`, `tab.updated`, `tab.closed`, `tab.activated`)
-- native CEF callback events trigger `host.syncSnapshot`, keeping FrostEngine updated when title, URL, loading, and navigation state change
+- native CEF callback events enter FrostEngine through `HostEvent`, keeping title, URL, loading, navigation, permission, and window state current
 - UI store applies Frost tab events incrementally
-- legacy refresh events remain for migration compatibility
+- the UI requests `app.snapshot` at startup and otherwise consumes differential events
 
 ### Phase 4: 残りの API 移行（2-3 日） - implemented
 
@@ -169,6 +157,14 @@ Current verification:
 - `make test-native`
 - `make ui`
 - `make native`
+
+### Current implementation: Permission Broker
+
+- Frost Protocol defines canonical permission types, permission records, request/resolution messages, and prompt events.
+- FrostEngine normalizes origins, applies saved decisions, manages pending prompts, and keeps Private Window decisions scoped to that window.
+- `frost-store` persists normal-window decisions; the UI prompt and Settings page manage those decisions through Frost Protocol.
+- The Native Host maps CEF permission callbacks to `HostEvent` and resolves the pending callback through `HostCommand`.
+- Automated Rust, UI, and Native checks cover policy, bridge validation, and schema behavior. End-to-end checks on a running macOS CEF app remain a separate manual verification step.
 
 ---
 

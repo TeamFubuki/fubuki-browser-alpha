@@ -85,6 +85,18 @@ Defines typed `Request`, `Response`, `Event`, and state schemas (`TabState`, `Wi
 2. After that, differential `Event` messages update the UI store incrementally.
 3. Full resync via `app.snapshot` only on state inconsistency or recovery.
 
+The Native Host reports CEF and operating-system results to FrostEngine through `HostEvent`. FrostEngine remains the source of truth and publishes resulting protocol events to the UI. The host does not send a synthesized snapshot back to the engine.
+
+## Permission Broker
+
+FrostEngine owns permission policy and persistence. The Native Host translates CEF permission callbacks into canonical permission types and `HostEvent`s; it keeps only the pending CEF callback needed to complete the side effect.
+
+- Supported types are camera, microphone, geolocation, notifications, pointer lock, and keyboard lock. Unknown CEF permission bits fail closed.
+- A saved decision is scoped to a normalized origin and permission type. Missing records mean `ask`.
+- An `ask` request produces a `permission.requested` event. The UI offers Allow, Block, and Not now; its answer returns through `permissions.resolve` and FrostEngine sends a `HostCommand` to complete the CEF callback.
+- Allow and Block decisions from a normal window are persisted in SQLite. Not now removes the saved decision. Private Window decisions stay in memory for that window and are discarded when it closes.
+- The Settings page lists saved decisions and lets the user change them or return them to Ask.
+
 ## Host Boundary (`crates/frost-protocol`, `crates/frost-engine-api`)
 
 Defines the boundary between FrostEngine Core and the host:
@@ -124,6 +136,7 @@ SQLite-based persistence with a repository pattern:
 - `BookmarkRepository` — bookmarks
 - `DownloadRepository` — download records
 - `SessionRepository` — window/tab snapshots for session restore
+- `PermissionRepository` — origin-scoped permission decisions
 
 Migrations are versioned and applied on startup.
 
@@ -135,7 +148,7 @@ The host is responsible for:
 - Creating CEF browser instances for the UI and each tab
 - Handling the `fubuki://` scheme
 - Executing `HostCommand`s received from FrostEngine
-- Forwarding CEF callbacks (title, URL, loading state, favicon, downloads) to the engine as `HostEvent`s
+- Forwarding CEF callbacks (title, URL, loading state, favicon, downloads, permissions) to the engine as `HostEvent`s
 - Returning `HostCommandResult` for host side effects
 
 The host holds no browser state. It is a pure I/O layer.

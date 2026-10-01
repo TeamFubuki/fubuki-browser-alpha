@@ -123,9 +123,9 @@ make audit-deny   # cargo-deny を実行
 
 ## Current Scope / 現在の実装範囲
 
-現在の実装には、macOS CEF ホスト、SolidJS UI、Frost Protocol、Rust 側のブラウザ状態管理、SQLite 永続化、通常 / プライベートウィンドウ、内部ページ、外部コマンド境界、ローカルテストと CI ワークフローが含まれます。
+現在の実装には、macOS CEF ホスト、SolidJS UI、Frost Protocol、Rust 側のブラウザ状態管理、SQLite 永続化、通常 / プライベートウィンドウ、内部ページ、外部コマンド境界が含まれます。Web 権限は FrostEngine の Permission Broker が origin 単位で扱い、camera、microphone、geolocation、notifications、pointer lock、keyboard lock の確認 UI と設定ページを提供します。Private Window の判断は通常プロファイルへ保存しません。
 
-まだ含まれていないものとして、コード署名、ノータリゼーション、アップデート配信、完成度の高いインポート / エクスポート、Chrome 拡張機能互換、ブラウザ同期などがあります。詳しくは [docs/known-limitations.md](docs/known-limitations.md) を参照してください。
+CEF のバージョン固定、Renderer crash recovery、Chrome style の採用判断、コード署名、ノータリゼーション、アップデート配信、完成度の高いインポート / エクスポート、Chrome 拡張機能互換、ブラウザ同期などは未対応です。詳しくは [docs/known-limitations.md](docs/known-limitations.md) を参照してください。
 
 ## Documentation / ドキュメント
 
