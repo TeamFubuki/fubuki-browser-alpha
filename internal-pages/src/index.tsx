@@ -1,8 +1,10 @@
-import { createEffect, createResource, createSignal, Show } from "solid-js";
+import { createEffect, createResource, createSignal, Match, Show, Switch } from "solid-js";
 import { render } from "solid-js/web";
 import { loadPageData, resolvePage } from "./data";
 import { Logo } from "./components";
 import { japaneseLabels } from "./labels";
+import { NewTab } from "./pages/NewTab";
+import { Records } from "./pages/Records";
 import "./styles.css";
 
 function App() {
@@ -50,12 +52,21 @@ function App() {
       }
     >
       <Show when={data()} fallback={<main aria-busy="true">{t("Loading…")}</main>}>
-        <main>
-          <header>
-            <Logo />
-            <h1>{title()}</h1>
-          </header>
-        </main>
+        {(loaded) => (
+          <Show when={page !== "newtab"} fallback={<NewTab t={t} />}>
+            <main>
+              <header>
+                <Logo />
+                <h1>{title()}</h1>
+              </header>
+              <Switch>
+                <Match when={["history", "bookmarks", "downloads"].includes(page)}>
+                  <Records page={page} data={loaded()} t={t} />
+                </Match>
+              </Switch>
+            </main>
+          </Show>
+        )}
       </Show>
     </Show>
   );
