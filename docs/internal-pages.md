@@ -19,3 +19,19 @@ actions to `fubuki://settings/set`.
 
 Keep these pages simple: searchable lists, useful empty states, and direct actions. Avoid complex
 popover UI or a full settings clone until the backing native behavior exists.
+
+## SolidJS delivery preparation
+
+`internal-pages/` is a separate SolidJS/Vite package with its own dependencies and build output.
+`make internal-pages` builds it, and bootstrap/full builds include it. Development uses
+`cd internal-pages && pnpm dev`; `?page=settings` selects a page, and `dev/preview.json`
+provides development-only fixture data. The production host does not use that fixture.
+
+The scheme handler now serves same-origin `/data.json`, `/assets/*`, and `/logo.svg` for all six
+internal page origins. JSON uses read-only projections of the engine-owned database, the existing
+bounded LRU cache and mutation invalidation prefixes, and CEF JSON serialization. Failed record
+or permission reads return 503 and are not cached. Debug diagnostics bypass the cache.
+
+This preparation does not switch document rendering: page roots still use the existing C++
+generators. The following renderer activation change will serve `internal-pages/dist/index.html`
+and remove the legacy generators. Frost Protocol access remains restricted to `fubuki://app/`.

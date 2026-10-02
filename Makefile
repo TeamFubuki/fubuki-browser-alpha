@@ -8,7 +8,7 @@ LLVM_PREFIX ?= $(shell brew --prefix llvm 2>/dev/null || echo "/opt/homebrew/opt
 CLANG_FORMAT := $(LLVM_PREFIX)/bin/clang-format
 CLANG_TIDY := $(LLVM_PREFIX)/bin/clang-tidy
 
-.PHONY: help all bootstrap cef ui rust configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all audit audit-deny clean distclean
+.PHONY: help all bootstrap cef ui internal-pages rust configure native build run test test-rust test-ui test-internal-pages test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all audit audit-deny clean distclean
 
 help:
 	@echo "Fubuki Browser Alpha"
@@ -17,14 +17,16 @@ help:
 	@echo "  make bootstrap    Download CEF, install UI dependencies, configure native"
 	@echo "  make cef          Download or update CEF into third_party/cef"
 	@echo "  make ui           Build the SolidJS UI"
+	@echo "  make internal-pages Build the SolidJS internal pages"
 	@echo "  make rust         Build FrostEngine (Rust crates)"
 	@echo "  make configure    Configure native CMake build"
 	@echo "  make native       Build native app (C++/CEF)"
-	@echo "  make build        Build everything (UI + Rust + native)"
+	@echo "  make build        Build everything (UI + internal pages + Rust + native)"
 	@echo "  make run          Build and run the app"
-	@echo "  make test         Run all tests (Rust + UI + native)"
+	@echo "  make test         Run all tests (Rust + UI + internal pages + native)"
 	@echo "  make test-rust    Run FrostEngine tests"
 	@echo "  make test-ui      Run Vitest (UI)"
+	@echo "  make test-internal-pages Run Vitest (internal pages)"
 	@echo "  make test-native  Build & run GoogleTest (native)"
 	@echo "  make lint         Run Oxlint linter (UI)"
 	@echo "  make lint-fix     Run Oxlint with auto-fix (UI)"
@@ -56,6 +58,9 @@ cef:
 ui:
 	@./scripts/build_ui.sh
 
+internal-pages:
+	@./scripts/build_internal_pages.sh
+
 rust:
 	@BUILD_TYPE="$(BUILD_TYPE)" ./scripts/build_rust.sh
 
@@ -74,13 +79,16 @@ run:
 clean:
 	@./scripts/clean.sh
 
-test: test-rust test-ui test-native
+test: test-rust test-ui test-internal-pages test-native
 
 test-rust:
 	@cargo test --workspace
 
 test-ui:
 	@cd ui && pnpm test
+
+test-internal-pages:
+	@cd internal-pages && pnpm test
 
 test-native:
 	@if [ ! -f native/tests/build/CMakeCache.txt ]; then \

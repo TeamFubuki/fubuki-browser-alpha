@@ -968,6 +968,97 @@ std::string NewTabHtml() {
   return html.str();
 }
 
+struct InternalPageData {
+  std::string json;
+  bool ok = true;
+};
+
+InternalPageData ReadInternalPageData(const std::string& page) {
+  auto root = CefDictionaryValue::Create();
+  root->SetString("language", BrowserLanguage());
+  root->SetString("appearance", BrowserAppearance());
+  auto settings = CefDictionaryValue::Create();
+  // Only expose the settings used by internal pages.
+  for (const auto* key : {"appearance", "language", "startupBehavior", "homeUrl", "newTabPage",
+                          "defaultZoomLevel", "sidebarVisible", "sidebarWidth", "searchEngine",
+                          "customSearchUrl", "askBeforeDownload", "downloadDirectory"}) {
+    settings->SetString(key, Setting(key));
+  }
+  root->SetDictionary("settings", settings);
+  bool ok = true;
+  auto records = CefListValue::Create();
+  if (page == "bookmarks" || page == "history" || page == "downloads" || page == "debug") {
+    const auto query = QueryRecords(page == "debug" ? "logs" : page, page == "downloads" ? 50
+                                                                     : page == "debug"   ? 80
+                                                                                         : 500);
+    ok = query.Ok();
+    for (const auto& record : query.value) {
+      auto item = CefDictionaryValue::Create();
+      item->SetString("title", record.title);
+      item->SetString("url", record.url);
+      item->SetString("faviconUrl", record.faviconUrl);
+      item->SetString("path", record.path);
+      item->SetString("state", record.state);
+      item->SetInt("percent", record.percent);
+      item->SetString("createdAt", record.createdAt);
+      item->SetString("downloadId", record.downloadId);
+      records->SetDictionary(records->GetSize(), item);
+    }
+  }
+  root->SetList("records", records);
+  auto permissions = CefListValue::Create();
+  if (page == "settings") {
+    const auto query = QueryPermissions();
+    ok = query.Ok();
+    for (const auto& permission : query.value) {
+      auto item = CefDictionaryValue::Create();
+      item->SetString("origin", permission.origin);
+      item->SetString("permission", permission.permission);
+      item->SetString("value", permission.value);
+      item->SetString("createdAt", permission.createdAt);
+      permissions->SetDictionary(permissions->GetSize(), item);
+    }
+  }
+  root->SetList("permissions", permissions);
+  if (page == "debug") {
+    root->SetString("profilePath", ProfilePath().string());
+    // Diagnostics are host observations; browser state remains engine-owned.
+    auto windows = CefListValue::Create();
+    auto commands = CefListValue::Create();
+    auto events = CefListValue::Create();
+    if (auto* app = GetBrowserAppController()) {
+      for (auto* window : app->Windows()) {
+        auto item = CefDictionaryValue::Create();
+        item->SetString("id", window->WindowId());
+        item->SetBool("isPrivate", window->IsPrivate());
+        auto tabs = CefListValue::Create();
+        for (const auto& tab : window->Tabs().GetTabs()) {
+          auto value = CefDictionaryValue::Create();
+          value->SetString("title", tab.title.empty() ? tab.url : tab.title);
+          value->SetBool("isActive", tab.isActive);
+          tabs->SetDictionary(tabs->GetSize(), value);
+        }
+        item->SetList("tabs", tabs);
+        windows->SetDictionary(windows->GetSize(), item);
+      }
+      if (auto* active = app->ActiveWindow())
+        commands = active->Commands().List();
+      for (const auto& event : app->Events().RecentEvents()) {
+        auto item = CefDictionaryValue::Create();
+        item->SetString("name", event.name);
+        item->SetString("message", event.windowId + " " + event.tabId + " " + event.message);
+        events->SetDictionary(events->GetSize(), item);
+      }
+    }
+    root->SetList("windows", windows);
+    root->SetList("commands", commands);
+    root->SetList("events", events);
+  }
+  auto value = CefValue::Create();
+  value->SetDictionary(root);
+  return {CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString(), ok};
+}
+
 }  // namespace
 
 // PageCache implementation
@@ -1117,6 +1208,45 @@ bool FubukiSchemeHandler::LoadRequest(const std::string& url) {
         "the UI, not a URL request.</p></body>";
     LoadText(html, "text/html", 403);
     return true;
+  }
+
+  CefURLParts parts;
+  if (CefParseURL(url, parts)) {
+    const std::string host = CefString(&parts.host).ToString();
+    const bool internal = host == "newtab" || host == "bookmarks" || host == "downloads" ||
+                          host == "history" || host == "settings" || host == "debug";
+    const std::string assetPath = CefString(&parts.path).ToString();
+    // Keep legacy document roots until the renderer migration is activated.
+    if (internal && !assetPath.empty() && assetPath != "/" && assetPath != "/index.html" &&
+        assetPath != "/search") {
+      const std::string path = host == "newtab" && CefString(&parts.path).ToString() == "/search"
+                                   ? "/"
+                                   : CefString(&parts.path).ToString();
+      if (path == "/data.json") {
+        std::string json;
+        const std::string cacheKey = "fubuki://" + host + "/data.json";
+        if (host != "debug" && cache.Get(cacheKey, json)) {
+          LoadText(std::move(json), "application/json", 200);
+        } else {
+          auto data = ReadInternalPageData(host);
+          if (data.ok && host != "debug")
+            cache.Set(cacheKey, data.json, std::chrono::seconds{2});
+          LoadText(std::move(data.json), "application/json", data.ok ? 200 : 503);
+        }
+        return true;
+      }
+      const std::string relative = path.empty() || path == "/" ? "index.html" : path.substr(1);
+      // Serve only exact page roots and built assets. Never fall back to HTML for a missing asset.
+      if (relative.find("..") == std::string::npos && relative.find('\\') == std::string::npos &&
+          (relative == "index.html" || relative == "logo.svg" ||
+           relative.rfind("assets/", 0) == 0) &&
+          LoadFile(std::string(FUBUKI_INTERNAL_PAGES_DIST) + "/" + relative,
+                   MimeForPath(relative))) {
+        return true;
+      }
+      LoadText("Internal page not found. Run make internal-pages.", "text/plain", 404);
+      return true;
+    }
   }
 
   // Handle new tab search: fubuki://newtab/search?q=...
