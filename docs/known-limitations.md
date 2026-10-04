@@ -13,3 +13,5 @@
 - **Bookmarks:** folder management and browser-compatible import / export need more complete UX and persistence work.
 - **CEF distribution:** CEF is configured externally with `CEF_ROOT`; binaries are not vendored.
 - **Platform:** Apple Silicon is the primary target; Intel support depends on the selected CEF build.
+
+Permission prompts use the host’s top-right interactive overlay. CEF permission IDs are namespaced by browser, and callbacks are removed before completion; expired timers cannot complete a replacement request. Native clients resolve their window by ID before forwarding delayed callbacks.

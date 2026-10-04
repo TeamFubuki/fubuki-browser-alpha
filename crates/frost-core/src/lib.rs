@@ -1530,10 +1530,17 @@ where
             ),
             HostEvent::PermissionDismissed {
                 prompt_id,
-                tab_id: _,
-                window_id: _,
+                tab_id,
+                window_id,
             } => {
-                if self.pending_permissions.remove(&prompt_id).is_some() {
+                if self
+                    .pending_permissions
+                    .get(&prompt_id)
+                    .is_some_and(|pending| {
+                        pending.tab_id == tab_id && pending.window_id == window_id
+                    })
+                {
+                    self.pending_permissions.remove(&prompt_id);
                     self.emit(Event::PermissionDismissed { prompt_id });
                 }
                 Ok(())
@@ -2508,6 +2515,13 @@ mod tests {
         }))
         .unwrap();
 
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionDismissed {
+            prompt_id: "prompt-1".into(),
+            tab_id: "other-tab".into(),
+            window_id: window_id.clone(),
+        }))
+        .unwrap();
+        assert!(core.pending_permissions.contains_key("prompt-1"));
         let response = core.process(ProtocolRequest::new(Request::PermissionsResolve {
             prompt_id: "prompt-1".into(),
             decision: PermissionDecision::Allow,
@@ -2535,10 +2549,66 @@ mod tests {
         };
         assert_eq!(state.permissions[0].origin, "https://example.com");
         assert_eq!(state.permissions[0].value, "allow");
+        let duplicate = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+            prompt_id: "prompt-1".into(),
+            decision: PermissionDecision::Block,
+            window_id: Some(window_id.clone()),
+        }));
+        assert!(matches!(duplicate.response, Response::Error { .. }));
+        assert!(
+            !host_rx
+                .try_iter()
+                .any(|command| matches!(command.command, HostCommand::PermissionResolve { .. }))
+        );
         assert!(core.recent_events().iter().any(|event| matches!(
             event.event,
             Event::PermissionResolved { ref prompt_id } if prompt_id == "prompt-1"
         )));
+    }
+
+    #[test]
+    fn dismissed_and_closed_permission_prompts_cannot_persist_late_answers() {
+        for close in [false, true] {
+            let mut core = BrowserCore::new();
+            core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+                tab_id: "t".into(),
+                window_id: "w".into(),
+                url: "https://example.com".into(),
+                active: true,
+                is_private: false,
+            }))
+            .unwrap();
+            core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+                prompt_id: "p".into(),
+                tab_id: "t".into(),
+                window_id: "w".into(),
+                origin: "https://example.com".into(),
+                permissions: vec![PermissionType::Camera],
+                is_private: false,
+            }))
+            .unwrap();
+            let event = if close {
+                HostEvent::WindowClosed {
+                    window_id: "w".into(),
+                }
+            } else {
+                HostEvent::PermissionDismissed {
+                    prompt_id: "p".into(),
+                    tab_id: "t".into(),
+                    window_id: "w".into(),
+                }
+            };
+            core.process_host_event(HostEventEnvelope::new(event))
+                .unwrap();
+            assert!(core.pending_permissions.is_empty());
+            let result = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+                prompt_id: "p".into(),
+                decision: PermissionDecision::Allow,
+                window_id: Some("w".into()),
+            }));
+            assert!(matches!(result.response, Response::Error { .. }));
+            assert!(core.repository.list_permissions().unwrap().is_empty());
+        }
     }
 
     #[test]
