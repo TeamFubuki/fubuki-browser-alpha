@@ -634,7 +634,7 @@ void FubukiClient::SchedulePermissionTimeout(const std::string& promptId, uint64
       base::BindOnce([](CefRefPtr<FubukiClient> client, std::string id,
                         uint64_t token) { client->ResolvePermission(id, "block", token); },
                      self, promptId, token),
-      10000);
+      60000);
 }
 
 }  // namespace fubuki
