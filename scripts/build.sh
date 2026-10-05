@@ -19,9 +19,6 @@ echo ""
 
 # 3. Native (CEF)
 echo "[3/3] Building native app..."
-if [[ ! -f "${CEF_ROOT:-"$ROOT_DIR/third_party/cef"}/cmake/cef_variables.cmake" ]]; then
-  "$ROOT_DIR/scripts/fetch_cef.sh"
-fi
 "$ROOT_DIR/scripts/build_native.sh"
 echo ""
 

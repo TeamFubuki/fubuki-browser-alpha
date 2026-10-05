@@ -8,14 +8,15 @@ LLVM_PREFIX ?= $(shell brew --prefix llvm 2>/dev/null || echo "/opt/homebrew/opt
 CLANG_FORMAT := $(LLVM_PREFIX)/bin/clang-format
 CLANG_TIDY := $(LLVM_PREFIX)/bin/clang-tidy
 
-.PHONY: help all bootstrap cef ui rust configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all audit audit-deny clean distclean
+.PHONY: help all bootstrap cef update-cef ui rust configure native build run test test-rust test-ui test-native lint lint-fix format format-check lint-rust format-rust lint-native format-native lint-all format-all audit audit-deny clean distclean
 
 help:
 	@echo "Fubuki Browser Alpha"
 	@echo ""
 	@echo "Targets:"
 	@echo "  make bootstrap    Download CEF, install UI dependencies, configure native"
-	@echo "  make cef          Download or update CEF into third_party/cef"
+	@echo "  make cef          Download the CEF version pinned in cef.lock"
+	@echo "  make update-cef   Update cef.lock to the latest stable CEF candidate"
 	@echo "  make ui           Build the SolidJS UI"
 	@echo "  make rust         Build FrostEngine (Rust crates)"
 	@echo "  make configure    Configure native CMake build"
@@ -52,6 +53,9 @@ bootstrap:
 
 cef:
 	@CEF_ROOT="$(CEF_ROOT)" ./scripts/fetch_cef.sh
+
+update-cef:
+	@./scripts/update_cef_lock.sh
 
 ui:
 	@./scripts/build_ui.sh

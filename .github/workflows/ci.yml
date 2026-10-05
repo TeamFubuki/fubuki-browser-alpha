@@ -216,6 +216,31 @@ jobs:
       - name: Shared protocol fixture contract tests
         run: cd native/tests/build && ctest -R '^ProtocolFixtureTest\.' --output-on-failure
 
+  cef-lock-check:
+    name: Verify locked CEF archives (arm64 and x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Cache locked CEF archives
+        uses: actions/cache@v6
+        with:
+          path: .cache/cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cef.lock') }}
+
+      - name: Validate lock and fetch both distributions
+        run: |
+          python3 scripts/cef_lock.py validate
+          CEF_PLATFORM=macosarm64 CEF_ROOT="$RUNNER_TEMP/cef-arm64" CACHE_DIR="$GITHUB_WORKSPACE/.cache/cef" ./scripts/fetch_cef.sh
+          CEF_PLATFORM=macosx64 CEF_ROOT="$RUNNER_TEMP/cef-x86_64" CACHE_DIR="$GITHUB_WORKSPACE/.cache/cef" ./scripts/fetch_cef.sh
+
   macos-build:
     name: macOS native build (CEF)
     runs-on: macos-15
@@ -264,7 +289,7 @@ jobs:
           path: |
             .cache/cef
             third_party/cef
-          key: cef-${{ runner.os }}-${{ hashFiles('scripts/fetch_cef.sh') }}
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cef.lock') }}
 
       - name: Fetch CEF
         run: make cef
@@ -294,6 +319,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Validate locked CEF metadata
+        run: |
+          python3 scripts/cef_lock.py validate
+          python3 -m unittest discover -s tests -p 'test_cef_lock.py'
 
       - name: Merge conflict markers
         run: |

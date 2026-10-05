@@ -86,7 +86,7 @@ CEF / macOS Host (C++20)
 - Rust stable toolchain with `clippy` and `rustfmt`
 - Node.js 22 以降
 - pnpm 11.x
-- LLVM via Homebrew, cppcheck, python3, curl, tar
+- LLVM via Homebrew, cppcheck, python3, tar
 
 Apple Silicon を主なターゲットにしています。Intel Mac でも CEF の `macosx64` ビルドを使う構成はありますが、互換性は利用する CEF ビルドに依存します。
 
@@ -100,9 +100,9 @@ make build
 make run
 ```
 
-`make bootstrap` は CEF の取得、UI 依存関係のインストール、ネイティブビルド設定をまとめて実行します。CEF バイナリはリポジトリには含めません。
+`make bootstrap` は `cef.lock` に固定された CEF の取得、UI 依存関係のインストール、ネイティブビルド設定をまとめて実行します。CEF バイナリはリポジトリには含めません。取得時に archive checksum と展開後の CEF / Chromium version を検証します。
 
-手動で CEF を指定する場合は、CMake 設定時に `CEF_ROOT` を渡してください。
+lock 外の CEF distribution を明示的に使う場合は、CMake 設定時に `CEF_ROOT` を渡してください。この明示的な指定では `cef.lock` による取得・checksum 検証を行いません。
 
 ```bash
 CEF_ROOT=/path/to/cef_binary make configure
@@ -111,7 +111,8 @@ CEF_ROOT=/path/to/cef_binary make configure
 ## Common Commands / よく使うコマンド
 
 ```bash
-make cef          # CEF を取得または更新
+make cef          # cef.lock に固定された CEF を取得
+make update-cef   # 最新 stable を候補として cef.lock に反映
 make build        # UI / Rust / native をまとめてビルド
 make run          # アプリをビルドして起動
 make test         # Rust / UI / native のテストを実行
@@ -121,11 +122,13 @@ make audit        # cargo-audit を実行
 make audit-deny   # cargo-deny を実行
 ```
 
+CEF の通常ビルドは `cef.lock` のバージョンと checksum を使い、CEF CDN の latest index は参照しません。CEF を更新するときは `make update-cef` を実行し、表示された `cef.lock` の差分を確認して pull request でレビューします。GitHub Actions は毎週 stable version を確認して更新候補の pull request を作ります。自動 merge は行いません。
+
 ## Current Scope / 現在の実装範囲
 
 現在の実装には、macOS CEF ホスト、SolidJS UI、Frost Protocol、Rust 側のブラウザ状態管理、SQLite 永続化、通常 / プライベートウィンドウ、内部ページ、外部コマンド境界が含まれます。Web 権限は FrostEngine の Permission Broker が origin 単位で扱い、camera、microphone、geolocation、notifications、pointer lock、keyboard lock の確認 UI と設定ページを提供します。Private Window の判断は通常プロファイルへ保存しません。
 
-CEF のバージョン固定、Renderer crash recovery、Chrome style の採用判断、コード署名、ノータリゼーション、アップデート配信、完成度の高いインポート / エクスポート、Chrome 拡張機能互換、ブラウザ同期などは未対応です。詳しくは [docs/known-limitations.md](docs/known-limitations.md) を参照してください。
+Renderer crash recovery、Chrome style の採用判断、コード署名、ノータリゼーション、アップデート配信、完成度の高いインポート / エクスポート、Chrome 拡張機能互換、ブラウザ同期などは未対応です。詳しくは [docs/known-limitations.md](docs/known-limitations.md) を参照してください。
 
 ## Documentation / ドキュメント
 
