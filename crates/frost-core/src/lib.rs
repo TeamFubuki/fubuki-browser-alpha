@@ -392,6 +392,10 @@ where
                             return Err(CoreError::Message(e.to_string()));
                         }
                     };
+                    // The host closes the page asynchronously. Dismiss its permission prompts
+                    // as soon as the close command is accepted so a late UI response cannot
+                    // persist a decision while CEF is still delivering OnBeforeClose.
+                    self.dismiss_permissions_for_tab(&tab_id);
                     let mut command_ids = vec![close_command_id];
                     let mut replacement_tab = None;
                     self.closed_tabs.push(tab_state.clone());
@@ -564,7 +568,10 @@ where
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
                     match self.adapter.close_page(&tab.id) {
-                        Ok(command_id) => command_ids.push(command_id),
+                        Ok(command_id) => {
+                            command_ids.push(command_id);
+                            self.dismiss_permissions_for_tab(&tab.id);
+                        }
                         Err(e) => {
                             self.rollback_operation(PendingOperation::TabsCloseOther {
                                 keep_tab_id: tab_id.clone(),
@@ -625,7 +632,10 @@ where
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
                     match self.adapter.close_page(&tab.id) {
-                        Ok(command_id) => command_ids.push(command_id),
+                        Ok(command_id) => {
+                            command_ids.push(command_id);
+                            self.dismiss_permissions_for_tab(&tab.id);
+                        }
                         Err(e) => {
                             self.rollback_operation(PendingOperation::TabsCloseToRight {
                                 anchor_tab_id: tab_id.clone(),
@@ -2607,6 +2617,68 @@ mod tests {
                 window_id: Some("w".into()),
             }));
             assert!(matches!(result.response, Response::Error { .. }));
+            assert!(core.repository.list_permissions().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn tab_close_requests_dismiss_permissions_before_host_close_callbacks() {
+        for (name, request, closed_tab_id) in [
+            ("single", Request::TabsClose { tab_id: "a".into() }, "a"),
+            ("other", Request::TabsCloseOther { tab_id: "b".into() }, "c"),
+            (
+                "right",
+                Request::TabsCloseToRight { tab_id: "a".into() },
+                "c",
+            ),
+        ] {
+            let mut core = BrowserCore::new();
+            for (tab_id, active) in [("a", true), ("b", false), ("c", false)] {
+                core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+                    tab_id: tab_id.into(),
+                    window_id: "w".into(),
+                    url: "https://example.com".into(),
+                    active,
+                    is_private: false,
+                }))
+                .unwrap();
+            }
+
+            let expected_prompt_id = format!("prompt-{name}");
+            core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+                prompt_id: expected_prompt_id.clone(),
+                tab_id: closed_tab_id.into(),
+                window_id: "w".into(),
+                origin: "https://example.com".into(),
+                permissions: vec![PermissionType::Camera],
+                is_private: false,
+            }))
+            .unwrap();
+
+            assert_eq!(
+                core.process(ProtocolRequest::new(request)).response,
+                Response::Bool(true),
+                "{name} tab close request should succeed"
+            );
+            assert!(
+                !core.pending_permissions.contains_key(&expected_prompt_id),
+                "{name} tab close should immediately remove its pending permission"
+            );
+            assert!(core.recent_events().iter().any(|event| matches!(
+                event.event,
+                Event::PermissionDismissed { ref prompt_id }
+                    if prompt_id == &expected_prompt_id
+            )));
+
+            let late_answer = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+                prompt_id: expected_prompt_id,
+                decision: PermissionDecision::Allow,
+                window_id: Some("w".into()),
+            }));
+            assert!(
+                matches!(late_answer.response, Response::Error { .. }),
+                "{name} late permission answer should be rejected"
+            );
             assert!(core.repository.list_permissions().unwrap().is_empty());
         }
     }
