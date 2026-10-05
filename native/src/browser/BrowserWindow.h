@@ -1,7 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <atomic>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -14,7 +16,9 @@
 #include "events/EventBus.h"
 #include "include/cef_browser.h"
 #include "include/cef_drag_handler.h"
+#include "include/cef_request_handler.h"
 #include "include/cef_request_context.h"
+#include "include/cef_unresponsive_process_callback.h"
 
 #ifdef __OBJC__
 @class NSWindow;
@@ -36,6 +40,7 @@ class BrowserWindow {
 
   void Show(CefRefPtr<CefDictionaryValue> restoreState = nullptr);
   bool CloseWindow();
+  void OnWindowWillClose();
   bool CreateTab(const std::string &input, bool active);
   // Creates a tab whose id is owned by an external authority (FrostEngine).
   bool CreateTabWithId(const std::string &input, const std::string &tabId,
@@ -52,7 +57,8 @@ class BrowserWindow {
   bool MoveTabToNewWindow(const std::string& tabId,
                           const std::string& engineWindowId = "");
   bool Navigate(const std::string& tabId, const std::string& input);
-  bool Reload(const std::string& tabId);
+  bool Reload(const std::string& tabId, const std::string& engineUrl = "");
+  bool WaitForRenderer(const std::string& tabId);
   bool Stop(const std::string& tabId);
   bool GoBack(const std::string& tabId);
   bool GoForward(const std::string& tabId);
@@ -105,7 +111,26 @@ class BrowserWindow {
   std::string DownloadPathFor(const std::string &suggestedName) const;
 
   void SetUiBrowser(CefRefPtr<CefBrowser> browser);
+  std::shared_ptr<std::atomic<bool>> CallbackLifetime() const {
+    return callbackAlive_;
+  }
   void OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefBrowser> browser);
+  void OnTabBrowserClosed(const std::string& tabId, CefRefPtr<CefBrowser> browser);
+  void OnTabRendererUnresponsive(
+      const std::string& tabId, CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefUnresponsiveProcessCallback> callback);
+  void OnTabRendererResponsive(const std::string& tabId,
+                               CefRefPtr<CefBrowser> browser);
+  void OnTabRendererTerminated(const std::string& tabId,
+                               CefRefPtr<CefBrowser> browser,
+                               CefRequestHandler::TerminationStatus status,
+                               int errorCode,
+                               const std::string& diagnostic);
+  void OnTabRendererLoaded(const std::string& tabId,
+                           CefRefPtr<CefBrowser> browser);
+  void OnUiRendererTerminated(CefRefPtr<CefBrowser> browser);
+  void OnUiBrowserClosed(CefRefPtr<CefBrowser> browser);
+  void OnUiBrowserLoaded(CefRefPtr<CefBrowser> browser);
   void OnTabTitle(const std::string& tabId, const std::string& title);
   void OnTabUrl(const std::string& tabId, const std::string& url);
   void OnTabFavicon(const std::string& tabId, const std::string& faviconUrl);
@@ -156,8 +181,15 @@ class BrowserWindow {
 
  private:
   void CreateNativeWindow();
-  void CreateUiBrowser();
+  bool CreateUiBrowser();
   void CreateTabBrowser(const Tab& tab);
+  bool BeginTabRendererRecovery(const std::string& tabId,
+                                const std::string& engineUrl);
+  void ScheduleUiBrowserRecovery();
+  void RetryUiBrowserRecovery(uint64_t generation);
+  void ReportRendererStatus(const std::string& tabId,
+                            const std::string& status, int errorCode,
+                            const std::string& diagnostic);
   bool CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bool active);
   void RegisterCommands();
   void WireEvents();
@@ -174,7 +206,13 @@ class BrowserWindow {
   TabManager& tabManager_;
   CommandRegistry commands_;
   std::unique_ptr<NativeBridge> bridge_;
+  std::shared_ptr<std::atomic<bool>> callbackAlive_ =
+      std::make_shared<std::atomic<bool>>(true);
   CefRefPtr<CefBrowser> uiBrowser_;
+  std::unordered_map<std::string,
+                     CefRefPtr<CefUnresponsiveProcessCallback>>
+      unresponsiveCallbacks_;
+  std::unordered_map<std::string, std::string> pendingTabRecoveryUrls_;
   CefRefPtr<CefRequestContext> privateRequestContext_;
   double liveSidebarWidth_ = 0.0;
   std::vector<std::pair<EventType, int>> eventSubscriptions_;
@@ -185,6 +223,12 @@ class BrowserWindow {
   NSView* contentHostView_ = nullptr;
   NSView* dragRegionView_ = nullptr;
   bool uiOverlayActive_ = false;
+  bool isClosing_ = false;
+  bool uiRecoveryCloseRequested_ = false;
+  bool uiRecoveryScheduled_ = false;
+  bool uiBrowserCreationPending_ = false;
+  unsigned int uiRecoveryAttempts_ = 0;
+  uint64_t uiRecoveryGeneration_ = 0;
   bool privateWindow_ = false;
   double uiOverlayWidth_ = 392.0;
   double uiOverlayHeight_ = 560.0;

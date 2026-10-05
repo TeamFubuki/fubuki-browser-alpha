@@ -30,6 +30,7 @@ Common methods:
 - `tabs.list`
 - `tabs.create`
 - `tabs.navigate`
+- `tabs.waitForRenderer`
 - `tabs.activate`
 - `tabs.close`
 - `windows.list`

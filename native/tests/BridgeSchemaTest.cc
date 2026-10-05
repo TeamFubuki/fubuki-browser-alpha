@@ -62,6 +62,10 @@ TEST(BridgeSchemaTest, RejectsEmptyTabId) {
   EXPECT_FALSE(IsValid("tabs.close", {{"tabId", String("")}}));
 }
 
+TEST(BridgeSchemaTest, AcceptsRendererWaitForTab) {
+  EXPECT_TRUE(IsValid("tabs.waitForRenderer", {{"tabId", String("tab-1")}}));
+}
+
 TEST(BridgeSchemaTest, RejectsOversizedTabId) {
   EXPECT_FALSE(IsValid("tabs.close", {{"tabId", String(std::string(257, 'x'))}}));
 }

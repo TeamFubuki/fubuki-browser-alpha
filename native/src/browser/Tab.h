@@ -19,6 +19,9 @@ struct Tab {
   bool isActive = false;
   bool isPinned = false;
   bool isPendingPopup = false;
+  std::string rendererStatus = "healthy";
+  int rendererErrorCode = 0;
+  std::string rendererDiagnostic;
   CefRefPtr<CefBrowser> browser;
 };
 

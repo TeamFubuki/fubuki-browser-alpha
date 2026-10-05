@@ -21,7 +21,7 @@ pub use request::{ProtocolRequest, Request};
 pub use response::{ProtocolResponse, Response};
 pub use state::{
     AppState, BookmarkRecord, BrowserCommand, DownloadRecord, HistoryRecord, PermissionRecord,
-    TabState, WindowState,
+    RendererStatus, TabState, WindowState,
 };
 
 pub const PROTOCOL_VERSION: u16 = 0;

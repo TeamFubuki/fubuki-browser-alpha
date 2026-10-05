@@ -259,14 +259,23 @@ std::string BrowserAppearance(BrowserWindow *window) {
 
 }  // namespace
 
+BrowserWindow* FubukiClient::Window() const {
+  const auto lifetime = windowLifetime_.lock();
+  return lifetime && lifetime->load(std::memory_order_acquire) ? window_ : nullptr;
+}
+
 FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
-    : window_(window), tabId_(std::move(tabId)), isUi_(isUi) {
+    : window_(window),
+      windowLifetime_(window ? window->CallbackLifetime()
+                             : std::shared_ptr<std::atomic<bool>>{}),
+      tabId_(std::move(tabId)),
+      isUi_(isUi) {
   if (isUi_) {
     CefMessageRouterConfig config;
     config.js_query_function = "cefQuery";
     config.js_cancel_function = "cefQueryCancel";
     messageRouter_ = CefMessageRouterBrowserSide::Create(config);
-    messageRouter_->AddHandler(window_->Bridge(), false);
+    messageRouter_->AddHandler(Window()->Bridge(), false);
   }
 }
 
@@ -274,6 +283,9 @@ bool FubukiClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                             CefRefPtr<CefFrame> frame, CefProcessId source_process,
                                             CefRefPtr<CefProcessMessage> message) {
   CEF_REQUIRE_UI_THREAD();
+  if (!Window()) {
+    return false;
+  }
   if (messageRouter_ &&
       messageRouter_->OnProcessMessageReceived(browser, frame, source_process, message)) {
     return true;
@@ -283,13 +295,13 @@ bool FubukiClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 
 void FubukiClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-  if (!window_) {
+  if (!Window()) {
     return;
   }
   if (isUi_) {
-    window_->SetUiBrowser(browser);
+    Window()->SetUiBrowser(browser);
   } else {
-    window_->OnTabBrowserCreated(tabId_, browser);
+    Window()->OnTabBrowserCreated(tabId_, browser);
   }
 }
 
@@ -300,33 +312,33 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
                                  CefBrowserSettings& settings, CefRefPtr<CefDictionaryValue>&,
                                  bool* no_javascript_access) {
   CEF_REQUIRE_UI_THREAD();
-  if (!window_ || isUi_) {
+  if (!Window() || isUi_) {
     return true;
   }
   const std::string url = target_url.ToString();
   const std::string sourceUrl = frame ? frame->GetURL().ToString() : "";
   if (!user_gesture || IsFubukiInternalUrl(sourceUrl)) {
-    if (!window_->IsPrivate()) {
-      window_->Store().AddLog(
+    if (!Window()->IsPrivate()) {
+      Window()->Store().AddLog(
           "info", "Blocked popup from " + (sourceUrl.empty() ? "unknown source" : sourceUrl));
     }
     return true;
   }
   if (IsBlankPopupUrl(url)) {
-    const std::string popupTabId = window_->CreatePendingPopupTab("about:blank", true);
+    const std::string popupTabId = Window()->CreatePendingPopupTab("about:blank", true);
     if (popupTabId.empty()) {
       return true;
     }
-    if (!window_->IsPrivate()) {
-      window_->Store().AddLog("info", "Opened blank popup as pending tab: " + popupTabId);
+    if (!Window()->IsPrivate()) {
+      Window()->Store().AddLog("info", "Opened blank popup as pending tab: " + popupTabId);
     }
-    windowInfo = window_->PopupWindowInfo();
-    client = new FubukiClient(window_, popupTabId, false);
+    windowInfo = Window()->PopupWindowInfo();
+    client = new FubukiClient(Window(), popupTabId, false);
     settings.background_color = CefColorSetARGB(255, 255, 255, 255);
     if (no_javascript_access) {
       *no_javascript_access = false;
     }
-    const std::string windowId = window_->WindowId();
+    const std::string windowId = Window()->WindowId();
     CefPostDelayedTask(TID_UI,
                        base::BindOnce(
                            [](std::string windowId, std::string tabId) {
@@ -345,10 +357,10 @@ bool FubukiClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fram
                        15000);
     return false;
   }
-  if (!window_->IsPrivate()) {
-    window_->Store().AddLog("info", "Opened popup in new tab: " + url);
+  if (!Window()->IsPrivate()) {
+    Window()->Store().AddLog("info", "Opened popup in new tab: " + url);
   }
-  const std::string windowId = window_->WindowId();
+  const std::string windowId = Window()->WindowId();
   CefPostTask(TID_UI, base::BindOnce(
                           [](std::string windowId, std::string url) {
                             BrowserAppController* app = GetBrowserAppController();
@@ -370,38 +382,90 @@ bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
   return false;
 }
 
-void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser>) {
+void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+  if (messageRouter_) {
+    messageRouter_->OnBeforeClose(browser);
+  }
   CancelPendingPermissions();
+  if (auto* window = Window()) {
+    if (isUi_) {
+      window->OnUiBrowserClosed(browser);
+    } else {
+      window->OnTabBrowserClosed(tabId_, browser);
+    }
+  }
+}
+
+bool FubukiClient::OnRenderProcessUnresponsive(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefUnresponsiveProcessCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  auto* window = Window();
+  if (!window || isUi_) {
+    return false;
+  }
+  window->OnTabRendererUnresponsive(tabId_, browser, callback);
+  // FrostEngine drives the wait/reload controls shown by the UI. Suppress
+  // CEF's native dialog so an unrelated browser-wide prompt cannot appear.
+  return true;
+}
+
+void FubukiClient::OnRenderProcessResponsive(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (auto* window = Window(); window && !isUi_) {
+    window->OnTabRendererResponsive(tabId_, browser);
+  }
+}
+
+void FubukiClient::OnRenderProcessTerminated(
+    CefRefPtr<CefBrowser> browser, TerminationStatus status, int error_code,
+    const CefString& error_string) {
+  CEF_REQUIRE_UI_THREAD();
+  if (messageRouter_) {
+    messageRouter_->OnRenderProcessTerminated(browser);
+  }
+  if (auto* window = Window()) {
+    if (isUi_) {
+      window->OnUiRendererTerminated(browser);
+    } else {
+      window->OnTabRendererTerminated(tabId_, browser, status, error_code,
+                                      error_string.ToString());
+    }
+  }
 }
 
 void FubukiClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack,
                                         bool canGoForward) {
-  if (!isUi_ && window_) {
-    window_->OnTabLoadingState(tabId_, isLoading, canGoBack, canGoForward);
+  if (!isUi_ && Window()) {
+    Window()->OnTabLoadingState(tabId_, isLoading, canGoBack, canGoForward);
   }
 }
 
 void FubukiClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) {
-  if (!isUi_ && window_ && frame->IsMain()) {
-    window_->OnNavigationStarted(tabId_);
+  if (!isUi_ && Window() && frame->IsMain()) {
+    Window()->OnNavigationStarted(tabId_);
   }
 }
 
-void FubukiClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) {
-  if (!isUi_ && window_ && frame->IsMain()) {
-    window_->OnNavigationFinished(tabId_);
+void FubukiClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                             CefRefPtr<CefFrame> frame, int) {
+  if (Window() && isUi_ && frame->IsMain()) {
+    Window()->OnUiBrowserLoaded(browser);
+  } else if (!isUi_ && Window() && frame->IsMain()) {
+    Window()->OnNavigationFinished(tabId_);
+    Window()->OnTabRendererLoaded(tabId_, browser);
   }
 }
 
 void FubukiClient::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                                ErrorCode errorCode, const CefString& errorText,
                                const CefString& failedUrl) {
-  if (!isUi_ && window_ && frame->IsMain() && errorCode != ERR_ABORTED) {
+  if (!isUi_ && Window() && frame->IsMain() && errorCode != ERR_ABORTED) {
     const std::string message = errorText.ToString();
     const std::string failed = failedUrl.ToString();
-    const std::string appearance = BrowserAppearance(window_);
-    window_->OnNavigationFailed(tabId_, message);
+    const std::string appearance = BrowserAppearance(Window());
+    Window()->OnNavigationFailed(tabId_, message);
     const std::string html =
         "<!doctype html><html data-appearance=\"" + HtmlEscape(appearance) +
         "\"><meta charset=\"utf-8\"><title>Page load failed</title>"
@@ -455,35 +519,35 @@ void FubukiClient::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
 }
 
 void FubukiClient::OnTitleChange(CefRefPtr<CefBrowser>, const CefString& title) {
-  if (!isUi_ && window_) {
-    window_->OnTabTitle(tabId_, title.ToString());
+  if (!isUi_ && Window()) {
+    Window()->OnTabTitle(tabId_, title.ToString());
   }
 }
 
 void FubukiClient::OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                                    const CefString& url) {
-  if (!isUi_ && window_ && frame->IsMain()) {
-    window_->OnTabUrl(tabId_, url.ToString());
+  if (!isUi_ && Window() && frame->IsMain()) {
+    Window()->OnTabUrl(tabId_, url.ToString());
   }
 }
 
 void FubukiClient::OnFaviconURLChange(CefRefPtr<CefBrowser>,
                                       const std::vector<CefString>& icon_urls) {
-  if (!isUi_ && window_ && !icon_urls.empty()) {
-    window_->OnTabFavicon(tabId_, icon_urls.front().ToString());
+  if (!isUi_ && Window() && !icon_urls.empty()) {
+    Window()->OnTabFavicon(tabId_, icon_urls.front().ToString());
   }
 }
 
 bool FubukiClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> download_item,
                                     const CefString& suggested_name,
                                     CefRefPtr<CefBeforeDownloadCallback> callback) {
-  if (!window_ || !download_item || !callback) {
+  if (!Window() || !download_item || !callback) {
     return false;
   }
-  const std::string path = window_->DownloadPathFor(suggested_name.ToString());
+  const std::string path = Window()->DownloadPathFor(suggested_name.ToString());
   const bool askBeforeDownload =
-      window_->Store().GetSetting("askBeforeDownload") == "on";
-  window_->OnDownloadStarted(std::to_string(download_item->GetId()),
+      Window()->Store().GetSetting("askBeforeDownload") == "on";
+  Window()->OnDownloadStarted(std::to_string(download_item->GetId()),
                              download_item->GetURL().ToString(), path);
   callback->Continue(path, askBeforeDownload);
   return true;
@@ -492,7 +556,7 @@ bool FubukiClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownload
 void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
                                      CefRefPtr<CefDownloadItem> download_item,
                                      CefRefPtr<CefDownloadItemCallback>) {
-  if (!window_ || !download_item) {
+  if (!Window() || !download_item) {
     return;
   }
   const int percent = download_item->GetPercentComplete();
@@ -506,14 +570,14 @@ void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
   } else if (percent >= 100) {
     state = "completed";
   }
-  window_->OnDownloadUpdated(std::to_string(download_item->GetId()),
+  Window()->OnDownloadUpdated(std::to_string(download_item->GetId()),
                              download_item->GetURL().ToString(),
                              download_item->GetFullPath().ToString(), state, percent);
 }
 
 bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle,
                                  bool* is_keyboard_shortcut) {
-  if (!window_ || event.type != KEYEVENT_RAWKEYDOWN) {
+  if (!Window() || event.type != KEYEVENT_RAWKEYDOWN) {
     return false;
   }
   const bool commandDown = (event.modifiers & EVENTFLAG_COMMAND_DOWN) != 0;
@@ -522,7 +586,7 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   const bool shiftDown = (event.modifiers & EVENTFLAG_SHIFT_DOWN) != 0;
   const char character = static_cast<char>(event.unmodified_character);
   const bool handled =
-      window_->HandleShortcut(commandDown, controlDown, altDown, shiftDown,
+      Window()->HandleShortcut(commandDown, controlDown, altDown, shiftDown,
                               event.windows_key_code, character, tabId_);
   if (handled && is_keyboard_shortcut) {
     *is_keyboard_shortcut = true;
@@ -530,10 +594,13 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   return handled;
 }
 
-bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request, bool user_gesture,
                                   bool is_redirect) {
-  if (!window_ || isUi_ || !frame || !frame->IsMain() || !request) {
+  if (messageRouter_ && frame) {
+    messageRouter_->OnBeforeBrowse(browser, frame);
+  }
+  if (!Window() || isUi_ || !frame || !frame->IsMain() || !request) {
     return false;
   }
   CancelPendingPermissions();
@@ -549,8 +616,8 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     const bool trustedSource = IsTrustedSettingsActionSource(frameUrl) ||
                                IsTrustedSettingsActionSource(referrerUrl);
     if (is_redirect || !trustedSource || (method != "POST" && !user_gesture)) {
-      if (!window_->IsPrivate()) {
-        window_->Store().AddLog(
+      if (!Window()->IsPrivate()) {
+        Window()->Store().AddLog(
             "warning", "Blocked settings action: method=" + method +
                            " source=" + frameUrl + " referrer=" + referrerUrl);
       }
@@ -560,24 +627,24 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     const std::string query = postBody.empty() ? QueryString(url) : postBody;
     const std::string key = FormParam(query, "key");
     if (key.empty()) {
-      if (!window_->IsPrivate()) {
-        window_->Store().AddLog("warning", "Blocked settings action with empty form body");
+      if (!Window()->IsPrivate()) {
+        Window()->Store().AddLog("warning", "Blocked settings action with empty form body");
       }
       return true;
     }
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
-      if (!window_->IsPrivate()) {
-        window_->Store().AddLog("warning",
+      if (!Window()->IsPrivate()) {
+        Window()->Store().AddLog("warning",
                              "Blocked destructive settings action over GET: " +
                                  key);
       }
       return true;
     }
-    window_->HandleSettingsUrl(tabId_, "fubuki://settings/set?" + query);
+    Window()->HandleSettingsUrl(tabId_, "fubuki://settings/set?" + query);
     return true;
   }
   if (StartsWith(url, "fubuki://newtab/search")) {
-    window_->HandleNewTabSearchUrl(tabId_, url);
+    Window()->HandleNewTabSearchUrl(tabId_, url);
     return true;
   }
   return false;
@@ -585,8 +652,8 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
 
 void FubukiClient::OnDraggableRegionsChanged(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                              const std::vector<CefDraggableRegion>& regions) {
-  if (isUi_ && window_) {
-    window_->OnUiDraggableRegionsChanged(regions);
+  if (isUi_ && Window()) {
+    Window()->OnUiDraggableRegionsChanged(regions);
   }
 }
 
@@ -598,7 +665,7 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt
   const std::string origin = requesting_origin.ToString();
   const std::string id = std::to_string(prompt_id);
   std::vector<std::string> permissions;
-  if (!callback || !window_ || isUi_ || !IsPermissionOrigin(origin) ||
+  if (!callback || !Window() || isUi_ || !IsPermissionOrigin(origin) ||
       IsFubukiInternalUrl(origin) || !PermissionNames(requested_permissions, permissions) ||
       pendingPermissions_.contains(id)) {
     if (callback) {
@@ -608,8 +675,8 @@ bool FubukiClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt
   }
 
   pendingPermissions_.emplace(id, PendingPermission{callback, nullptr, 0});
-  if (!window_->PushHostEventJson(PermissionRequestedJson(
-          id, tabId_, window_->WindowId(), origin, permissions, window_->IsPrivate()))) {
+  if (!Window()->PushHostEventJson(PermissionRequestedJson(
+          id, tabId_, Window()->WindowId(), origin, permissions, Window()->IsPrivate()))) {
     pendingPermissions_.erase(id);
     callback->Continue(CEF_PERMISSION_RESULT_DENY);
     return true;
@@ -624,7 +691,7 @@ bool FubukiClient::OnRequestMediaAccessPermission(
   CEF_REQUIRE_UI_THREAD();
   const std::string origin = requesting_origin.ToString();
   std::vector<std::string> permissions;
-  if (!callback || !window_ || isUi_ || !IsPermissionOrigin(origin) ||
+  if (!callback || !Window() || isUi_ || !IsPermissionOrigin(origin) ||
       IsFubukiInternalUrl(origin) || !MediaPermissionNames(requested_permissions, permissions)) {
     if (callback) {
       callback->Continue(CEF_MEDIA_PERMISSION_NONE);
@@ -634,8 +701,8 @@ bool FubukiClient::OnRequestMediaAccessPermission(
 
   const std::string id = "media-" + std::to_string(gNextMediaPromptId.fetch_add(1));
   pendingPermissions_.emplace(id, PendingPermission{nullptr, callback, requested_permissions});
-  if (!window_->PushHostEventJson(PermissionRequestedJson(
-          id, tabId_, window_->WindowId(), origin, permissions, window_->IsPrivate()))) {
+  if (!Window()->PushHostEventJson(PermissionRequestedJson(
+          id, tabId_, Window()->WindowId(), origin, permissions, Window()->IsPrivate()))) {
     pendingPermissions_.erase(id);
     callback->Continue(CEF_MEDIA_PERMISSION_NONE);
     return true;
@@ -648,9 +715,9 @@ void FubukiClient::OnDismissPermissionPrompt(
     CefRefPtr<CefBrowser>, uint64_t prompt_id, cef_permission_request_result_t) {
   CEF_REQUIRE_UI_THREAD();
   const std::string id = std::to_string(prompt_id);
-  if (pendingPermissions_.erase(id) > 0 && window_) {
-    window_->PushHostEventJson(
-        PermissionDismissedJson(id, tabId_, window_->WindowId()));
+  if (pendingPermissions_.erase(id) > 0 && Window()) {
+    Window()->PushHostEventJson(
+        PermissionDismissedJson(id, tabId_, Window()->WindowId()));
   }
 }
 
@@ -682,9 +749,9 @@ bool FubukiClient::ResolvePermission(const std::string& promptId,
   // The engine removes its pending prompt when it handles a UI response. The
   // same event also clears an engine prompt when this client-side timeout
   // fires before the engine can respond.
-  if (window_) {
-    window_->PushHostEventJson(
-        PermissionDismissedJson(promptId, tabId_, window_->WindowId()));
+  if (Window()) {
+    Window()->PushHostEventJson(
+        PermissionDismissedJson(promptId, tabId_, Window()->WindowId()));
   }
   return true;
 }
@@ -701,9 +768,9 @@ void FubukiClient::CancelPendingPermissions() {
     } else if (entry.second.mediaCallback) {
       entry.second.mediaCallback->Cancel();
     }
-    if (window_) {
-      window_->PushHostEventJson(
-          PermissionDismissedJson(entry.first, tabId_, window_->WindowId()));
+    if (Window()) {
+      Window()->PushHostEventJson(
+          PermissionDismissedJson(entry.first, tabId_, Window()->WindowId()));
     }
   }
 }

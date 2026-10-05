@@ -47,6 +47,7 @@ normalized to `block`.
 - `tabs.moveToNewWindow({ tabId: string })`
 - `tabs.navigate({ tabId: string, input: string })`
 - `tabs.reload({ tabId: string })`
+- `tabs.waitForRenderer({ tabId: string })`
 - `tabs.stop({ tabId: string })`
 - `tabs.goBack({ tabId: string })`
 - `tabs.goForward({ tabId: string })`

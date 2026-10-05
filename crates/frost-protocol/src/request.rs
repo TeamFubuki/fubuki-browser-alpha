@@ -121,6 +121,8 @@ pub enum Request {
     TabsNavigate { tab_id: String, input: String },
     #[serde(rename = "tabs.reload", rename_all = "camelCase")]
     TabsReload { tab_id: String },
+    #[serde(rename = "tabs.waitForRenderer", rename_all = "camelCase")]
+    TabsWaitForRenderer { tab_id: String },
     #[serde(rename = "tabs.stop", rename_all = "camelCase")]
     TabsStop { tab_id: String },
     #[serde(rename = "tabs.goBack", rename_all = "camelCase")]
@@ -254,6 +256,21 @@ mod tests {
                 title: "Example".into(),
                 url: "https://example.com".into(),
                 favicon_url: Some(String::new()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_renderer_wait_request() {
+        let request: ProtocolRequest = serde_json::from_str(
+            r#"{"version":0,"method":"tabs.waitForRenderer","params":{"tabId":"tab-1"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            request.request,
+            Request::TabsWaitForRenderer {
+                tab_id: "tab-1".into(),
             }
         );
     }
