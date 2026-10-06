@@ -1,3 +1,6 @@
+overrides:
+  seroval: 1.6.3
+  source-map-js: 1.2.2
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
@@ -41,3 +44,4 @@ minimumReleaseAgeExclude:
   - '@oxlint/binding-win32-x64-msvc@1.74.0'
   - oxfmt@0.59.0
   - oxlint@1.74.0
+  - seroval@1.6.3
