@@ -1,13 +1,8 @@
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { tabs, type Tab } from '../bridge/fubuki';
 import { t } from '../i18n';
 import { browserState, currentLanguage } from '../stores/browserStore';
-import {
-  TAB_DRAG_TYPE,
-  tabDropEdge,
-  tabDropIndex,
-  type TabDropTarget,
-} from './tabDrag';
+import { tabDropEdge, tabDropIndex, type TabDropTarget } from './tabDrag';
 import {
   focusAfterClose,
   focusTabElement,
@@ -152,61 +147,96 @@ export default function VerticalTabList() {
     browserState.tabs.length >= 8 ||
     query().trim().length > 0;
 
+  let pointerDrag: {
+    pointerId: number;
+    tabId: string;
+    startX: number;
+    startY: number;
+    element: HTMLElement;
+  } | null = null;
+  let suppressClick = false;
+
   const clearDrag = () => {
+    const drag = pointerDrag;
+    pointerDrag = null;
+    if (drag?.element.hasPointerCapture(drag.pointerId)) {
+      drag.element.releasePointerCapture(drag.pointerId);
+    }
     setDraggedId(null);
     setDropTarget(null);
   };
+  onCleanup(clearDrag);
 
-  const handleDragStart = (tab: Tab, event: DragEvent) => {
-    if (!event.dataTransfer) {
-      event.preventDefault();
-      return;
-    }
-    event.dataTransfer.setData(TAB_DRAG_TYPE, tab.id);
-    event.dataTransfer.effectAllowed = 'move';
-    setDraggedId(tab.id);
-    setDropTarget(null);
+  const handlePointerDown = (tab: Tab, event: PointerEvent) => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    if (!(event.target instanceof HTMLElement)) return;
+    if (event.target.closest('.tab-close')) return;
+    clearDrag();
+    suppressClick = false;
+    // Capture the activation button so a normal click still activates the tab.
+    const element =
+      event.target.closest<HTMLElement>('button') ??
+      (event.currentTarget as HTMLElement);
+    pointerDrag = {
+      pointerId: event.pointerId,
+      tabId: tab.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      element,
+    };
+    element.setPointerCapture(event.pointerId);
   };
 
-  const targetFor = (tab: Tab, event: DragEvent, element: HTMLElement) => {
-    const sourceId = draggedId();
-    if (!sourceId || !event.dataTransfer?.types.includes(TAB_DRAG_TYPE))
-      return null;
+  const targetForPointer = (event: PointerEvent): TabDropTarget | null => {
+    const row = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>('[data-drag-tab-id]');
+    if (!row || !pointerDrag) return null;
+    const tab = browserState.tabs.find(
+      (item) => item.id === row.dataset.dragTabId,
+    );
+    if (!tab) return null;
     const target: TabDropTarget = {
       tabId: tab.id,
-      edge: tabDropEdge(event, element.getBoundingClientRect(), tab.isPinned),
+      edge: tabDropEdge(event, row.getBoundingClientRect(), tab.isPinned),
     };
-    return tabDropIndex(browserState.tabs, sourceId, target) === null
+    return tabDropIndex(browserState.tabs, pointerDrag.tabId, target) === null
       ? null
       : target;
   };
 
-  const handleDragOver = (tab: Tab, event: DragEvent, element: HTMLElement) => {
-    const target = targetFor(tab, event, element);
-    setDropTarget(target);
-    if (!target) return;
+  const handlePointerMove = (event: PointerEvent) => {
+    const drag = pointerDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!draggedId()) {
+      if (
+        Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5
+      )
+        return;
+      setDraggedId(drag.tabId);
+      suppressClick = true;
+    }
     event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    setDropTarget(targetForPointer(event));
   };
 
-  const handleDragLeave = (event: DragEvent, element: HTMLElement) => {
-    if (
-      event.relatedTarget instanceof Node &&
-      element.contains(event.relatedTarget)
-    )
-      return;
-    setDropTarget(null);
-  };
-
-  const handleDrop = (tab: Tab, event: DragEvent, element: HTMLElement) => {
-    const sourceId = draggedId();
-    const target = targetFor(tab, event, element);
-    const payloadId = event.dataTransfer?.getData(TAB_DRAG_TYPE);
+  const handlePointerUp = (event: PointerEvent) => {
+    const drag = pointerDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const target = draggedId() ? targetForPointer(event) : null;
+    const index = target
+      ? tabDropIndex(browserState.tabs, drag.tabId, target)
+      : null;
     clearDrag();
-    if (!sourceId || payloadId !== sourceId || !target) return;
-    event.preventDefault();
-    const index = tabDropIndex(browserState.tabs, sourceId, target);
-    if (index !== null) void tabs.move(sourceId, index);
+    if (index !== null) void tabs.move(drag.tabId, index);
+  };
+
+  const activateTab = (tab: Tab, event: MouseEvent) => {
+    if (suppressClick && event.detail > 0) {
+      event.preventDefault();
+      return;
+    }
+    void tabs.activate(tab.id);
   };
 
   const dropClass = (tabId: string, edge: TabDropTarget['edge']) =>
@@ -257,16 +287,12 @@ export default function VerticalTabList() {
                 }}
                 title={titleFor(tab, lang())}
                 role="presentation"
-                draggable
-                onDragStart={(event) => handleDragStart(tab, event)}
-                onDragOver={(event) =>
-                  handleDragOver(tab, event, event.currentTarget)
-                }
-                onDragLeave={(event) =>
-                  handleDragLeave(event, event.currentTarget)
-                }
-                onDragEnd={clearDrag}
-                onDrop={(event) => handleDrop(tab, event, event.currentTarget)}
+                data-drag-tab-id={tab.id}
+                onPointerDown={(event) => handlePointerDown(tab, event)}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={clearDrag}
+                onLostPointerCapture={clearDrag}
               >
                 <button
                   class="pinned-tab-activate"
@@ -285,7 +311,7 @@ export default function VerticalTabList() {
                   onKeyDown={(event) =>
                     handleTabKeyDown(event, pinnedTabs(), tab)
                   }
-                  onClick={() => void tabs.activate(tab.id)}
+                  onClick={(event) => activateTab(tab, event)}
                 >
                   <Favicon tab={tab} />
                 </button>
@@ -315,16 +341,12 @@ export default function VerticalTabList() {
                 }}
                 role="presentation"
                 title={titleFor(tab, lang())}
-                draggable
-                onDragStart={(event) => handleDragStart(tab, event)}
-                onDragOver={(event) =>
-                  handleDragOver(tab, event, event.currentTarget)
-                }
-                onDragLeave={(event) =>
-                  handleDragLeave(event, event.currentTarget)
-                }
-                onDragEnd={clearDrag}
-                onDrop={(event) => handleDrop(tab, event, event.currentTarget)}
+                data-drag-tab-id={tab.id}
+                onPointerDown={(event) => handlePointerDown(tab, event)}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={clearDrag}
+                onLostPointerCapture={clearDrag}
               >
                 <button
                   class="tab-activate"
@@ -343,7 +365,7 @@ export default function VerticalTabList() {
                   onKeyDown={(event) =>
                     handleTabKeyDown(event, filteredTabs(), tab)
                   }
-                  onClick={() => void tabs.activate(tab.id)}
+                  onClick={(event) => activateTab(tab, event)}
                 >
                   <Favicon tab={tab} />
                   <span class="tab-title">{titleFor(tab, lang())}</span>

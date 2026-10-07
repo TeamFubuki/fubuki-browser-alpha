@@ -1,6 +1,5 @@
 import type { Tab } from '../bridge/fubuki';
 
-export const TAB_DRAG_TYPE = 'application/x-fubuki-tab';
 export type DropEdge = 'before' | 'after';
 export type TabDropTarget = { tabId: string; edge: DropEdge };
 
@@ -29,7 +28,7 @@ export function tabDropIndex(
 }
 
 export function tabDropEdge(
-  event: Pick<DragEvent, 'clientX' | 'clientY'>,
+  event: Pick<PointerEvent, 'clientX' | 'clientY'>,
   rect: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
   pinned: boolean,
 ): DropEdge {
