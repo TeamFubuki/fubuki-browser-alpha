@@ -147,6 +147,53 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.vertical-tab.dragging,
+.pinned-tab.dragging {
+  opacity: 0.45;
+}
+
+.vertical-tab.drop-before::after,
+.vertical-tab.drop-after::after,
+.pinned-tab.drop-before::after,
+.pinned-tab.drop-after::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.vertical-tab.drop-before::after,
+.vertical-tab.drop-after::after {
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+
+.vertical-tab.drop-before::after {
+  top: 0;
+}
+
+.vertical-tab.drop-after::after {
+  bottom: 0;
+}
+
+.pinned-tab.drop-before::after,
+.pinned-tab.drop-after::after {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+
+.pinned-tab.drop-before::after {
+  left: 0;
+}
+
+.pinned-tab.drop-after::after {
+  right: 0;
+}
+
 .tab-activate {
   min-width: 0;
   height: 100%;
