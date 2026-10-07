@@ -1,9 +1,7 @@
 #pragma once
 
-#include <unordered_map>
 #include <string>
-#include <atomic>
-#include <memory>
+#include <unordered_map>
 
 #include "include/cef_client.h"
 #include "include/cef_drag_handler.h"
@@ -134,8 +132,7 @@ private:
   void SchedulePermissionTimeout(const std::string &promptId);
   BrowserWindow *Window() const;
 
-  BrowserWindow *window_;
-  std::weak_ptr<std::atomic<bool>> windowLifetime_;
+  std::string windowId_;
   std::string tabId_;
   bool isUi_;
   CefRefPtr<CefMessageRouterBrowserSide> messageRouter_;

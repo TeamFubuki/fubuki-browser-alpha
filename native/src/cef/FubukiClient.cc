@@ -260,22 +260,20 @@ std::string BrowserAppearance(BrowserWindow *window) {
 }  // namespace
 
 BrowserWindow* FubukiClient::Window() const {
-  const auto lifetime = windowLifetime_.lock();
-  return lifetime && lifetime->load(std::memory_order_acquire) ? window_ : nullptr;
+  auto* app = GetBrowserAppController();
+  return app && !windowId_.empty() ? app->FindWindow(windowId_) : nullptr;
 }
 
 FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
-    : window_(window),
-      windowLifetime_(window ? window->CallbackLifetime()
-                             : std::shared_ptr<std::atomic<bool>>{}),
+    : windowId_(window ? window->WindowId() : std::string{}),
       tabId_(std::move(tabId)),
       isUi_(isUi) {
-  if (isUi_) {
+  if (isUi_ && window) {
     CefMessageRouterConfig config;
     config.js_query_function = "cefQuery";
     config.js_cancel_function = "cefQueryCancel";
     messageRouter_ = CefMessageRouterBrowserSide::Create(config);
-    messageRouter_->AddHandler(Window()->Bridge(), false);
+    messageRouter_->AddHandler(window->Bridge(), false);
   }
 }
 

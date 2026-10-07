@@ -404,7 +404,6 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
 BrowserWindow::~BrowserWindow() {
   isClosing_ = true;
   ++uiRecoveryGeneration_;
-  callbackAlive_->store(false, std::memory_order_release);
   unresponsiveCallbacks_.clear();
   for (const auto& [type, token] : eventSubscriptions_) {
     eventBus_.Unsubscribe(type, token);
@@ -465,7 +464,6 @@ bool BrowserWindow::CloseWindow() {
 void BrowserWindow::OnWindowWillClose() {
   isClosing_ = true;
   ++uiRecoveryGeneration_;
-  callbackAlive_->store(false, std::memory_order_release);
   unresponsiveCallbacks_.clear();
 }
 

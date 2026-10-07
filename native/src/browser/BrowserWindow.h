@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <atomic>
 #include <memory>
 #include <set>
 #include <string>
@@ -111,9 +110,6 @@ class BrowserWindow {
   std::string DownloadPathFor(const std::string &suggestedName) const;
 
   void SetUiBrowser(CefRefPtr<CefBrowser> browser);
-  std::shared_ptr<std::atomic<bool>> CallbackLifetime() const {
-    return callbackAlive_;
-  }
   void OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefBrowser> browser);
   void OnTabBrowserClosed(const std::string& tabId, CefRefPtr<CefBrowser> browser);
   void OnTabRendererUnresponsive(
@@ -206,8 +202,6 @@ class BrowserWindow {
   TabManager& tabManager_;
   CommandRegistry commands_;
   std::unique_ptr<NativeBridge> bridge_;
-  std::shared_ptr<std::atomic<bool>> callbackAlive_ =
-      std::make_shared<std::atomic<bool>>(true);
   CefRefPtr<CefBrowser> uiBrowser_;
   std::unordered_map<std::string,
                      CefRefPtr<CefUnresponsiveProcessCallback>>
