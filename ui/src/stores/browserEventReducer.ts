@@ -305,6 +305,12 @@ export function toTabPatch(
   if (patch.canGoBack !== undefined) next.canGoBack = patch.canGoBack;
   if (patch.canGoForward !== undefined) next.canGoForward = patch.canGoForward;
   if (patch.isPinned !== undefined) next.isPinned = patch.isPinned;
+  if (patch.rendererStatus !== undefined)
+    next.rendererStatus = patch.rendererStatus;
+  if (patch.rendererErrorCode !== undefined)
+    next.rendererErrorCode = patch.rendererErrorCode;
+  if (patch.rendererDiagnostic !== undefined)
+    next.rendererDiagnostic = patch.rendererDiagnostic;
   return Object.keys(next).length > 0 ? next : null;
 }
 
@@ -339,7 +345,10 @@ function sameTab(left: Tab, right: Tab): boolean {
     left.canGoBack === right.canGoBack &&
     left.canGoForward === right.canGoForward &&
     left.isActive === right.isActive &&
-    left.isPinned === right.isPinned
+    left.isPinned === right.isPinned &&
+    left.rendererStatus === right.rendererStatus &&
+    left.rendererErrorCode === right.rendererErrorCode &&
+    left.rendererDiagnostic === right.rendererDiagnostic
   );
 }
 
@@ -357,5 +366,8 @@ function fromFrostTab(tab: FrostTabState): Tab {
     canGoForward: tab.canGoForward,
     isActive: tab.isActive,
     isPinned: tab.isPinned,
+    rendererStatus: tab.rendererStatus,
+    rendererErrorCode: tab.rendererErrorCode,
+    rendererDiagnostic: tab.rendererDiagnostic,
   };
 }

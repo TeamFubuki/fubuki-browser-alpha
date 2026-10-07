@@ -16,6 +16,7 @@ import {
   type BrowserEvent,
   type BrowserEventResult,
 } from './browserEventReducer';
+import { getOverlaySize } from './overlayLayout';
 export { reorderTab } from './tabUtils';
 
 const initialState: BrowserState & { status: string } = {
@@ -58,14 +59,26 @@ export const [permissionPrompts, setPermissionPrompts] = createSignal<
   PermissionPrompt[]
 >([]);
 
-const permissionOverlay = { width: 392, height: 248 };
+let lastOverlaySpec: string | undefined;
 
 function setPermissionOverlay(active: boolean): void {
+  const rendererStatus = activeTab()?.rendererStatus;
+  const showRendererNotice =
+    rendererStatus === 'unresponsive' ||
+    rendererStatus === 'crashed' ||
+    rendererStatus === 'recovering';
+  const showPermissionPrompt = active || permissionPrompts().length > 0;
+  const overlayActive = showPermissionPrompt || showRendererNotice;
+  const overlay = getOverlaySize(showPermissionPrompt, showRendererNotice);
+  const spec = `${overlayActive}:${overlay.width}:${overlay.height}`;
+  if (spec === lastOverlaySpec) return;
+  lastOverlaySpec = spec;
   void invokeBridge('ui.setOverlayActive', {
-    active,
-    ...(active ? permissionOverlay : {}),
+    active: overlayActive,
+    ...overlay,
   }).catch((error) => {
-    console.error('[Fubuki] Failed to update permission overlay:', error);
+    lastOverlaySpec = undefined;
+    console.error('[Fubuki] Failed to update overlay:', error);
   });
 }
 
@@ -262,6 +275,7 @@ export async function refreshFullState(status = 'Ready') {
         setStateSliceIfChanged('isPrivate', state.isPrivate);
         setStateSliceIfChanged('bridgeVersion', state.bridgeVersion);
         setStateSliceIfChanged('tabs', state.tabs);
+        setPermissionOverlay(permissionPrompts().length > 0);
         setStateSliceIfChanged('windows', state.windows);
         setStateSliceIfChanged('settings', state.settings);
         setStateSliceIfChanged('downloads', state.downloads);
@@ -490,6 +504,7 @@ export function bindNativeEvents() {
 function applyBrowserEvent(event: BrowserEvent): void {
   const result = reduceBrowserEvent(browserState, event);
   applyBrowserEventResult(result);
+  setPermissionOverlay(permissionPrompts().length > 0);
   if (result.refreshSnapshot) {
     void refreshFullState(event.type);
   }
