@@ -11,7 +11,16 @@ export type Tab = {
   canGoForward: boolean;
   isActive: boolean;
   isPinned: boolean;
+  rendererStatus: RendererStatus;
+  rendererErrorCode: number;
+  rendererDiagnostic: string;
 };
+
+export type RendererStatus =
+  | 'healthy'
+  | 'unresponsive'
+  | 'crashed'
+  | 'recovering';
 
 export type FrostTabState = {
   id: string;
@@ -26,6 +35,9 @@ export type FrostTabState = {
   canGoForward: boolean;
   isActive: boolean;
   isPinned: boolean;
+  rendererStatus: RendererStatus;
+  rendererErrorCode: number;
+  rendererDiagnostic: string;
 };
 
 export type FrostWindowState = {
@@ -244,6 +256,7 @@ export type BridgeMethodMap = {
   'tabs.activate': { params: { tabId: string }; result: boolean };
   'tabs.close': { params: { tabId: string }; result: boolean };
   'tabs.reload': { params: { tabId: string }; result: boolean };
+  'tabs.waitForRenderer': { params: { tabId: string }; result: boolean };
   'tabs.stop': { params: { tabId: string }; result: boolean };
   'tabs.goBack': { params: { tabId: string }; result: boolean };
   'tabs.goForward': { params: { tabId: string }; result: boolean };
@@ -498,6 +511,9 @@ export function fromFrostTab(tab: FrostTabState): Tab {
     canGoForward: tab.canGoForward,
     isActive: tab.isActive,
     isPinned: tab.isPinned,
+    rendererStatus: tab.rendererStatus,
+    rendererErrorCode: tab.rendererErrorCode,
+    rendererDiagnostic: tab.rendererDiagnostic,
   };
 }
 
@@ -587,6 +603,9 @@ function developmentState(): BrowserState {
         canGoForward: false,
         isActive: true,
         isPinned: false,
+        rendererStatus: 'healthy',
+        rendererErrorCode: 0,
+        rendererDiagnostic: '',
       },
       {
         id: 'dev-tab-2',
@@ -601,6 +620,9 @@ function developmentState(): BrowserState {
         canGoForward: false,
         isActive: false,
         isPinned: true,
+        rendererStatus: 'healthy',
+        rendererErrorCode: 0,
+        rendererDiagnostic: '',
       },
     ],
     windows: [
@@ -688,6 +710,8 @@ export const tabs = {
   activate: (tabId: string) => invokeBridge('tabs.activate', { tabId }),
   close: (tabId: string) => invokeBridge('tabs.close', { tabId }),
   reload: (tabId: string) => invokeBridge('tabs.reload', { tabId }),
+  waitForRenderer: (tabId: string) =>
+    invokeBridge('tabs.waitForRenderer', { tabId }),
   stop: (tabId: string) => invokeBridge('tabs.stop', { tabId }),
   goBack: (tabId: string) => invokeBridge('tabs.goBack', { tabId }),
   goForward: (tabId: string) => invokeBridge('tabs.goForward', { tabId }),

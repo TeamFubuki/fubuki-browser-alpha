@@ -21,6 +21,9 @@ const tab = (id: string, isPinned = false): Tab => ({
   canGoForward: false,
   isActive: false,
   isPinned,
+  rendererStatus: 'healthy',
+  rendererErrorCode: 0,
+  rendererDiagnostic: '',
 });
 
 describe('vertical tab keyboard navigation', () => {
