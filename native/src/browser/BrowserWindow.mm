@@ -12,9 +12,11 @@
 #include "browser/BrowserAppController.h"
 #include "cef/FubukiClient.h"
 #include "cef/FubukiSchemeHandler.h"
+#include "include/base/cef_callback.h"
 #include "include/cef_cookie.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
+#include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 #include "utils/JsonUtils.h"
 #include "utils/UrlUtils.h"
@@ -216,6 +218,7 @@ BrowserWindow* GetBrowserWindowForNativeWindow(NSWindow* window);
 - (void)windowWillClose:(NSNotification*)notification {
   NSWindow* window = (NSWindow*)[notification object];
   if (auto* browserWindow = fubuki::GetBrowserWindowForNativeWindow(window)) {
+    browserWindow->OnWindowWillClose();
     browserWindow->App().NotifyWindowClosed(browserWindow);
   }
 }
@@ -237,6 +240,7 @@ namespace {
 // are used by tab creation during the window implementation above them.
 CefRefPtr<CefValue> JsonStringValue(const std::string& s);
 CefRefPtr<CefValue> JsonBoolValue(bool b);
+CefRefPtr<CefValue> JsonIntValue(int n);
 std::string HostEventJson(
     const std::string& event,
     const std::map<std::string, CefRefPtr<CefValue>>& fields);
@@ -398,6 +402,9 @@ BrowserWindow::BrowserWindow(BrowserAppController& app, TabManager& tabManager,
 }
 
 BrowserWindow::~BrowserWindow() {
+  isClosing_ = true;
+  ++uiRecoveryGeneration_;
+  unresponsiveCallbacks_.clear();
   for (const auto& [type, token] : eventSubscriptions_) {
     eventBus_.Unsubscribe(type, token);
   }
@@ -452,6 +459,12 @@ bool BrowserWindow::CloseWindow() {
   }
   [window_ performClose:nil];
   return true;
+}
+
+void BrowserWindow::OnWindowWillClose() {
+  isClosing_ = true;
+  ++uiRecoveryGeneration_;
+  unresponsiveCallbacks_.clear();
 }
 
 bool BrowserWindow::CreateTab(const std::string& input, bool active) {
@@ -525,6 +538,8 @@ bool BrowserWindow::ActivateTab(const std::string& tabId) {
 }
 
 bool BrowserWindow::CloseTab(const std::string& tabId) {
+  unresponsiveCallbacks_.erase(tabId);
+  pendingTabRecoveryUrls_.erase(tabId);
   Tab* tab = tabManager_.GetTab(tabId);
   if (tab && tab->browser) {
     NSView* view = reinterpret_cast<NSView*>(tab->browser->GetHost()->GetWindowHandle());
@@ -644,12 +659,47 @@ bool BrowserWindow::Navigate(const std::string& tabId, const std::string& input)
   return true;
 }
 
-bool BrowserWindow::Reload(const std::string& tabId) {
-  if (Tab* tab = tabManager_.GetTab(tabId); tab && tab->browser) {
-    tab->browser->Reload();
+bool BrowserWindow::Reload(const std::string& tabId,
+                           const std::string& engineUrl) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !tab->browser || isClosing_) {
+    return false;
+  }
+  if (tab->rendererStatus == "recovering") {
     return true;
   }
-  return false;
+  if (tab->rendererStatus == "crashed" ||
+      tab->rendererStatus == "unresponsive") {
+    const std::string recoveryUrl = engineUrl.empty() ? tab->url : engineUrl;
+    if (tab->rendererStatus == "unresponsive") {
+      const auto callback = unresponsiveCallbacks_.find(tabId);
+      if (callback != unresponsiveCallbacks_.end()) {
+        pendingTabRecoveryUrls_[tabId] = recoveryUrl;
+        tab->url = recoveryUrl;
+        ReportRendererStatus(tabId, "recovering", 0, "");
+        CefRefPtr<CefUnresponsiveProcessCallback> processCallback =
+            std::move(callback->second);
+        unresponsiveCallbacks_.erase(callback);
+        processCallback->Terminate();
+        return true;
+      }
+    }
+    return BeginTabRendererRecovery(tabId, recoveryUrl);
+  }
+  tab->browser->Reload();
+  return true;
+}
+
+bool BrowserWindow::WaitForRenderer(const std::string& tabId) {
+  auto callback = unresponsiveCallbacks_.find(tabId);
+  if (callback == unresponsiveCallbacks_.end() || isClosing_) {
+    return false;
+  }
+  CefRefPtr<CefUnresponsiveProcessCallback> processCallback =
+      std::move(callback->second);
+  unresponsiveCallbacks_.erase(callback);
+  processCallback->Wait();
+  return true;
 }
 
 bool BrowserWindow::Stop(const std::string& tabId) {
@@ -1360,9 +1410,14 @@ bool BrowserWindow::ExecuteHostCommand(const std::string& commandJson) {
       error = "unknown tab";
     }
   } else if (command == "page.reload") {
-    ok = Reload(JsonString(payload, "tabId"));
+    ok = Reload(JsonString(payload, "tabId"), JsonString(payload, "url"));
     if (!ok) {
       error = "unknown tab";
+    }
+  } else if (command == "page.waitForRenderer") {
+    ok = WaitForRenderer(JsonString(payload, "tabId"));
+    if (!ok) {
+      error = "renderer is no longer unresponsive";
     }
   } else if (command == "page.stop") {
     ok = Stop(JsonString(payload, "tabId"));
@@ -1446,7 +1501,15 @@ std::string BrowserWindow::DownloadPathFor(const std::string& suggestedName) con
 }
 
 void BrowserWindow::SetUiBrowser(CefRefPtr<CefBrowser> browser) {
+  if (isClosing_ || !browser) {
+    if (browser) {
+      browser->GetHost()->CloseBrowser(true);
+    }
+    return;
+  }
   uiBrowser_ = browser;
+  uiBrowserCreationPending_ = false;
+  uiRecoveryCloseRequested_ = false;
   NSView* view = reinterpret_cast<NSView*>(browser->GetHost()->GetWindowHandle());
   MakeViewTreeTransparent(uiHostView_);
   MakeViewTreeTransparent(view);
@@ -1457,16 +1520,226 @@ void BrowserWindow::SetUiBrowser(CefRefPtr<CefBrowser> browser) {
 }
 
 void BrowserWindow::OnTabBrowserCreated(const std::string& tabId, CefRefPtr<CefBrowser> browser) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || isClosing_) {
+    browser->GetHost()->CloseBrowser(true);
+    return;
+  }
   tabManager_.SetBrowser(tabId, browser);
-  if (Tab* tab = tabManager_.GetTab(tabId)) {
-    try {
-      tab->zoomLevel = std::stod(Store().GetSetting("defaultZoomLevel"));
-    } catch (...) {
-      tab->zoomLevel = 0.0;
-    }
-    browser->GetHost()->SetZoomLevel(tab->zoomLevel);
+  const bool recovering = tab->rendererStatus == "recovering";
+  try {
+    tab->zoomLevel = std::stod(Store().GetSetting("defaultZoomLevel"));
+  } catch (...) {
+    tab->zoomLevel = 0.0;
+  }
+  browser->GetHost()->SetZoomLevel(tab->zoomLevel);
+  if (recovering) {
+    ReportRendererStatus(tabId, "recovering", 0, "");
   }
   SetActiveContentView();
+}
+
+void BrowserWindow::OnTabBrowserClosed(const std::string& tabId,
+                                       CefRefPtr<CefBrowser> browser) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (tab && tab->browser && !tab->browser->IsSame(browser)) {
+    return;
+  }
+  if (tab && tab->browser) {
+    NSView* view =
+        reinterpret_cast<NSView*>(browser->GetHost()->GetWindowHandle());
+    [view removeFromSuperview];
+    tab->browser = nullptr;
+  }
+  unresponsiveCallbacks_.erase(tabId);
+  const auto recovery = pendingTabRecoveryUrls_.find(tabId);
+  if (recovery == pendingTabRecoveryUrls_.end()) {
+    return;
+  }
+  const std::string url = std::move(recovery->second);
+  pendingTabRecoveryUrls_.erase(recovery);
+  if (!tab || isClosing_) {
+    return;
+  }
+  tab->url = url;
+  tab->rendererStatus = "recovering";
+  tab->rendererErrorCode = 0;
+  tab->rendererDiagnostic.clear();
+  CreateTabBrowser(*tab);
+}
+
+void BrowserWindow::OnTabRendererUnresponsive(
+    const std::string& tabId, CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefUnresponsiveProcessCallback> callback) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !tab->browser || !tab->browser->IsSame(browser) || !callback ||
+      isClosing_) {
+    return;
+  }
+  unresponsiveCallbacks_[tabId] = callback;
+  ReportRendererStatus(tabId, "unresponsive", 0,
+                       "Renderer is not responding.");
+}
+
+void BrowserWindow::OnTabRendererResponsive(const std::string& tabId,
+                                            CefRefPtr<CefBrowser> browser) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !tab->browser || !tab->browser->IsSame(browser) || isClosing_ ||
+      pendingTabRecoveryUrls_.contains(tabId)) {
+    return;
+  }
+  unresponsiveCallbacks_.erase(tabId);
+  ReportRendererStatus(tabId, "healthy", 0, "");
+  OnTabLoadingState(tabId, browser->IsLoading(), browser->CanGoBack(),
+                     browser->CanGoForward());
+}
+
+void BrowserWindow::OnTabRendererTerminated(
+    const std::string& tabId, CefRefPtr<CefBrowser> browser,
+    CefRequestHandler::TerminationStatus status, int errorCode,
+    const std::string& diagnostic) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !tab->browser || !tab->browser->IsSame(browser) || isClosing_) {
+    return;
+  }
+  unresponsiveCallbacks_.erase(tabId);
+  const std::string details =
+      "Termination status " +
+      std::to_string(static_cast<int>(status)) + ": " +
+      (diagnostic.empty() ? "Renderer process terminated." : diagnostic);
+  ReportRendererStatus(tabId, "crashed", errorCode, details);
+  if (pendingTabRecoveryUrls_.contains(tabId)) {
+    browser->GetHost()->CloseBrowser(true);
+  }
+}
+
+void BrowserWindow::OnTabRendererLoaded(const std::string& tabId,
+                                        CefRefPtr<CefBrowser> browser) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || !tab->browser || !tab->browser->IsSame(browser) || isClosing_) {
+    return;
+  }
+  unresponsiveCallbacks_.erase(tabId);
+  ReportRendererStatus(tabId, "healthy", 0, "");
+}
+
+void BrowserWindow::OnUiRendererTerminated(CefRefPtr<CefBrowser> browser) {
+  if (!browser || isClosing_ || !uiBrowser_ ||
+      !uiBrowser_->IsSame(browser) || uiRecoveryCloseRequested_) {
+    return;
+  }
+  uiRecoveryCloseRequested_ = true;
+  browser->GetHost()->CloseBrowser(true);
+}
+
+void BrowserWindow::OnUiBrowserClosed(CefRefPtr<CefBrowser> browser) {
+  if (uiBrowser_ && !uiBrowser_->IsSame(browser)) {
+    return;
+  }
+  if (uiBrowser_) {
+    NSView* view =
+        reinterpret_cast<NSView*>(browser->GetHost()->GetWindowHandle());
+    [view removeFromSuperview];
+    uiBrowser_ = nullptr;
+  }
+  uiBrowserCreationPending_ = false;
+  if (uiRecoveryCloseRequested_ && !isClosing_) {
+    ScheduleUiBrowserRecovery();
+  }
+}
+
+void BrowserWindow::OnUiBrowserLoaded(CefRefPtr<CefBrowser> browser) {
+  if (uiBrowser_ && uiBrowser_->IsSame(browser)) {
+    uiRecoveryAttempts_ = 0;
+    uiRecoveryCloseRequested_ = false;
+  }
+}
+
+bool BrowserWindow::BeginTabRendererRecovery(const std::string& tabId,
+                                            const std::string& engineUrl) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab || isClosing_) {
+    return false;
+  }
+  if (pendingTabRecoveryUrls_.contains(tabId)) {
+    return true;
+  }
+  pendingTabRecoveryUrls_[tabId] = engineUrl;
+  tab->url = engineUrl;
+  ReportRendererStatus(tabId, "recovering", 0, "");
+  if (!tab->browser) {
+    pendingTabRecoveryUrls_.erase(tabId);
+    CreateTabBrowser(*tab);
+    return true;
+  }
+  NSView* view =
+      reinterpret_cast<NSView*>(tab->browser->GetHost()->GetWindowHandle());
+  [view removeFromSuperview];
+  tab->browser->GetHost()->CloseBrowser(true);
+  return true;
+}
+
+void BrowserWindow::ReportRendererStatus(const std::string& tabId,
+                                         const std::string& status,
+                                         int errorCode,
+                                         const std::string& diagnostic) {
+  Tab* tab = tabManager_.GetTab(tabId);
+  if (!tab) {
+    return;
+  }
+  Tab patch = *tab;
+  patch.rendererStatus = status;
+  patch.rendererErrorCode = errorCode;
+  patch.rendererDiagnostic = diagnostic;
+  if (status == "unresponsive" || status == "crashed") {
+    patch.isLoading = false;
+  }
+  tabManager_.UpdateTab(tabId, patch);
+  PushHostEventJson(HostEventJson(
+      "page.rendererStatusChanged",
+      {{"tabId", JsonStringValue(tabId)},
+       {"status", JsonStringValue(status)},
+       {"errorCode", JsonIntValue(errorCode)},
+       {"diagnostic", JsonStringValue(diagnostic)}}));
+}
+
+void BrowserWindow::ScheduleUiBrowserRecovery() {
+  if (isClosing_ || uiRecoveryScheduled_ || uiBrowserCreationPending_) {
+    return;
+  }
+  uiRecoveryScheduled_ = true;
+  const uint64_t generation = ++uiRecoveryGeneration_;
+  const unsigned int shift = std::min(uiRecoveryAttempts_, 7U);
+  const uint64_t delay = std::min<uint64_t>(250ULL << shift, 30000ULL);
+  ++uiRecoveryAttempts_;
+  const std::string windowId = windowId_;
+  CefPostDelayedTask(
+      TID_UI,
+      base::BindOnce(
+          [](std::string id, uint64_t expectedGeneration) {
+            BrowserAppController* app = GetBrowserAppController();
+            if (!app) {
+              return;
+            }
+            for (auto* window : app->Windows()) {
+              if (window && window->WindowId() == id) {
+                window->RetryUiBrowserRecovery(expectedGeneration);
+                return;
+              }
+            }
+          },
+          windowId, generation),
+      static_cast<int64_t>(delay));
+}
+
+void BrowserWindow::RetryUiBrowserRecovery(uint64_t generation) {
+  if (isClosing_ || generation != uiRecoveryGeneration_) {
+    return;
+  }
+  uiRecoveryScheduled_ = false;
+  if (!CreateUiBrowser()) {
+    ScheduleUiBrowserRecovery();
+  }
 }
 
 void BrowserWindow::OnTabTitle(const std::string& tabId, const std::string& title) {
@@ -1722,11 +1995,20 @@ void BrowserWindow::CreateNativeWindow() {
   UpdateContentFrame();
 }
 
-void BrowserWindow::CreateUiBrowser() {
+bool BrowserWindow::CreateUiBrowser() {
+  if (isClosing_ || !uiHostView_ || uiBrowser_ || uiBrowserCreationPending_) {
+    return false;
+  }
   CefBrowserSettings settings;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
-  CefBrowserHost::CreateBrowser(ChildWindowInfo(uiHostView_), new FubukiClient(this, "", true),
-                                "fubuki://app/index.html?v=5", settings, nullptr, nullptr);
+  uiBrowserCreationPending_ = true;
+  const bool created = CefBrowserHost::CreateBrowser(
+      ChildWindowInfo(uiHostView_), new FubukiClient(this, "", true),
+      "fubuki://app/index.html?v=5", settings, nullptr, nullptr);
+  if (!created) {
+    uiBrowserCreationPending_ = false;
+  }
+  return created;
 }
 
 void BrowserWindow::CreateTabBrowser(const Tab& tab) {

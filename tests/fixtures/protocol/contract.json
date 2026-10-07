@@ -5,7 +5,7 @@
       "name": "tabs-create",
       "request": {"version": 0, "id": "req-create", "method": "tabs.create", "params": {"url": "https://example.com", "active": true, "windowId": "window-1"}},
       "response": {"version": 0, "id": "req-create", "ok": true, "kind": "bool", "result": true},
-      "event": {"version": 0, "event": "tab.created", "payload": {"id": "tab-1", "windowId": "window-1", "title": "Example", "url": "https://example.com", "faviconUrl": "", "errorText": "", "zoomLevel": 0, "isLoading": false, "canGoBack": false, "canGoForward": false, "isActive": true, "isPinned": false}},
+      "event": {"version": 0, "event": "tab.created", "payload": {"id": "tab-1", "windowId": "window-1", "title": "Example", "url": "https://example.com", "faviconUrl": "", "errorText": "", "zoomLevel": 0, "isLoading": false, "canGoBack": false, "canGoForward": false, "isActive": true, "isPinned": false, "rendererStatus": "healthy", "rendererErrorCode": 0, "rendererDiagnostic": ""}},
       "hostCommand": {"version": 0, "id": "cmd-create", "command": "page.create", "payload": {"tabId": "tab-1", "windowId": "window-1", "url": "https://example.com", "active": true}},
       "hostResult": {"version": 0, "commandId": "cmd-create", "ok": true}
     },

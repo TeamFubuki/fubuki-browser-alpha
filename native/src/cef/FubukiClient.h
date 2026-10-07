@@ -1,7 +1,7 @@
 #pragma once
 
-#include <unordered_map>
 #include <string>
+#include <unordered_map>
 
 #include "include/cef_client.h"
 #include "include/cef_drag_handler.h"
@@ -65,6 +65,14 @@ public:
                      bool *no_javascript_access) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+  bool OnRenderProcessUnresponsive(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefUnresponsiveProcessCallback> callback) override;
+  void OnRenderProcessResponsive(CefRefPtr<CefBrowser> browser) override;
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                 TerminationStatus status,
+                                 int error_code,
+                                 const CefString &error_string) override;
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading,
                             bool canGoBack, bool canGoForward) override;
   void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
@@ -122,8 +130,9 @@ private:
 
   void CancelPendingPermissions();
   void SchedulePermissionTimeout(const std::string &promptId);
+  BrowserWindow *Window() const;
 
-  BrowserWindow *window_;
+  std::string windowId_;
   std::string tabId_;
   bool isUi_;
   CefRefPtr<CefMessageRouterBrowserSide> messageRouter_;

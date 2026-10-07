@@ -1,4 +1,4 @@
-use frost_protocol::TabState;
+use frost_protocol::{RendererStatus, TabState};
 use uuid::Uuid;
 
 pub struct TabService {
@@ -59,6 +59,9 @@ impl TabService {
             can_go_forward: false,
             is_active: active || self.tabs.is_empty(),
             is_pinned: false,
+            renderer_status: RendererStatus::Healthy,
+            renderer_error_code: 0,
+            renderer_diagnostic: String::new(),
         };
         self.tabs.push(tab.clone());
         tab
@@ -333,6 +336,22 @@ impl TabService {
         };
         tab.error_text = error_text.to_owned();
         tab.is_loading = false;
+        true
+    }
+
+    pub fn set_renderer_status(
+        &mut self,
+        tab_id: &str,
+        status: RendererStatus,
+        error_code: i32,
+        diagnostic: &str,
+    ) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return false;
+        };
+        tab.renderer_status = status;
+        tab.renderer_error_code = error_code;
+        tab.renderer_diagnostic = diagnostic.to_owned();
         true
     }
 }

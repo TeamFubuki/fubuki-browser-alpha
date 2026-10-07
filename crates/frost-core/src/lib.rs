@@ -20,8 +20,8 @@ use frost_engine_api::{
 use frost_protocol::{
     BrowserCommand, Event, EventEnvelope, HostCommand, HostCommandEnvelope,
     HostCommandResultEnvelope, HostEvent, HostEventEnvelope, PermissionDecision, PermissionType,
-    ProtocolRequest, ProtocolResponse, Request, Response, SettingChanged, TabActivated, TabClosed,
-    TabMoved, TabPatch,
+    ProtocolRequest, ProtocolResponse, RendererStatus, Request, Response, SettingChanged,
+    TabActivated, TabClosed, TabMoved, TabPatch,
 };
 use frost_store::{
     BookmarkRepository, ClearRepository, DownloadRepository, HistoryRepository, LogRepository,
@@ -129,8 +129,15 @@ impl EngineAdapter for HostCommandAdapter {
         })
     }
 
-    fn reload(&mut self, tab_id: &str) -> EngineResult<HostCommandId> {
+    fn reload(&mut self, tab_id: &str, url: &str) -> EngineResult<HostCommandId> {
         self.send(HostCommand::PageReload {
+            tab_id: tab_id.to_owned(),
+            url: url.to_owned(),
+        })
+    }
+
+    fn wait_for_renderer(&mut self, tab_id: &str) -> EngineResult<HostCommandId> {
+        self.send(HostCommand::PageWaitForRenderer {
             tab_id: tab_id.to_owned(),
         })
     }
@@ -844,7 +851,8 @@ where
                 }
                 Ok(Response::Bool(changed))
             }
-            Request::TabsReload { tab_id } => self.host_tab_action(&tab_id, HostTabAction::Reload),
+            Request::TabsReload { tab_id } => self.reload_tab(&tab_id),
+            Request::TabsWaitForRenderer { tab_id } => self.wait_for_renderer(&tab_id),
             Request::TabsStop { tab_id } => {
                 let ok = self.tabs.stop_tab(&tab_id);
                 if ok {
@@ -1391,6 +1399,9 @@ where
                         can_go_forward: false,
                         is_active: active,
                         is_pinned: false,
+                        renderer_status: RendererStatus::Healthy,
+                        renderer_error_code: 0,
+                        renderer_diagnostic: String::new(),
                     });
                 }
                 if active {
@@ -1478,6 +1489,48 @@ where
                         tab_id,
                         error_text: Some(error_text),
                         is_loading: Some(false),
+                        ..Default::default()
+                    }));
+                }
+                Ok(())
+            }
+            HostEvent::PageRendererStatusChanged {
+                tab_id,
+                status,
+                error_code,
+                diagnostic,
+            } => {
+                let Some(tab) = self.tabs.get_tab(&tab_id) else {
+                    return Ok(());
+                };
+                // A termination callback caused by an explicit recovery can
+                // arrive after tabs.reload has moved the logical tab to
+                // Recovering. Preserve that intent while keeping diagnostics.
+                let effective_status = if status == RendererStatus::Crashed
+                    && tab.renderer_status == RendererStatus::Recovering
+                {
+                    RendererStatus::Recovering
+                } else {
+                    status
+                };
+                if self
+                    .tabs
+                    .set_renderer_status(&tab_id, effective_status, error_code, &diagnostic)
+                {
+                    let is_loading = matches!(
+                        effective_status,
+                        RendererStatus::Unresponsive | RendererStatus::Crashed
+                    )
+                    .then_some(false);
+                    if is_loading.is_some() {
+                        let _ = self.tabs.set_loading(&tab_id, false);
+                    }
+                    self.emit(Event::TabUpdated(TabPatch {
+                        tab_id,
+                        renderer_status: Some(effective_status),
+                        renderer_error_code: Some(error_code),
+                        renderer_diagnostic: Some(diagnostic),
+                        is_loading,
                         ..Default::default()
                     }));
                 }
@@ -1845,13 +1898,62 @@ where
         let _rollback_result = context.apply(operation);
     }
 
+    fn reload_tab(&mut self, tab_id: &str) -> CoreResult<Response> {
+        let Some(tab) = self.tabs.get_tab(tab_id) else {
+            return Ok(Response::Bool(false));
+        };
+        let previous_status = tab.renderer_status;
+        let previous_error_code = tab.renderer_error_code;
+        let previous_diagnostic = tab.renderer_diagnostic;
+        let should_recover = previous_status != RendererStatus::Healthy;
+        if should_recover {
+            self.tabs
+                .set_renderer_status(tab_id, RendererStatus::Recovering, 0, "");
+        }
+
+        if let Err(error) = self.adapter.reload(tab_id, &tab.url) {
+            if should_recover {
+                self.tabs.set_renderer_status(
+                    tab_id,
+                    previous_status,
+                    previous_error_code,
+                    &previous_diagnostic,
+                );
+            }
+            return Err(CoreError::Message(error.to_string()));
+        }
+        if should_recover {
+            self.emit(Event::TabUpdated(TabPatch {
+                tab_id: tab_id.to_owned(),
+                renderer_status: Some(RendererStatus::Recovering),
+                renderer_error_code: Some(0),
+                renderer_diagnostic: Some(String::new()),
+                ..Default::default()
+            }));
+        }
+        Ok(Response::Bool(true))
+    }
+
+    fn wait_for_renderer(&mut self, tab_id: &str) -> CoreResult<Response> {
+        let is_unresponsive = self
+            .tabs
+            .get_tab(tab_id)
+            .is_some_and(|tab| tab.renderer_status == RendererStatus::Unresponsive);
+        if !is_unresponsive {
+            return Ok(Response::Bool(false));
+        }
+        self.adapter
+            .wait_for_renderer(tab_id)
+            .map_err(|error| CoreError::Message(error.to_string()))?;
+        Ok(Response::Bool(true))
+    }
+
     fn host_tab_action(&mut self, tab_id: &str, action: HostTabAction) -> CoreResult<Response> {
         if !self.tabs.contains(tab_id) {
             return Ok(Response::Bool(false));
         }
 
         let result = match action {
-            HostTabAction::Reload => self.adapter.reload(tab_id),
             HostTabAction::GoBack => self.adapter.go_back(tab_id),
             HostTabAction::GoForward => self.adapter.go_forward(tab_id),
         };
@@ -1993,7 +2095,6 @@ fn default_commands() -> Vec<BrowserCommand> {
 }
 
 enum HostTabAction {
-    Reload,
     GoBack,
     GoForward,
 }
@@ -2364,6 +2465,120 @@ mod tests {
             Some(Event::TabUpdated(TabPatch { tab_id: updated, title: Some(title), .. }))
                 if updated == &tab_id && title == "Example Domain"
         ));
+    }
+
+    #[test]
+    fn renderer_crash_keeps_tab_state_and_reload_uses_engine_url() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://engine.example/path".into()),
+            active: true,
+            window_id: None,
+        }));
+        let create_command = host_rx.try_recv().unwrap();
+        let HostCommand::PageCreate { tab_id, .. } = create_command.command else {
+            panic!("expected page.create");
+        };
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PageTitleChanged {
+            tab_id: tab_id.clone(),
+            title: "Engine title".into(),
+        }))
+        .unwrap();
+        core.process_host_event(HostEventEnvelope::new(
+            HostEvent::PageRendererStatusChanged {
+                tab_id: tab_id.clone(),
+                status: RendererStatus::Crashed,
+                error_code: 11,
+                diagnostic: "SIGSEGV".into(),
+            },
+        ))
+        .unwrap();
+
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        let crashed = &state.tabs[0];
+        assert_eq!(crashed.id, tab_id);
+        assert_eq!(crashed.url, "https://engine.example/path");
+        assert_eq!(crashed.title, "Engine title");
+        assert_eq!(crashed.renderer_status, RendererStatus::Crashed);
+        assert_eq!(crashed.renderer_error_code, 11);
+        assert_eq!(crashed.renderer_diagnostic, "SIGSEGV");
+
+        let response = core.process(ProtocolRequest::new(Request::TabsReload {
+            tab_id: tab_id.clone(),
+        }));
+        assert_eq!(response.response, Response::Bool(true));
+        assert!(matches!(
+            host_rx.try_recv().unwrap().command,
+            HostCommand::PageReload { tab_id: command_tab, url }
+                if command_tab == tab_id && url == "https://engine.example/path"
+        ));
+        let snapshot = core.process(ProtocolRequest::new(Request::AppSnapshot));
+        let Response::AppSnapshot(state) = snapshot.response else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(state.tabs[0].renderer_status, RendererStatus::Recovering);
+        assert_eq!(state.tabs[0].id, tab_id);
+        assert_eq!(state.tabs[0].url, "https://engine.example/path");
+        assert_eq!(state.tabs[0].title, "Engine title");
+    }
+
+    #[test]
+    fn wait_for_renderer_only_dispatches_for_an_unresponsive_tab() {
+        let (host_tx, host_rx) = crossbeam_channel::unbounded();
+        let mut core = BrowserCore::with_adapter_and_settings(
+            HostCommandAdapter::new(host_tx),
+            InMemoryStore::default(),
+        );
+        core.process(ProtocolRequest::new(Request::TabsCreate {
+            url: Some("https://hang.example/".into()),
+            active: true,
+            window_id: None,
+        }));
+        let create_command = host_rx.try_recv().unwrap();
+        let HostCommand::PageCreate { tab_id, .. } = create_command.command else {
+            panic!("expected page.create");
+        };
+        core.process_host_event(HostEventEnvelope::new(
+            HostEvent::PageRendererStatusChanged {
+                tab_id: tab_id.clone(),
+                status: RendererStatus::Unresponsive,
+                error_code: 0,
+                diagnostic: "Renderer is not responding.".into(),
+            },
+        ))
+        .unwrap();
+
+        let response = core.process(ProtocolRequest::new(Request::TabsWaitForRenderer {
+            tab_id: tab_id.clone(),
+        }));
+        assert_eq!(response.response, Response::Bool(true));
+        assert!(matches!(
+            host_rx.try_recv().unwrap().command,
+            HostCommand::PageWaitForRenderer { tab_id: command_tab }
+                if command_tab == tab_id
+        ));
+
+        core.process_host_event(HostEventEnvelope::new(
+            HostEvent::PageRendererStatusChanged {
+                tab_id: tab_id.clone(),
+                status: RendererStatus::Crashed,
+                error_code: 5,
+                diagnostic: "terminated".into(),
+            },
+        ))
+        .unwrap();
+        let response = core.process(ProtocolRequest::new(Request::TabsWaitForRenderer {
+            tab_id,
+        }));
+        assert_eq!(response.response, Response::Bool(false));
+        assert!(host_rx.try_recv().is_err());
     }
 
     #[test]
@@ -3050,7 +3265,10 @@ mod tests {
             fn navigate(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<String> {
                 Ok(String::new())
             }
-            fn reload(&mut self, _: &str) -> frost_engine_api::EngineResult<String> {
+            fn reload(&mut self, _: &str, _: &str) -> frost_engine_api::EngineResult<String> {
+                Ok(String::new())
+            }
+            fn wait_for_renderer(&mut self, _: &str) -> frost_engine_api::EngineResult<String> {
                 Ok(String::new())
             }
             fn stop(&mut self, _: &str) -> frost_engine_api::EngineResult<String> {
