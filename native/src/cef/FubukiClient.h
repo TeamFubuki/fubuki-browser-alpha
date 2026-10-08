@@ -1,8 +1,9 @@
 #pragma once
 
-#include <unordered_map>
 #include <string>
+#include <unordered_map>
 
+#include "cef/PermissionPolicy.h"
 #include "include/cef_client.h"
 #include "include/cef_drag_handler.h"
 #include "include/cef_permission_handler.h"
@@ -21,8 +22,8 @@ class FubukiClient : public CefClient,
                      public CefRequestHandler,
                      public CefDragHandler,
                      public CefPermissionHandler {
-public:
-  FubukiClient(BrowserWindow *window, std::string tabId, bool isUi);
+ public:
+  FubukiClient(BrowserWindow* window, std::string tabId, bool isUi);
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override {
     return this;
@@ -49,85 +50,68 @@ public:
     return this;
   }
 
-  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
-                                CefRefPtr<CefFrame> frame,
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                 CefProcessId source_process,
                                 CefRefPtr<CefProcessMessage> message) override;
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
-  bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-                     int popup_id, const CefString &target_url,
-                     const CefString &target_frame_name,
-                     WindowOpenDisposition target_disposition,
-                     bool user_gesture, const CefPopupFeatures &popupFeatures,
-                     CefWindowInfo &windowInfo, CefRefPtr<CefClient> &client,
-                     CefBrowserSettings &settings,
-                     CefRefPtr<CefDictionaryValue> &extra_info,
-                     bool *no_javascript_access) override;
+  bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int popup_id,
+                     const CefString& target_url, const CefString& target_frame_name,
+                     WindowOpenDisposition target_disposition, bool user_gesture,
+                     const CefPopupFeatures& popupFeatures, CefWindowInfo& windowInfo,
+                     CefRefPtr<CefClient>& client, CefBrowserSettings& settings,
+                     CefRefPtr<CefDictionaryValue>& extra_info,
+                     bool* no_javascript_access) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
-  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading,
-                            bool canGoBack, bool canGoForward) override;
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool canGoBack,
+                            bool canGoForward) override;
   void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                    TransitionType transition_type) override;
   void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                  int httpStatusCode) override;
-  void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-                   ErrorCode errorCode, const CefString &errorText,
-                   const CefString &failedUrl) override;
-  void OnTitleChange(CefRefPtr<CefBrowser> browser,
-                     const CefString &title) override;
+  void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, ErrorCode errorCode,
+                   const CefString& errorText, const CefString& failedUrl) override;
+  void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) override;
   void OnAddressChange(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-                       const CefString &url) override;
+                       const CefString& url) override;
   void OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
-                          const std::vector<CefString> &icon_urls) override;
-  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
-                        CefRefPtr<CefDownloadItem> download_item,
-                        const CefString &suggested_name,
+                          const std::vector<CefString>& icon_urls) override;
+  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> download_item,
+                        const CefString& suggested_name,
                         CefRefPtr<CefBeforeDownloadCallback> callback) override;
-  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
-                         CefRefPtr<CefDownloadItem> download_item,
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> download_item,
                          CefRefPtr<CefDownloadItemCallback> callback) override;
-  bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent &event,
-                     CefEventHandle os_event,
-                     bool *is_keyboard_shortcut) override;
+  bool OnPreKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event,
+                     CefEventHandle os_event, bool* is_keyboard_shortcut) override;
   bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-                      CefRefPtr<CefRequest> request, bool user_gesture,
-                      bool is_redirect) override;
-  void OnDraggableRegionsChanged(
-      CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-      const std::vector<CefDraggableRegion> &regions) override;
-  bool OnShowPermissionPrompt(
-      CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
-      const CefString &requesting_origin, uint32_t requested_permissions,
-      CefRefPtr<CefPermissionPromptCallback> callback) override;
-  bool OnRequestMediaAccessPermission(
-      CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-      const CefString &requesting_origin, uint32_t requested_permissions,
-      CefRefPtr<CefMediaAccessCallback> callback) override;
-  void OnDismissPermissionPrompt(
-      CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
-      cef_permission_request_result_t result) override;
+                      CefRefPtr<CefRequest> request, bool user_gesture, bool is_redirect) override;
+  void OnDraggableRegionsChanged(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                 const std::vector<CefDraggableRegion>& regions) override;
+  bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+                              const CefString& requesting_origin, uint32_t requested_permissions,
+                              CefRefPtr<CefPermissionPromptCallback> callback) override;
+  bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                      const CefString& requesting_origin,
+                                      uint32_t requested_permissions,
+                                      CefRefPtr<CefMediaAccessCallback> callback) override;
+  void OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser, uint64_t prompt_id,
+                                 cef_permission_request_result_t result) override;
 
   // Completes a permission callback previously reported to FrostEngine.
   // Calls are made on CEF's UI thread and are idempotent by prompt id.
-  bool ResolvePermission(const std::string &promptId,
-                         const std::string &decision);
+  bool ResolvePermission(const std::string& promptId, const std::string& decision,
+                         uint64_t token = 0);
 
-private:
-  struct PendingPermission {
-    CefRefPtr<CefPermissionPromptCallback> promptCallback;
-    CefRefPtr<CefMediaAccessCallback> mediaCallback;
-    uint32_t mediaPermissions = CEF_MEDIA_PERMISSION_NONE;
-  };
-
+ private:
+  BrowserWindow* Window() const;
   void CancelPendingPermissions();
-  void SchedulePermissionTimeout(const std::string &promptId);
+  void SchedulePermissionTimeout(const std::string& promptId, uint64_t token);
 
-  BrowserWindow *window_;
+  std::string windowId_;
   std::string tabId_;
   bool isUi_;
   CefRefPtr<CefMessageRouterBrowserSide> messageRouter_;
-  std::unordered_map<std::string, PendingPermission> pendingPermissions_;
+  PermissionCallbacks pendingPermissions_;
 
   IMPLEMENT_REFCOUNTING(FubukiClient);
 };

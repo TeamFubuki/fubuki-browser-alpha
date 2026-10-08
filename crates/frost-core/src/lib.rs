@@ -392,6 +392,10 @@ where
                             return Err(CoreError::Message(e.to_string()));
                         }
                     };
+                    // The host closes the page asynchronously. Dismiss its permission prompts
+                    // as soon as the close command is accepted so a late UI response cannot
+                    // persist a decision while CEF is still delivering OnBeforeClose.
+                    self.dismiss_permissions_for_tab(&tab_id);
                     let mut command_ids = vec![close_command_id];
                     let mut replacement_tab = None;
                     self.closed_tabs.push(tab_state.clone());
@@ -564,7 +568,10 @@ where
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
                     match self.adapter.close_page(&tab.id) {
-                        Ok(command_id) => command_ids.push(command_id),
+                        Ok(command_id) => {
+                            command_ids.push(command_id);
+                            self.dismiss_permissions_for_tab(&tab.id);
+                        }
                         Err(e) => {
                             self.rollback_operation(PendingOperation::TabsCloseOther {
                                 keep_tab_id: tab_id.clone(),
@@ -625,7 +632,10 @@ where
                 for tab in &closed {
                     self.windows.detach_tab(&tab.id);
                     match self.adapter.close_page(&tab.id) {
-                        Ok(command_id) => command_ids.push(command_id),
+                        Ok(command_id) => {
+                            command_ids.push(command_id);
+                            self.dismiss_permissions_for_tab(&tab.id);
+                        }
                         Err(e) => {
                             self.rollback_operation(PendingOperation::TabsCloseToRight {
                                 anchor_tab_id: tab_id.clone(),
@@ -1530,10 +1540,17 @@ where
             ),
             HostEvent::PermissionDismissed {
                 prompt_id,
-                tab_id: _,
-                window_id: _,
+                tab_id,
+                window_id,
             } => {
-                if self.pending_permissions.remove(&prompt_id).is_some() {
+                if self
+                    .pending_permissions
+                    .get(&prompt_id)
+                    .is_some_and(|pending| {
+                        pending.tab_id == tab_id && pending.window_id == window_id
+                    })
+                {
+                    self.pending_permissions.remove(&prompt_id);
                     self.emit(Event::PermissionDismissed { prompt_id });
                 }
                 Ok(())
@@ -2508,6 +2525,13 @@ mod tests {
         }))
         .unwrap();
 
+        core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionDismissed {
+            prompt_id: "prompt-1".into(),
+            tab_id: "other-tab".into(),
+            window_id: window_id.clone(),
+        }))
+        .unwrap();
+        assert!(core.pending_permissions.contains_key("prompt-1"));
         let response = core.process(ProtocolRequest::new(Request::PermissionsResolve {
             prompt_id: "prompt-1".into(),
             decision: PermissionDecision::Allow,
@@ -2535,10 +2559,128 @@ mod tests {
         };
         assert_eq!(state.permissions[0].origin, "https://example.com");
         assert_eq!(state.permissions[0].value, "allow");
+        let duplicate = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+            prompt_id: "prompt-1".into(),
+            decision: PermissionDecision::Block,
+            window_id: Some(window_id.clone()),
+        }));
+        assert!(matches!(duplicate.response, Response::Error { .. }));
+        assert!(
+            !host_rx
+                .try_iter()
+                .any(|command| matches!(command.command, HostCommand::PermissionResolve { .. }))
+        );
         assert!(core.recent_events().iter().any(|event| matches!(
             event.event,
             Event::PermissionResolved { ref prompt_id } if prompt_id == "prompt-1"
         )));
+    }
+
+    #[test]
+    fn dismissed_and_closed_permission_prompts_cannot_persist_late_answers() {
+        for close in [false, true] {
+            let mut core = BrowserCore::new();
+            core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+                tab_id: "t".into(),
+                window_id: "w".into(),
+                url: "https://example.com".into(),
+                active: true,
+                is_private: false,
+            }))
+            .unwrap();
+            core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+                prompt_id: "p".into(),
+                tab_id: "t".into(),
+                window_id: "w".into(),
+                origin: "https://example.com".into(),
+                permissions: vec![PermissionType::Camera],
+                is_private: false,
+            }))
+            .unwrap();
+            let event = if close {
+                HostEvent::WindowClosed {
+                    window_id: "w".into(),
+                }
+            } else {
+                HostEvent::PermissionDismissed {
+                    prompt_id: "p".into(),
+                    tab_id: "t".into(),
+                    window_id: "w".into(),
+                }
+            };
+            core.process_host_event(HostEventEnvelope::new(event))
+                .unwrap();
+            assert!(core.pending_permissions.is_empty());
+            let result = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+                prompt_id: "p".into(),
+                decision: PermissionDecision::Allow,
+                window_id: Some("w".into()),
+            }));
+            assert!(matches!(result.response, Response::Error { .. }));
+            assert!(core.repository.list_permissions().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn tab_close_requests_dismiss_permissions_before_host_close_callbacks() {
+        for (name, request, closed_tab_id) in [
+            ("single", Request::TabsClose { tab_id: "a".into() }, "a"),
+            ("other", Request::TabsCloseOther { tab_id: "b".into() }, "c"),
+            (
+                "right",
+                Request::TabsCloseToRight { tab_id: "a".into() },
+                "c",
+            ),
+        ] {
+            let mut core = BrowserCore::new();
+            for (tab_id, active) in [("a", true), ("b", false), ("c", false)] {
+                core.process_host_event(HostEventEnvelope::new(HostEvent::PageCreated {
+                    tab_id: tab_id.into(),
+                    window_id: "w".into(),
+                    url: "https://example.com".into(),
+                    active,
+                    is_private: false,
+                }))
+                .unwrap();
+            }
+
+            let expected_prompt_id = format!("prompt-{name}");
+            core.process_host_event(HostEventEnvelope::new(HostEvent::PermissionRequested {
+                prompt_id: expected_prompt_id.clone(),
+                tab_id: closed_tab_id.into(),
+                window_id: "w".into(),
+                origin: "https://example.com".into(),
+                permissions: vec![PermissionType::Camera],
+                is_private: false,
+            }))
+            .unwrap();
+
+            assert_eq!(
+                core.process(ProtocolRequest::new(request)).response,
+                Response::Bool(true),
+                "{name} tab close request should succeed"
+            );
+            assert!(
+                !core.pending_permissions.contains_key(&expected_prompt_id),
+                "{name} tab close should immediately remove its pending permission"
+            );
+            assert!(core.recent_events().iter().any(|event| matches!(
+                event.event,
+                Event::PermissionDismissed { ref prompt_id }
+                    if prompt_id == &expected_prompt_id
+            )));
+
+            let late_answer = core.process(ProtocolRequest::new(Request::PermissionsResolve {
+                prompt_id: expected_prompt_id,
+                decision: PermissionDecision::Allow,
+                window_id: Some("w".into()),
+            }));
+            assert!(
+                matches!(late_answer.response, Response::Error { .. }),
+                "{name} late permission answer should be rejected"
+            );
+            assert!(core.repository.list_permissions().unwrap().is_empty());
+        }
     }
 
     #[test]
@@ -3773,6 +3915,55 @@ mod tests {
         let window = s.windows.iter().find(|w| w.id == w_id).unwrap();
         // The moved tab should be last in the window's tab_ids
         assert_eq!(window.tab_ids.last().unwrap(), &first_tab);
+    }
+
+    #[test]
+    fn tabs_move_keeps_snapshot_and_window_order_consistent() {
+        for from_index in 0..4 {
+            for to_index in 0..4 {
+                let mut core = BrowserCore::new();
+                let (window_id, tab_ids) = create_window_with_tabs(&mut core, 4);
+                let (other_window_id, other_tab_ids) = create_window_with_tabs(&mut core, 2);
+                let active_tab_id = core
+                    .windows
+                    .get_window(&window_id)
+                    .unwrap()
+                    .active_tab_id
+                    .clone();
+                let tab_id = tab_ids[from_index].clone();
+                let response = core.process(ProtocolRequest::new(Request::TabsMove {
+                    tab_id: tab_id.clone(),
+                    to_index,
+                }));
+                assert_eq!(response.response, Response::Bool(true));
+                let mut expected = tab_ids.clone();
+                expected.remove(from_index);
+                expected.insert(to_index, tab_id);
+                let actual: Vec<_> = core
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .filter(|tab| tab.window_id == window_id)
+                    .map(|tab| tab.id)
+                    .collect();
+                assert_eq!(actual, expected, "move {from_index} to {to_index}");
+                let window = core.windows.get_window(&window_id).unwrap();
+                assert_eq!(window.tab_ids, expected);
+                assert_eq!(window.active_tab_id, active_tab_id);
+                let other: Vec<_> = core
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .filter(|tab| tab.window_id == other_window_id)
+                    .map(|tab| tab.id)
+                    .collect();
+                assert_eq!(other, other_tab_ids);
+                assert_eq!(
+                    core.windows.get_window(&other_window_id).unwrap().tab_ids,
+                    other_tab_ids
+                );
+            }
+        }
     }
 
     /// Invalid window_id produces an error.

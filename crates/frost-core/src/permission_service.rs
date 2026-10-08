@@ -187,4 +187,64 @@ mod tests {
         .unwrap();
         assert!(store.list_permissions().unwrap().is_empty());
     }
+    #[test]
+    fn decisions_survive_reopen_and_remain_origin_and_type_scoped() {
+        let path = std::env::temp_dir().join(format!(
+            "fubuki-permissions-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let store = frost_store::SqliteStore::open(&path).unwrap();
+            PermissionService::set(
+                &store,
+                "https://Example.com:443/a",
+                PermissionType::Camera,
+                PermissionDecision::Allow,
+            )
+            .unwrap();
+            PermissionService::set(
+                &store,
+                "https://example.com",
+                PermissionType::Microphone,
+                PermissionDecision::Block,
+            )
+            .unwrap();
+        }
+        {
+            let store = frost_store::SqliteStore::open(&path).unwrap();
+            for (origin, permission, expected) in [
+                (
+                    "https://example.com",
+                    PermissionType::Camera,
+                    PermissionDecision::Allow,
+                ),
+                (
+                    "https://example.com",
+                    PermissionType::Microphone,
+                    PermissionDecision::Block,
+                ),
+                (
+                    "http://example.com",
+                    PermissionType::Camera,
+                    PermissionDecision::Ask,
+                ),
+                (
+                    "https://example.com:8443",
+                    PermissionType::Camera,
+                    PermissionDecision::Ask,
+                ),
+                (
+                    "https://other.example.com",
+                    PermissionType::Camera,
+                    PermissionDecision::Ask,
+                ),
+            ] {
+                assert_eq!(
+                    PermissionService::lookup(&store, origin, permission).unwrap(),
+                    expected
+                );
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
 }

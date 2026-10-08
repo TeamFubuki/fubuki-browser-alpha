@@ -3,6 +3,9 @@ overrides:
   source-map-js: 1.2.2
 allowBuilds:
   esbuild: true
+overrides:
+  seroval: ^1.6.3
+  source-map-js: ^1.2.2
 minimumReleaseAgeExclude:
   - '@oxfmt/binding-android-arm-eabi@0.59.0'
   - '@oxfmt/binding-android-arm64@0.59.0'
