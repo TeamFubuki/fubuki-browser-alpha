@@ -12,3 +12,7 @@
 - **Bookmarks:** folder management and browser-compatible import / export need more complete UX and persistence work.
 - **CEF distribution:** CEF / Chromium versions and per-architecture archive checksums are pinned in `cef.lock`; binaries are not vendored. CEF updates are proposed for review and are not auto-merged.
 - **Platform:** Apple Silicon is the primary target; Intel support depends on the selected CEF build.
+
+Permission prompts use the host’s top-right interactive overlay. CEF permission IDs are namespaced by browser, and callbacks are removed before completion; expired timers cannot complete a replacement request. Native clients resolve their window by ID before forwarding delayed callbacks.
+
+Permission prompts allow 60 seconds for an answer; after that the request is denied without persisting a decision.
