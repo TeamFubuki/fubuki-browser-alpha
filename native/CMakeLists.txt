@@ -4,7 +4,7 @@ project(FubukiBrowserAlpha LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version" FORCE)
 option(USE_SANDBOX "Enable the required CEF process sandbox" ON)
 if(NOT USE_SANDBOX)
   message(FATAL_ERROR "Fubuki requires USE_SANDBOX=ON in every build configuration")
@@ -23,6 +23,12 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
+# The pinned CEF CMake module resets the target to 12.0 and adds its own flag.
+# Keep our supported OS floor consistent for C++, Rust and bundle metadata.
+list(REMOVE_ITEM CEF_COMPILER_FLAGS "-mmacosx-version-min=${CEF_TARGET_SDK}")
+set(CEF_TARGET_SDK "15.0")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
+list(APPEND CEF_COMPILER_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
 foreach(_config Debug Release)
   if(NOT EXISTS "${CEF_ROOT}/${_config}/Chromium Embedded Framework.framework/Libraries/libcef_sandbox.dylib")
     message(FATAL_ERROR "CEF ${_config} is missing libcef_sandbox.dylib; use the distribution pinned in cef.lock")

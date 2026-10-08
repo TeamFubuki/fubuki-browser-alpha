@@ -1,5 +1,10 @@
 # macOS CEF process sandbox
 
+Fubuki supports **macOS 15 and later**, including macOS 26 and later; macOS
+12–14 support is discontinued. C++/Helper deployment targets, the Rust build
+default and bundle minimum-OS metadata use 15.0. The pinned CEF CMake module's
+12.0 override is replaced after loading it, including its compiler flag.
+
 Fubuki requires Chromium's process sandbox in **all** configurations, including
 Debug. There is no development opt-out. `USE_SANDBOX=OFF` fails configuration;
 Main and Helper also fail compilation without `CEF_USE_SANDBOX`. External
@@ -108,7 +113,9 @@ Manual regression checklist (repeat for Developer ID and supported OS/CPU):
 
 Local environment: Apple Silicon arm64, macOS 27.0.1, pinned CEF 154, Release
 with ad-hoc hardened signing. Native build and strict recursive signature
-verification passed. GPU, Renderers and startup Utility processes returned
+verification passed. After raising the OS floor, Main and all five Helpers
+were rebuilt and checked: both `LSMinimumSystemVersion` and Mach-O `minos`
+were 15.0; signed launch and the live sandbox check passed again. GPU, Renderers and startup Utility processes returned
 `seatbelt=1`; supplying `--no-sandbox --disable-gpu-sandbox` to Main still
 produced sandboxed children. Debug, Release, RelWithDebInfo and MinSizeRel all
 rejected `USE_SANDBOX=OFF`. The Python verification/lock suite passed 16 tests and native unit tests passed 131 tests.
@@ -119,11 +126,10 @@ saved download was confirmed, and a notification button did not produce a
 verified permission result. These attempts are not counted as passing regression
 checks and require investigation on a distribution-signed build.
 
-**Outstanding:** Developer ID credentials were not used, x86_64 and older macOS
+**Outstanding:** Developer ID credentials were not used, x86_64 and macOS 15
 were not run, and the full download/permission/Renderer-recreation checklist is
 not yet certified. Do not consider issue #133's distribution acceptance complete.
-The local pinned arm64 CEF framework declares Mach-O `minos 13.0`, despite the
-CEF CMake configuration specifying 12.0. macOS 12 compatibility is therefore a
-separate unresolved blocker; setting a deployment target cannot fix a prebuilt
-framework's minimum OS. Ad-hoc launch also logs Chromium signature-category and
+The local pinned arm64 CEF framework declares Mach-O `minos 13.0`, below our
+supported minimum of macOS 15. macOS 12 compatibility is no longer a release
+requirement. Ad-hoc launch also logs Chromium signature-category and
 keychain errors; it cannot substitute for Developer ID distribution validation.

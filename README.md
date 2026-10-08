@@ -80,7 +80,7 @@ CEF / macOS Host (C++20)
 
 ## Requirements / 必要環境
 
-- macOS 12 以降
+- macOS 15 以降（macOS 26以降を含む）
 - Xcode Command Line Tools
 - CMake 3.21 以降
 - Rust stable toolchain with `clippy` and `rustfmt`

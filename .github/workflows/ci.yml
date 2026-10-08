@@ -317,6 +317,15 @@ jobs:
       - name: Run native unit tests
         run: make test-native
 
+      - name: Verify macOS 15 minimum for Main and Helpers
+        run: |
+          for bundle in "native/build/Fubuki Browser Alpha.app" "native/build/Fubuki Browser Alpha.app/Contents/Frameworks/"*Helper*.app; do
+            plist="$bundle/Contents/Info.plist"
+            test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")" = "15.0"
+            executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+            xcrun vtool -show-build "$bundle/Contents/MacOS/$executable" | grep -Eq 'minos[[:space:]]+15\.0$'
+          done
+
       - name: Sign and verify app bundle (local ad-hoc identity)
         run: python3 scripts/sign_macos.py "native/build/Fubuki Browser Alpha.app"
 
