@@ -245,8 +245,6 @@ jobs:
     name: macOS native build (CEF)
     runs-on: macos-15
     timeout-minutes: 60
-    # Heavy native build: only on main merge or manual dispatch, not per-PR.
-    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     env:
       BUILD_TYPE: release
       CEF_ROOT: ${{ github.workspace }}/third_party/cef
@@ -300,6 +298,16 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
 
+      - name: Reject sandbox-disabled configurations
+        run: |
+          for config in Debug Release RelWithDebInfo MinSizeRel; do
+            if cmake -S native -B "$RUNNER_TEMP/sandbox-off-$config" -DCMAKE_BUILD_TYPE="$config" -DUSE_SANDBOX=OFF > "$RUNNER_TEMP/sandbox-policy.log" 2>&1; then
+              echo "::error::Sandbox-disabled $config configuration was accepted"
+              exit 1
+            fi
+            grep -q "Fubuki requires USE_SANDBOX=ON" "$RUNNER_TEMP/sandbox-policy.log"
+          done
+
       - name: Configure native build
         run: make configure
 
@@ -309,8 +317,11 @@ jobs:
       - name: Run native unit tests
         run: make test-native
 
-      - name: Verify app bundle
-        run: test -d "native/build/Fubuki Browser Alpha.app"
+      - name: Sign and verify app bundle (local ad-hoc identity)
+        run: python3 scripts/sign_macos.py "native/build/Fubuki Browser Alpha.app"
+
+      - name: Verify live CEF process sandbox
+        run: python3 scripts/verify_macos_sandbox.py --launch "native/build/Fubuki Browser Alpha.app" --attempt-disable
 
   repository-check:
     name: Repository hygiene
@@ -323,7 +334,7 @@ jobs:
       - name: Validate locked CEF metadata
         run: |
           python3 scripts/cef_lock.py validate
-          python3 -m unittest discover -s tests -p 'test_cef_lock.py'
+          python3 -m unittest discover -s tests -p 'test_*.py'
 
       - name: Merge conflict markers
         run: |

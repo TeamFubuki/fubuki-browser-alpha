@@ -149,3 +149,5 @@ Contributions are welcome, but architecture boundaries matter.
 ## License / ライセンス
 
 [MIT License](LICENSE) — Copyright (c) 2026 TeamFubuki
+
+CEF / Chromium のプロセスSandboxは全ビルドで必須です。既存の `USE_SANDBOX=OFF` キャッシュの移行、起動前の署名、実プロセスの検証は [macOS CEF sandbox](docs/macos-cef-sandbox.md) を参照してください。
