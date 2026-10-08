@@ -37,7 +37,7 @@ CEF / macOS Host (C++)
 - **言語**: C++20
 - **ビルド**: CMake 3.21+
 - **ブラウザエンジン**: Chromium Embedded Framework (CEF)
-- **対応OS**: macOS 12+
+- **対応OS**: macOS 15+（macOS 26以降を含む）
 
 ### Fubuki Browser UI (`ui/`)
 - **フレームワーク**: SolidJS
