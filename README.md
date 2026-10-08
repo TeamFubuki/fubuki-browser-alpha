@@ -70,6 +70,7 @@ CEF / macOS Host (C++20)
 | Layer | Path | Role |
 |---|---|---|
 | UI | `ui/` | SolidJS 製のブラウザ UI。`fubuki://app/` 上で動作します。 |
+| Internal pages | `internal-pages/` | ブラウザUIと独立したSolidJSアプリ。設定・履歴など6つの内部ページを描画します。 |
 | Protocol | `crates/frost-protocol/` | UI、Engine、Host 間の Request / Response / Event 型定義。 |
 | Engine | `crates/frost-core/` | タブ、ウィンドウ、設定、セッションなどの論理状態を管理します。 |
 | Store | `crates/frost-store/` | SQLite による履歴、ブックマーク、ダウンロード、設定、セッション永続化。 |
