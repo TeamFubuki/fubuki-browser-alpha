@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - "codex/internal-pages-*"
   push:
     branches:
       - main
@@ -43,6 +44,44 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format check
+        run: pnpm run format:check
+
+      - name: Typecheck & Build
+        run: pnpm run build
+
+      - name: Tests
+        run: pnpm run test
+
+  internal-pages-check:
+    name: Internal pages check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: internal-pages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: internal-pages/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
