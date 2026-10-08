@@ -5,7 +5,10 @@ project(FubukiBrowserAlpha LANGUAGES CXX OBJCXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
-set(USE_SANDBOX OFF CACHE BOOL "Disable CEF sandbox for the MVP app bundle")
+option(USE_SANDBOX "Enable the required CEF process sandbox" ON)
+if(NOT USE_SANDBOX)
+  message(FATAL_ERROR "Fubuki requires USE_SANDBOX=ON in every build configuration")
+endif()
 
 set(CEF_ROOT "" CACHE PATH "Path to CEF binary distribution")
 if(NOT CEF_ROOT AND DEFINED ENV{CEF_ROOT})
@@ -20,6 +23,11 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
+foreach(_config Debug Release)
+  if(NOT EXISTS "${CEF_ROOT}/${_config}/Chromium Embedded Framework.framework/Libraries/libcef_sandbox.dylib")
+    message(FATAL_ERROR "CEF ${_config} is missing libcef_sandbox.dylib; use the distribution pinned in cef.lock")
+  endif()
+endforeach()
 
 set(FUBUKI_CEF_COMPILER_FLAGS ${CEF_COMPILER_FLAGS})
 list(REMOVE_ITEM FUBUKI_CEF_COMPILER_FLAGS -Werror)
@@ -106,7 +114,26 @@ target_link_options(FubukiBrowserAlpha PRIVATE ${CEF_LINKER_FLAGS})
 target_link_libraries(FubukiBrowserAlpha PRIVATE libcef_dll_wrapper frost_ffi_static ${CEF_STANDARD_LIBS} sqlite3 "-framework QuartzCore")
 
 set(FUBUKI_APP_BUNDLE "$<TARGET_BUNDLE_DIR:FubukiBrowserAlpha>")
-COPY_MAC_FRAMEWORK(FubukiBrowserAlpha "${CEF_BINARY_DIR}" "${FUBUKI_APP_BUNDLE}")
+# Replace links before recreating them. The CEF macro's `ln -sf` follows an
+# existing Current directory link on rebuild and leaves an invalid A/A link.
+set(FUBUKI_FRAMEWORK "${FUBUKI_APP_BUNDLE}/Contents/Frameworks/Chromium Embedded Framework.framework")
+add_custom_command(TARGET FubukiBrowserAlpha POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CEF_BINARY_DIR}/Chromium Embedded Framework.framework" "${FUBUKI_FRAMEWORK}/Versions/A"
+  COMMAND ${CMAKE_COMMAND} -E rm -f
+    "${FUBUKI_FRAMEWORK}/Chromium Embedded Framework"
+    "${FUBUKI_FRAMEWORK}/Libraries" "${FUBUKI_FRAMEWORK}/Resources"
+    "${FUBUKI_FRAMEWORK}/Versions/Current"
+    "${FUBUKI_FRAMEWORK}/Versions/A/A"
+    "${FUBUKI_FRAMEWORK}/Versions/A/Libraries/Libraries"
+    "${FUBUKI_FRAMEWORK}/Versions/A/Resources/Resources"
+  COMMAND ${CMAKE_COMMAND} -E create_symlink "Versions/A/Chromium Embedded Framework"
+    "${FUBUKI_FRAMEWORK}/Chromium Embedded Framework"
+  COMMAND ${CMAKE_COMMAND} -E create_symlink "Versions/A/Libraries" "${FUBUKI_FRAMEWORK}/Libraries"
+  COMMAND ${CMAKE_COMMAND} -E create_symlink "Versions/A/Resources" "${FUBUKI_FRAMEWORK}/Resources"
+  COMMAND ${CMAKE_COMMAND} -E create_symlink "A" "${FUBUKI_FRAMEWORK}/Versions/Current"
+  VERBATIM
+)
 
 # Copy app icon
 add_custom_command(

@@ -6,12 +6,27 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <string_view>
+
+#if !defined(CEF_USE_SANDBOX)
+#error "Fubuki requires the CEF process sandbox"
+#endif
 
 namespace fubuki {
 
 void InitializeMacApplication();
 
 int RunFubukiApplication(int argc, char *argv[]) {
+  // Only the dedicated Helper may execute Chromium child processes. Do not
+  // allow --type to bypass its early sandbox initialization via this binary.
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view argument(argv[i]);
+    if (argument == "--type" || argument.starts_with("--type=") ||
+        argument == "-type" || argument.starts_with("-type=")) {
+      return 1;
+    }
+  }
+
   CefScopedLibraryLoader libraryLoader;
   if (!libraryLoader.LoadInMain()) {
     return 1;
@@ -26,7 +41,10 @@ int RunFubukiApplication(int argc, char *argv[]) {
   }
 
   CefSettings settings;
-  settings.no_sandbox = true;
+  settings.no_sandbox = false;
+  // External Chromium switches must not weaken the sandbox (e.g. --no-sandbox
+  // or --disable-gpu-sandbox). Trusted switches are added by FubukiCefApp.
+  settings.command_line_args_disabled = true;
   settings.persist_session_cookies = true;
   settings.background_color = CefColorSetARGB(0, 255, 255, 255);
   const char *home = std::getenv("HOME");
