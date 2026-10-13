@@ -14,6 +14,8 @@
 
 #include "browser/BrowserAppController.h"
 #include "browser/BrowserWindow.h"
+#include "include/base/cef_callback.h"
+#include "include/wrapper/cef_closure_task.h"
 #include "include/cef_parser.h"
 
 namespace fubuki {
@@ -105,6 +107,8 @@ std::string ColumnText(sqlite3_stmt* statement, int column) {
 sqlite3* OpenDatabase() {
   // The Rust store owns creation and migrations. Internal pages only read the
   // database so they cannot race a writer with their own DDL.
+  static std::mutex connectionMutex;
+  std::lock_guard<std::mutex> lock(connectionMutex);
   static sqlite3* cached = nullptr;
   if (cached) {
     return cached;
@@ -1116,9 +1120,28 @@ FubukiSchemeHandler::FubukiSchemeHandler(std::string uiDistPath)
     : uiDistPath_(std::move(uiDistPath)) {}
 
 bool FubukiSchemeHandler::Open(CefRefPtr<CefRequest> request, bool& handle_request,
-                               CefRefPtr<CefCallback>) {
+                               CefRefPtr<CefCallback> callback) {
+  const std::string url = request->GetURL().ToString();
+  CefURLParts parts;
+  // Open runs on a CEF worker sequence. Window, tab and event diagnostics are
+  // owned by the UI thread, so serialize debug responses there before continuing.
+  if (CefParseURL(url, parts) && CefString(&parts.host).ToString() == "debug") {
+    handle_request = false;
+    if (!CefPostTask(TID_UI, base::BindOnce(
+            [](CefRefPtr<FubukiSchemeHandler> handler, std::string debugUrl,
+               CefRefPtr<CefCallback> continuation) {
+              if (handler->LoadRequest(debugUrl))
+                continuation->Continue();
+              else
+                continuation->Cancel();
+            },
+            CefRefPtr<FubukiSchemeHandler>(this), url, callback))) {
+      callback->Cancel();
+    }
+    return true;
+  }
   handle_request = true;
-  return LoadRequest(request->GetURL().ToString());
+  return LoadRequest(url);
 }
 
 void FubukiSchemeHandler::GetResponseHeaders(CefRefPtr<CefResponse> response,
