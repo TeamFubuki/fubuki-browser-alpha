@@ -645,12 +645,18 @@ pub unsafe extern "C" fn frost_engine_process_external_json(
     // can spend the whole request budget waiting for another external call's
     // policy lock and then receive a fresh full request timeout.
     let deadline = Instant::now() + REQUEST_TIMEOUT;
+    into_c_string(process_external_command(handle, envelope, deadline))
+}
+
+fn process_external_command(
+    handle: &FrostEngineHandle,
+    envelope: frost_protocol::ExternalCommandEnvelope,
+    deadline: Instant,
+) -> String {
     let mut policy = match lock_until(&handle.external_policy, deadline) {
         Ok(policy) => policy,
         Err(error) => {
-            return into_c_string(
-                serde_json::json!({ "allowed": false, "error": error.json() }).to_string(),
-            );
+            return serde_json::json!({ "allowed": false, "error": error.json() }).to_string();
         }
     };
     // Route the command through the live engine's request channel and read the
@@ -660,11 +666,10 @@ pub unsafe extern "C" fn frost_engine_process_external_json(
     // request/response pair is serialized via `request_response_lock`.
     let capability = match authorize_external(handle, &envelope, &mut policy) {
         Ok(capability) => capability,
-        Err(response) => return into_c_string(response),
+        Err(response) => return response,
     };
     drop(policy);
-    let response = route_external_to_core(handle, envelope, capability, deadline);
-    into_c_string(response)
+    route_external_to_core(handle, envelope, capability, deadline)
 }
 
 fn authorize_external(
@@ -1191,7 +1196,6 @@ mod tests {
     use super::*;
     use std::ffi::CString;
     use std::panic::{AssertUnwindSafe, catch_unwind};
-    use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMP_DB: AtomicU64 = AtomicU64::new(1);
@@ -1469,54 +1473,46 @@ mod tests {
 
     #[test]
     fn concurrent_external_calls_share_the_request_deadline() {
-        let (mut handle, _request_rx, _response_tx) = fake_handle();
+        let (handle, request_rx, _response_tx) = fake_handle();
         handle.external_policy.lock().unwrap().grant(
             "parallel-origin",
             vec![frost_protocol::ExternalCapability::ReadState],
         );
 
+        let handle: Arc<FrostEngineHandle> = Arc::from(handle);
         let command = |id: &str| {
-            serde_json::to_string(&frost_protocol::ExternalCommandEnvelope::new(
+            frost_protocol::ExternalCommandEnvelope::new(
                 id,
                 "parallel-origin",
                 frost_protocol::ExternalCapability::ReadState,
                 frost_protocol::ExternalCommand::StateRead,
-            ))
-            .unwrap()
+            )
         };
-        let barrier = Arc::new(Barrier::new(3));
-        let handle_addr = (&mut *handle as *mut FrostEngineHandle) as usize;
-        let workers = ["external-1", "external-2"].map(|id| {
-            let barrier = Arc::clone(&barrier);
-            let command = command(id);
-            std::thread::spawn(move || {
-                barrier.wait();
-                json(unsafe {
-                    frost_engine_process_external_json(
-                        handle_addr as *mut FrostEngineHandle,
-                        command.as_ptr().cast(),
-                    )
-                })
-            })
+        let first_handle = Arc::clone(&handle);
+        let first = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            process_external_command(&first_handle, command("external-1"), deadline)
         });
 
-        barrier.wait();
-        let mut errors = Vec::new();
-        for worker in workers {
-            let response = worker.join().unwrap();
-            assert_eq!(response["allowed"], false);
-            errors.push((
-                response["error"]["code"].as_str().unwrap().to_owned(),
-                response["error"]["retryable"].as_bool().unwrap(),
-            ));
-        }
-        errors.sort();
-        assert_eq!(
-            errors,
-            vec![
-                ("outcome_unknown".to_owned(), false),
-                ("request_timeout".to_owned(), true),
-            ]
-        );
+        // Wait until the first call has dispatched and is holding the
+        // request/response lock before starting the shorter-deadline caller.
+        // This makes the pre-dispatch timeout deterministic instead of
+        // depending on which simultaneous thread wins the mutex race.
+        request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let second_handle = Arc::clone(&handle);
+        let second_deadline = Instant::now() + Duration::from_millis(25);
+        let second = std::thread::spawn(move || {
+            process_external_command(&second_handle, command("external-2"), second_deadline)
+        });
+
+        let second: serde_json::Value = serde_json::from_str(&second.join().unwrap()).unwrap();
+        assert_eq!(second["allowed"], false);
+        assert_eq!(second["error"]["code"], "request_timeout");
+        assert_eq!(second["error"]["retryable"], true);
+
+        let first: serde_json::Value = serde_json::from_str(&first.join().unwrap()).unwrap();
+        assert_eq!(first["allowed"], false);
+        assert_eq!(first["error"]["code"], "outcome_unknown");
+        assert_eq!(first["error"]["retryable"], false);
     }
 }

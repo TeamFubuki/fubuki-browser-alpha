@@ -32,6 +32,37 @@ updates:
         patterns: ["*"]
         update-types: ["major"]
 
+  # Internal pages dependencies (pnpm via npm ecosystem)
+  - package-ecosystem: "npm"
+    directory: "/internal-pages"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 10
+    rebase-strategy: "auto"
+    versioning-strategy: "increase-if-necessary"
+    commit-message:
+      prefix: "deps(internal-pages)"
+      prefix-development: "deps-dev(internal-pages)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "internal-pages"
+    groups:
+      internal-pages-minor-patch:
+        dependency-type: "production"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      internal-pages-dev-minor-patch:
+        dependency-type: "development"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      internal-pages-major:
+        patterns: ["*"]
+        update-types: ["major"]
+
   # Rust dependencies (Cargo)
   - package-ecosystem: "cargo"
     directory: "/"
