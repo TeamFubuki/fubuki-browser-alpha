@@ -210,12 +210,14 @@ std::string BrowserAppearance(BrowserWindow* window) {
 
 BrowserWindow* FubukiClient::Window() const {
   auto* app = GetBrowserAppController();
-  return app ? app->FindWindow(windowId_) : nullptr;
+  return app && !windowId_.empty() ? app->FindWindow(windowId_) : nullptr;
 }
 
 FubukiClient::FubukiClient(BrowserWindow* window, std::string tabId, bool isUi)
-    : windowId_(window->WindowId()), tabId_(std::move(tabId)), isUi_(isUi) {
-  if (isUi_) {
+    : windowId_(window ? window->WindowId() : std::string{}),
+      tabId_(std::move(tabId)),
+      isUi_(isUi) {
+  if (isUi_ && window) {
     CefMessageRouterConfig config;
     config.js_query_function = "cefQuery";
     config.js_cancel_function = "cefQueryCancel";
@@ -228,7 +230,10 @@ bool FubukiClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                             CefRefPtr<CefFrame> frame, CefProcessId source_process,
                                             CefRefPtr<CefProcessMessage> message) {
   CEF_REQUIRE_UI_THREAD();
-  if (Window() && messageRouter_ &&
+  if (!Window()) {
+    return false;
+  }
+  if (messageRouter_ &&
       messageRouter_->OnProcessMessageReceived(browser, frame, source_process, message)) {
     return true;
   }
@@ -326,9 +331,55 @@ bool FubukiClient::DoClose(CefRefPtr<CefBrowser>) {
 
 void FubukiClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-  CancelPendingPermissions();
-  if (messageRouter_)
+  if (messageRouter_) {
     messageRouter_->OnBeforeClose(browser);
+  }
+  CancelPendingPermissions();
+  if (auto* window = Window()) {
+    if (isUi_) {
+      window->OnUiBrowserClosed(browser);
+    } else {
+      window->OnTabBrowserClosed(tabId_, browser);
+    }
+  }
+}
+
+bool FubukiClient::OnRenderProcessUnresponsive(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefUnresponsiveProcessCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  auto* window = Window();
+  if (!window || isUi_) {
+    return false;
+  }
+  window->OnTabRendererUnresponsive(tabId_, browser, callback);
+  // FrostEngine drives the wait/reload controls shown by the UI. Suppress
+  // CEF's native dialog so an unrelated browser-wide prompt cannot appear.
+  return true;
+}
+
+void FubukiClient::OnRenderProcessResponsive(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (auto* window = Window(); window && !isUi_) {
+    window->OnTabRendererResponsive(tabId_, browser);
+  }
+}
+
+void FubukiClient::OnRenderProcessTerminated(
+    CefRefPtr<CefBrowser> browser, TerminationStatus status, int error_code,
+    const CefString& error_string) {
+  CEF_REQUIRE_UI_THREAD();
+  if (messageRouter_) {
+    messageRouter_->OnRenderProcessTerminated(browser);
+  }
+  if (auto* window = Window()) {
+    if (isUi_) {
+      window->OnUiRendererTerminated(browser);
+    } else {
+      window->OnTabRendererTerminated(tabId_, browser, status, error_code,
+                                      error_string.ToString());
+    }
+  }
 }
 
 void FubukiClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack,
@@ -344,9 +395,13 @@ void FubukiClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
   }
 }
 
-void FubukiClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) {
-  if (!isUi_ && Window() && frame->IsMain()) {
+void FubukiClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                             CefRefPtr<CefFrame> frame, int) {
+  if (Window() && isUi_ && frame->IsMain()) {
+    Window()->OnUiBrowserLoaded(browser);
+  } else if (!isUi_ && Window() && frame->IsMain()) {
     Window()->OnNavigationFinished(tabId_);
+    Window()->OnTabRendererLoaded(tabId_, browser);
   }
 }
 
@@ -437,9 +492,10 @@ bool FubukiClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownload
     return false;
   }
   const std::string path = Window()->DownloadPathFor(suggested_name.ToString());
-  const bool askBeforeDownload = Window()->Store().GetSetting("askBeforeDownload") == "on";
+  const bool askBeforeDownload =
+      Window()->Store().GetSetting("askBeforeDownload") == "on";
   Window()->OnDownloadStarted(std::to_string(download_item->GetId()),
-                              download_item->GetURL().ToString(), path);
+                             download_item->GetURL().ToString(), path);
   callback->Continue(path, askBeforeDownload);
   return true;
 }
@@ -462,8 +518,8 @@ void FubukiClient::OnDownloadUpdated(CefRefPtr<CefBrowser>,
     state = "completed";
   }
   Window()->OnDownloadUpdated(std::to_string(download_item->GetId()),
-                              download_item->GetURL().ToString(),
-                              download_item->GetFullPath().ToString(), state, percent);
+                             download_item->GetURL().ToString(),
+                             download_item->GetFullPath().ToString(), state, percent);
 }
 
 bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle,
@@ -476,17 +532,21 @@ bool FubukiClient::OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event
   const bool altDown = (event.modifiers & EVENTFLAG_ALT_DOWN) != 0;
   const bool shiftDown = (event.modifiers & EVENTFLAG_SHIFT_DOWN) != 0;
   const char character = static_cast<char>(event.unmodified_character);
-  const bool handled = Window()->HandleShortcut(commandDown, controlDown, altDown, shiftDown,
-                                                event.windows_key_code, character, tabId_);
+  const bool handled =
+      Window()->HandleShortcut(commandDown, controlDown, altDown, shiftDown,
+                              event.windows_key_code, character, tabId_);
   if (handled && is_keyboard_shortcut) {
     *is_keyboard_shortcut = true;
   }
   return handled;
 }
 
-bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request, bool user_gesture,
                                   bool is_redirect) {
+  if (messageRouter_ && frame) {
+    messageRouter_->OnBeforeBrowse(browser, frame);
+  }
   if (!Window() || isUi_ || !frame || !frame->IsMain() || !request) {
     return false;
   }
@@ -504,8 +564,9 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
         IsTrustedSettingsActionSource(frameUrl) || IsTrustedSettingsActionSource(referrerUrl);
     if (is_redirect || !trustedSource || (method != "POST" && !user_gesture)) {
       if (!Window()->IsPrivate()) {
-        Window()->Store().AddLog("warning", "Blocked settings action: method=" + method +
-                                                " source=" + frameUrl + " referrer=" + referrerUrl);
+        Window()->Store().AddLog(
+            "warning", "Blocked settings action: method=" + method +
+                           " source=" + frameUrl + " referrer=" + referrerUrl);
       }
       return true;
     }
@@ -520,7 +581,9 @@ bool FubukiClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
     }
     if (method != "POST" && IsDestructiveSettingsAction(key)) {
       if (!Window()->IsPrivate()) {
-        Window()->Store().AddLog("warning", "Blocked destructive settings action over GET: " + key);
+        Window()->Store().AddLog("warning",
+                             "Blocked destructive settings action over GET: " +
+                                 key);
       }
       return true;
     }

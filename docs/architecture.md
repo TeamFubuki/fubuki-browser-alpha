@@ -46,7 +46,7 @@ CEF / macOS Host (C++)
 
 ## Frost Protocol (`crates/frost-protocol`)
 
-Defines typed `Request`, `Response`, `Event`, and state schemas (`TabState`, `WindowState`, `AppState`).
+Defines typed `Request`, `Response`, `Event`, and state schemas (`TabState`, `WindowState`, `AppState`). `TabState` includes per-tab renderer status (`healthy`, `unresponsive`, `crashed`, or `recovering`), an error code, and diagnostic text.
 
 ### API (v0)
 
@@ -59,6 +59,7 @@ Defines typed `Request`, `Response`, `Event`, and state schemas (`TabState`, `Wi
 | `tabs.close { tab_id }` | `Ok(bool)` |
 | `tabs.navigate { tab_id, input }` | `Ok(bool)` |
 | `tabs.reload { tab_id }` | `Ok(bool)` |
+| `tabs.waitForRenderer { tab_id }` | `Ok(bool)` |
 | `tabs.goBack { tab_id }` | `Ok(bool)` |
 | `tabs.goForward { tab_id }` | `Ok(bool)` |
 | `windows.list` | `Vec<WindowState>` |
@@ -103,6 +104,7 @@ Defines the boundary between FrostEngine Core and the host:
 
 - `HostCommand` — versioned JSON commands emitted by FrostEngine for host side effects such as page creation, navigation, reload, stop, and window lifecycle.
 - `HostEvent` — versioned JSON events sent back by the host for page title, URL, favicon, loading state, navigation state, downloads, permissions, and window focus/closure.
+- Renderer lifecycle callbacks use `page.rendererStatusChanged`; `tabs.reload` recreates a crashed or unresponsive tab renderer while retaining the logical tab, and `tabs.waitForRenderer` resumes CEF's wait callback for an unresponsive renderer.
 - `HostCommandResult` — completion/failure status for a previously emitted host command.
 - `EngineAdapter` — Rust-side abstraction used by `BrowserCore`; the production FFI adapter serializes calls into `HostCommand`s.
 

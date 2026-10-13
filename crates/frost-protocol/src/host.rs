@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::permission::{PermissionDecision, PermissionType};
+use crate::state::RendererStatus;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +37,9 @@ pub enum HostCommand {
     #[serde(rename = "page.navigate", rename_all = "camelCase")]
     PageNavigate { tab_id: String, url: String },
     #[serde(rename = "page.reload", rename_all = "camelCase")]
-    PageReload { tab_id: String },
+    PageReload { tab_id: String, url: String },
+    #[serde(rename = "page.waitForRenderer", rename_all = "camelCase")]
+    PageWaitForRenderer { tab_id: String },
     #[serde(rename = "page.stop", rename_all = "camelCase")]
     PageStop { tab_id: String },
     #[serde(rename = "page.goBack", rename_all = "camelCase")]
@@ -128,6 +131,15 @@ pub enum HostEvent {
     },
     #[serde(rename = "page.loadFailed", rename_all = "camelCase")]
     PageLoadFailed { tab_id: String, error_text: String },
+    #[serde(rename = "page.rendererStatusChanged", rename_all = "camelCase")]
+    PageRendererStatusChanged {
+        tab_id: String,
+        status: RendererStatus,
+        #[serde(default)]
+        error_code: i32,
+        #[serde(default)]
+        diagnostic: String,
+    },
     #[serde(rename = "download.updated", rename_all = "camelCase")]
     DownloadUpdated {
         download_id: String,
@@ -222,6 +234,36 @@ mod tests {
         );
         let json = serde_json::to_value(envelope).unwrap();
         assert_eq!(json["payload"]["active"], false);
+    }
+
+    #[test]
+    fn renderer_recovery_host_contract_includes_status_diagnostics_and_engine_url() {
+        let reload = HostCommandEnvelope::new(
+            "reload-1",
+            HostCommand::PageReload {
+                tab_id: "tab-1".into(),
+                url: "https://example.com/kept-url".into(),
+            },
+        );
+        let reload_json = serde_json::to_value(reload).unwrap();
+        assert_eq!(reload_json["command"], "page.reload");
+        assert_eq!(reload_json["payload"]["tabId"], "tab-1");
+        assert_eq!(
+            reload_json["payload"]["url"],
+            "https://example.com/kept-url"
+        );
+
+        let event = HostEventEnvelope::new(HostEvent::PageRendererStatusChanged {
+            tab_id: "tab-1".into(),
+            status: crate::RendererStatus::Crashed,
+            error_code: 11,
+            diagnostic: "SIGSEGV".into(),
+        });
+        let event_json = serde_json::to_value(event).unwrap();
+        assert_eq!(event_json["event"], "page.rendererStatusChanged");
+        assert_eq!(event_json["payload"]["status"], "crashed");
+        assert_eq!(event_json["payload"]["errorCode"], 11);
+        assert_eq!(event_json["payload"]["diagnostic"], "SIGSEGV");
     }
 
     #[test]

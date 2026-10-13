@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::permission::PermissionType;
-use crate::state::{TabState, WindowState};
+use crate::state::{RendererStatus, TabState, WindowState};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +94,12 @@ pub struct TabPatch {
     pub can_go_forward: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_pinned: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer_status: Option<RendererStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer_error_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

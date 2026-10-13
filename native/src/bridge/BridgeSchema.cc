@@ -81,7 +81,8 @@ const std::unordered_map<std::string, Method>& Methods() {
                                Identifier("windowId")}};
     for (std::string_view name :
          {"tabs.activate", "tabs.close", "tabs.duplicate", "tabs.closeOther", "tabs.closeToRight",
-          "tabs.reload", "tabs.stop", "tabs.goBack", "tabs.goForward"}) {
+          "tabs.reload", "tabs.waitForRenderer", "tabs.stop", "tabs.goBack",
+          "tabs.goForward"}) {
       schemas.emplace(std::string(name), Method{{Identifier("tabId", true)}});
     }
     schemas["tabs.pin"] = {{Identifier("tabId", true), Bool("pinned", true)}};

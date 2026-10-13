@@ -26,7 +26,8 @@ pub trait EngineAdapter {
     fn move_page_to_window(&mut self, tab_id: &str, window_id: &str)
     -> EngineResult<HostCommandId>;
     fn navigate(&mut self, tab_id: &str, input: &str) -> EngineResult<HostCommandId>;
-    fn reload(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
+    fn reload(&mut self, tab_id: &str, url: &str) -> EngineResult<HostCommandId>;
+    fn wait_for_renderer(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
     fn stop(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
     fn go_back(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
     fn go_forward(&mut self, tab_id: &str) -> EngineResult<HostCommandId>;
@@ -90,7 +91,11 @@ impl EngineAdapter for NoopEngineAdapter {
         Ok(String::new())
     }
 
-    fn reload(&mut self, _: &str) -> EngineResult<HostCommandId> {
+    fn reload(&mut self, _: &str, _: &str) -> EngineResult<HostCommandId> {
+        Ok(String::new())
+    }
+
+    fn wait_for_renderer(&mut self, _: &str) -> EngineResult<HostCommandId> {
         Ok(String::new())
     }
 

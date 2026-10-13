@@ -222,6 +222,11 @@ void NativeBridge::RegisterMethods() {
     return FrostInvoke("tabs.reload", params);
   };
 
+  methods_["tabs.waitForRenderer"] = [this](
+                                         CefRefPtr<CefDictionaryValue> params) {
+    return FrostInvoke("tabs.waitForRenderer", params);
+  };
+
   methods_["tabs.stop"] = [this](CefRefPtr<CefDictionaryValue> params) {
     return FrostInvoke("tabs.stop", params);
   };

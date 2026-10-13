@@ -1,6 +1,6 @@
 # Known Limitations
 
-- **Renderer recovery:** a crashed CEF renderer is not yet represented as a recoverable tab state; targeted renderer recreation and reload recovery are not implemented.
+- **Renderer recovery:** crashed and unresponsive renderers are tracked per tab and can be recovered by reloading. Native macOS CEF behavior still needs manual validation under real renderer crashes and hangs.
 - **Permission Broker:** the Alloy-style permission broker, prompt, origin-scoped settings, and private-window policy are implemented. End-to-end Allow / Block / Not now behavior still needs manual validation with a running macOS CEF app.
 - **Chrome style:** no Chrome-style PoC or Alloy-versus-Chrome comparison has been completed. No runtime style has been selected for future development.
 - **Distribution:** code signing, notarization, and update delivery are not implemented.

@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RendererStatus {
+    #[default]
+    Healthy,
+    Unresponsive,
+    Crashed,
+    Recovering,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
@@ -43,6 +53,12 @@ pub struct TabState {
     pub can_go_forward: bool,
     pub is_active: bool,
     pub is_pinned: bool,
+    #[serde(default)]
+    pub renderer_status: RendererStatus,
+    #[serde(default)]
+    pub renderer_error_code: i32,
+    #[serde(default)]
+    pub renderer_diagnostic: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
