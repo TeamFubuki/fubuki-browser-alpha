@@ -233,13 +233,17 @@ impl TabService {
         // Remove the tab and insert at the new local position.
         let tab = self.tabs.remove(index);
         // Recalculate window_indices after removal (all indices shifted if > index).
-        let window_indices_after: Vec<usize> =
-            window_indices.into_iter().filter(|&i| i != index).collect();
-        let insert_at = if local_to >= window_indices_after.len() {
-            self.tabs.len()
-        } else {
-            window_indices_after[local_to]
-        };
+        let window_indices_after: Vec<usize> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.window_id == window_id)
+            .map(|(i, _)| i)
+            .collect();
+        let insert_at = window_indices_after
+            .get(local_to)
+            .copied()
+            .unwrap_or_else(|| window_indices_after.last().map_or(index, |i| i + 1));
         self.tabs.insert(insert_at, tab);
         true
     }
