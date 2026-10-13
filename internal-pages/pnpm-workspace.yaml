@@ -1,3 +1,6 @@
+overrides:
+  seroval: ^1.6.3
+  source-map-js: ^1.2.2
 # Keep pnpm's one-day release delay, while allowing the exact versions already
 # resolved in this initial lockfile to pass frozen installs immediately.
 minimumReleaseAge: 1440
