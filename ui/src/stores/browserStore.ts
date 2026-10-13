@@ -58,7 +58,7 @@ export const [permissionPrompts, setPermissionPrompts] = createSignal<
   PermissionPrompt[]
 >([]);
 
-const permissionOverlay = { width: 392, height: 248 };
+const permissionOverlay = { width: 392, height: 320 };
 
 function setPermissionOverlay(active: boolean): void {
   void invokeBridge('ui.setOverlayActive', {

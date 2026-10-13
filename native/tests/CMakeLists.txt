@@ -21,6 +21,7 @@ add_test(
 )
 
 add_executable(fubuki_tests
+  PermissionPolicyTest.cc
   UrlUtilsTest.cc
   JsonUtilsTest.cc
   WindowIdPolicyTest.cc

@@ -662,7 +662,7 @@ bool BrowserWindow::Navigate(const std::string& tabId, const std::string& input)
 bool BrowserWindow::Reload(const std::string& tabId,
                            const std::string& engineUrl) {
   Tab* tab = tabManager_.GetTab(tabId);
-  if (!tab || !tab->browser || isClosing_) {
+  if (!tab || isClosing_) {
     return false;
   }
   if (tab->rendererStatus == "recovering") {
@@ -685,6 +685,9 @@ bool BrowserWindow::Reload(const std::string& tabId,
       }
     }
     return BeginTabRendererRecovery(tabId, recoveryUrl);
+  }
+  if (!tab->browser) {
+    return false;
   }
   tab->browser->Reload();
   return true;
@@ -1607,9 +1610,13 @@ void BrowserWindow::OnTabRendererTerminated(
       "Termination status " +
       std::to_string(static_cast<int>(status)) + ": " +
       (diagnostic.empty() ? "Renderer process terminated." : diagnostic);
-  ReportRendererStatus(tabId, "crashed", errorCode, details);
   if (pendingTabRecoveryUrls_.contains(tabId)) {
+    // This is the old renderer intentionally terminated for recovery. A crash
+    // from the replacement must still be reported as crashed to FrostEngine.
+    ReportRendererStatus(tabId, "recovering", errorCode, details);
     browser->GetHost()->CloseBrowser(true);
+  } else {
+    ReportRendererStatus(tabId, "crashed", errorCode, details);
   }
 }
 
@@ -2014,9 +2021,11 @@ bool BrowserWindow::CreateUiBrowser() {
 void BrowserWindow::CreateTabBrowser(const Tab& tab) {
   CefBrowserSettings settings;
   settings.background_color = CefColorSetARGB(255, 255, 255, 255);
-  CefBrowserHost::CreateBrowser(ChildWindowInfo(contentHostView_),
-                                new FubukiClient(this, tab.id, false), tab.url, settings, nullptr,
-                                privateWindow_ ? privateRequestContext_ : nullptr);
+  if (!CefBrowserHost::CreateBrowser(ChildWindowInfo(contentHostView_),
+                                    new FubukiClient(this, tab.id, false), tab.url, settings, nullptr,
+                                    privateWindow_ ? privateRequestContext_ : nullptr)) {
+    ReportRendererStatus(tab.id, "crashed", 0, "Could not create the page renderer.");
+  }
 }
 
 bool BrowserWindow::CreateRestoredTab(CefRefPtr<CefDictionaryValue> tabState, bool active) {
