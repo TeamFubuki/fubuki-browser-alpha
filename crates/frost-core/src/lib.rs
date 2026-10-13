@@ -3775,6 +3775,55 @@ mod tests {
         assert_eq!(window.tab_ids.last().unwrap(), &first_tab);
     }
 
+    #[test]
+    fn tabs_move_keeps_snapshot_and_window_order_consistent() {
+        for from_index in 0..4 {
+            for to_index in 0..4 {
+                let mut core = BrowserCore::new();
+                let (window_id, tab_ids) = create_window_with_tabs(&mut core, 4);
+                let (other_window_id, other_tab_ids) = create_window_with_tabs(&mut core, 2);
+                let active_tab_id = core
+                    .windows
+                    .get_window(&window_id)
+                    .unwrap()
+                    .active_tab_id
+                    .clone();
+                let tab_id = tab_ids[from_index].clone();
+                let response = core.process(ProtocolRequest::new(Request::TabsMove {
+                    tab_id: tab_id.clone(),
+                    to_index,
+                }));
+                assert_eq!(response.response, Response::Bool(true));
+                let mut expected = tab_ids.clone();
+                expected.remove(from_index);
+                expected.insert(to_index, tab_id);
+                let actual: Vec<_> = core
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .filter(|tab| tab.window_id == window_id)
+                    .map(|tab| tab.id)
+                    .collect();
+                assert_eq!(actual, expected, "move {from_index} to {to_index}");
+                let window = core.windows.get_window(&window_id).unwrap();
+                assert_eq!(window.tab_ids, expected);
+                assert_eq!(window.active_tab_id, active_tab_id);
+                let other: Vec<_> = core
+                    .tabs
+                    .list()
+                    .into_iter()
+                    .filter(|tab| tab.window_id == other_window_id)
+                    .map(|tab| tab.id)
+                    .collect();
+                assert_eq!(other, other_tab_ids);
+                assert_eq!(
+                    core.windows.get_window(&other_window_id).unwrap().tab_ids,
+                    other_tab_ids
+                );
+            }
+        }
+    }
+
     /// Invalid window_id produces an error.
     #[test]
     fn invalid_window_id_errors() {
