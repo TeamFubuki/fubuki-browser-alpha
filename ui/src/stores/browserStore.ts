@@ -16,7 +16,7 @@ import {
   type BrowserEvent,
   type BrowserEventResult,
 } from './browserEventReducer';
-import { getOverlaySize } from './overlayLayout';
+import { getOverlayParams } from './overlayLayout';
 export { reorderTab } from './tabUtils';
 
 const initialState: BrowserState & { status: string } = {
@@ -68,15 +68,11 @@ function setPermissionOverlay(active: boolean): void {
     rendererStatus === 'crashed' ||
     rendererStatus === 'recovering';
   const showPermissionPrompt = active || permissionPrompts().length > 0;
-  const overlayActive = showPermissionPrompt || showRendererNotice;
-  const overlay = getOverlaySize(showPermissionPrompt, showRendererNotice);
-  const spec = `${overlayActive}:${overlay.width}:${overlay.height}`;
+  const overlay = getOverlayParams(showPermissionPrompt, showRendererNotice);
+  const spec = JSON.stringify(overlay);
   if (spec === lastOverlaySpec) return;
   lastOverlaySpec = spec;
-  void invokeBridge('ui.setOverlayActive', {
-    active: overlayActive,
-    ...overlay,
-  }).catch((error) => {
+  void invokeBridge('ui.setOverlayActive', overlay).catch((error) => {
     lastOverlaySpec = undefined;
     console.error('[Fubuki] Failed to update overlay:', error);
   });

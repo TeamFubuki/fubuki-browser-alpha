@@ -1,7 +1,9 @@
 .permission-prompt {
   position: fixed;
   right: 12px;
-  bottom: 12px;
+  top: calc(var(--topbar-height) + 12px);
+  max-height: calc(100vh - var(--topbar-height) - 24px);
+  overflow: auto;
   z-index: 30;
   width: min(368px, calc(100vw - 24px));
   padding: 16px;

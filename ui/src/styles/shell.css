@@ -41,7 +41,7 @@
   z-index: 3;
   top: 16px;
   right: 16px;
-  width: min(520px, calc(100% - 32px));
+  width: min(512px, calc(100% - 32px));
   max-height: min(264px, calc(100% - 32px));
   overflow: auto;
   padding: 22px 24px;

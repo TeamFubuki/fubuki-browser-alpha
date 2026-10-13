@@ -3,11 +3,16 @@ import { tabs } from '../bridge/fubuki';
 import { t } from '../i18n';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
-import { activeTab, browserState } from '../stores/browserStore';
+import {
+  activeTab,
+  browserState,
+  permissionPrompts,
+} from '../stores/browserStore';
 
 export default function BrowserShell(props: { quietMode: boolean }) {
   const rendererTab = createMemo(() => {
     const tab = activeTab();
+    if (permissionPrompts().length > 0) return undefined;
     return tab && tab.rendererStatus !== 'healthy' ? tab : undefined;
   });
   const lang = () => browserState.settings.language;

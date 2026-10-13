@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getOverlaySize } from '../stores/overlayLayout';
+import { getOverlayParams, getOverlaySize } from '../stores/overlayLayout';
 
 describe('getOverlaySize', () => {
   it('uses the permission prompt size when only permissions are shown', () => {
@@ -16,5 +16,19 @@ describe('getOverlaySize', () => {
 
   it('returns an empty area when neither panel is shown', () => {
     expect(getOverlaySize(false, false)).toEqual({ width: 0, height: 0 });
+  });
+});
+
+describe('native overlay request', () => {
+  it('omits dimensions when dismissing the overlay so native validation accepts it', () => {
+    expect(getOverlayParams(false, false)).toEqual({ active: false });
+  });
+
+  it('includes valid dimensions when recovery is displayed', () => {
+    expect(getOverlayParams(false, true)).toEqual({
+      active: true,
+      width: 520,
+      height: 280,
+    });
   });
 });
