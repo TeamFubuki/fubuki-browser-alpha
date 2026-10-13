@@ -20,6 +20,9 @@ const tab = (id: string, active = false, windowId = 'window-1'): Tab => ({
   canGoForward: false,
   isActive: active,
   isPinned: false,
+  rendererStatus: 'healthy',
+  rendererErrorCode: 0,
+  rendererDiagnostic: '',
 });
 
 const frostTab = (
@@ -148,6 +151,26 @@ describe('browser event reducer: tab.updated', () => {
 
     expect(result.state).toBe(state);
     expect(result.changed).toBe(false);
+  });
+
+  it('applies renderer status and diagnostic patches to the affected tab', () => {
+    const result = reduce(stateWith(), {
+      type: 'tab.updated',
+      payload: {
+        tabId: 'tab-2',
+        rendererStatus: 'crashed',
+        rendererErrorCode: 11,
+        rendererDiagnostic: 'SIGSEGV',
+      },
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.state.tabs[1]).toMatchObject({
+      rendererStatus: 'crashed',
+      rendererErrorCode: 11,
+      rendererDiagnostic: 'SIGSEGV',
+    });
+    expect(result.state.tabs[0].rendererStatus).toBe('healthy');
   });
 
   it('ignores an update for an unknown tab', () => {

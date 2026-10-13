@@ -55,6 +55,18 @@ function string(value: unknown, path: string, nonEmpty = false): string {
   return value;
 }
 
+function oneOf<const T extends readonly string[]>(
+  value: unknown,
+  path: string,
+  choices: T,
+): T[number] {
+  const result = string(value, path);
+  if (!choices.includes(result)) {
+    fail(path, `one of ${choices.join(', ')}`);
+  }
+  return result as T[number];
+}
+
 function boolean(value: unknown, path: string): boolean {
   if (typeof value !== 'boolean') fail(path, 'a boolean');
   return value;
@@ -67,10 +79,20 @@ function finiteNumber(value: unknown, path: string): number {
   return value;
 }
 
-function integer(value: unknown, path: string, minimum = 0): number {
+function integer(
+  value: unknown,
+  path: string,
+  minimum = 0,
+  maximum = Number.POSITIVE_INFINITY,
+): number {
   const result = finiteNumber(value, path);
-  if (!Number.isInteger(result) || result < minimum) {
-    fail(path, `an integer greater than or equal to ${minimum}`);
+  if (!Number.isInteger(result) || result < minimum || result > maximum) {
+    fail(
+      path,
+      maximum === Number.POSITIVE_INFINITY
+        ? `an integer greater than or equal to ${minimum}`
+        : `an integer between ${minimum} and ${maximum}`,
+    );
   }
   return result;
 }
@@ -103,6 +125,28 @@ function validateTab(value: unknown, path: string): FrostTabState {
     canGoForward: boolean(item.canGoForward, `${path}.canGoForward`),
     isActive: boolean(item.isActive, `${path}.isActive`),
     isPinned: boolean(item.isPinned, `${path}.isPinned`),
+    rendererStatus:
+      item.rendererStatus === undefined
+        ? 'healthy'
+        : oneOf(item.rendererStatus, `${path}.rendererStatus`, [
+            'healthy',
+            'unresponsive',
+            'crashed',
+            'recovering',
+          ]),
+    rendererErrorCode:
+      item.rendererErrorCode === undefined
+        ? 0
+        : integer(
+            item.rendererErrorCode,
+            `${path}.rendererErrorCode`,
+            -2147483648,
+            2147483647,
+          ),
+    rendererDiagnostic:
+      item.rendererDiagnostic === undefined
+        ? ''
+        : string(item.rendererDiagnostic, `${path}.rendererDiagnostic`),
   };
 }
 
@@ -342,6 +386,7 @@ const booleanMethods = new Set([
   'tabs.activate',
   'tabs.close',
   'tabs.reload',
+  'tabs.waitForRenderer',
   'tabs.stop',
   'tabs.goBack',
   'tabs.goForward',
@@ -432,6 +477,27 @@ function validateTabPatch(value: unknown, path: string) {
     'isActive',
     'isPinned',
   ];
+  if (item.rendererStatus !== undefined) {
+    result.rendererStatus = oneOf(
+      item.rendererStatus,
+      `${path}.rendererStatus`,
+      ['healthy', 'unresponsive', 'crashed', 'recovering'],
+    );
+  }
+  if (item.rendererErrorCode !== undefined) {
+    result.rendererErrorCode = integer(
+      item.rendererErrorCode,
+      `${path}.rendererErrorCode`,
+      -2147483648,
+      2147483647,
+    );
+  }
+  if (item.rendererDiagnostic !== undefined) {
+    result.rendererDiagnostic = string(
+      item.rendererDiagnostic,
+      `${path}.rendererDiagnostic`,
+    );
+  }
   for (const key of stringFields) {
     if (item[key] !== undefined)
       result[key] = string(item[key], `${path}.${key}`);

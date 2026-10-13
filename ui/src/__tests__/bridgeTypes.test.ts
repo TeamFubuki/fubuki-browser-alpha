@@ -33,6 +33,14 @@ describe('BridgeMethodMap types', () => {
     expectTypeOf<Result>().toBeBoolean();
   });
 
+  it('types the renderer wait recovery action', () => {
+    type Params = BridgeMethodMap['tabs.waitForRenderer']['params'];
+    type Result = BridgeMethodMap['tabs.waitForRenderer']['result'];
+
+    expectTypeOf<Params>().toEqualTypeOf<{ tabId: string }>();
+    expectTypeOf<Result>().toBeBoolean();
+  });
+
   it('has correct param/result types for bookmarks.save', () => {
     type Params = BridgeMethodMap['bookmarks.save']['params'];
     type Result = BridgeMethodMap['bookmarks.save']['result'];

@@ -15,6 +15,9 @@ const tab = (id: string, isPinned = false, windowId = 'w1'): Tab => ({
   canGoBack: false,
   canGoForward: false,
   isActive: false,
+  rendererStatus: 'healthy',
+  rendererErrorCode: 0,
+  rendererDiagnostic: '',
 });
 
 function movedIds(

@@ -24,6 +24,9 @@ const tab = {
   canGoForward: false,
   isActive: true,
   isPinned: false,
+  rendererStatus: 'healthy',
+  rendererErrorCode: 0,
+  rendererDiagnostic: '',
 };
 
 const snapshot = {
@@ -327,6 +330,55 @@ describe('event validation and listener isolation', () => {
         zoomLevel: Number.NaN,
       }),
     ).toThrow(/tab\.updated.*zoomLevel/);
+  });
+
+  it('validates renderer status patches', () => {
+    expect(
+      validateBridgeEvent('tab.updated', {
+        tabId: 'tab-1',
+        rendererStatus: 'unresponsive',
+        rendererErrorCode: 0,
+        rendererDiagnostic: 'Renderer is not responding.',
+      }),
+    ).toEqual({
+      tabId: 'tab-1',
+      rendererStatus: 'unresponsive',
+      rendererErrorCode: 0,
+      rendererDiagnostic: 'Renderer is not responding.',
+    });
+    expect(() =>
+      validateBridgeEvent('tab.updated', {
+        tabId: 'tab-1',
+        rendererStatus: 'restarted',
+      }),
+    ).toThrow(/rendererStatus/);
+  });
+
+  it('validates renderer error codes as signed 32-bit integers', () => {
+    expect(
+      validateBridgeEvent('tab.updated', {
+        tabId: 'tab-1',
+        rendererErrorCode: -2147483648,
+      }),
+    ).toEqual({ tabId: 'tab-1', rendererErrorCode: -2147483648 });
+    expect(
+      validateBridgeEvent('tab.updated', {
+        tabId: 'tab-1',
+        rendererErrorCode: 2147483647,
+      }),
+    ).toEqual({ tabId: 'tab-1', rendererErrorCode: 2147483647 });
+    expect(() =>
+      validateBridgeEvent('tab.updated', {
+        tabId: 'tab-1',
+        rendererErrorCode: -2147483649,
+      }),
+    ).toThrow(/rendererErrorCode/);
+    expect(() =>
+      validateBridgeEvent('tab.updated', {
+        tabId: 'tab-1',
+        rendererErrorCode: 2147483648,
+      }),
+    ).toThrow(/rendererErrorCode/);
   });
 
   it('rejects negative tab move indexes', () => {

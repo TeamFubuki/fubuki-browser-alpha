@@ -15,6 +15,9 @@ const tab = (id: string): Tab => ({
   canGoForward: false,
   isActive: false,
   isPinned: false,
+  rendererStatus: 'healthy',
+  rendererErrorCode: 0,
+  rendererDiagnostic: '',
 });
 
 describe('number tab shortcuts', () => {

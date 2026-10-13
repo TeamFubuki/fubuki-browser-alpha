@@ -15,6 +15,9 @@ type Tab = {
   canGoForward: boolean;
   isActive: boolean;
   isPinned: boolean;
+  rendererStatus: 'healthy' | 'unresponsive' | 'crashed' | 'recovering';
+  rendererErrorCode: number;
+  rendererDiagnostic: string;
 };
 
 type BookmarkRecord = {
@@ -55,6 +58,9 @@ beforeEach(() => {
       canGoForward: false,
       isActive: true,
       isPinned: false,
+      rendererStatus: 'healthy',
+      rendererErrorCode: 0,
+      rendererDiagnostic: '',
     },
   ];
   bookmarks = [];
