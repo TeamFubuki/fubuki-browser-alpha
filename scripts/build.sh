@@ -8,17 +8,22 @@ echo "=== Fubuki Browser Alpha - Full Build ==="
 echo ""
 
 # 1. UI
-echo "[1/3] Building UI..."
+echo "[1/4] Building UI..."
 "$ROOT_DIR/scripts/build_ui.sh"
 echo ""
 
-# 2. Rust (FrostEngine)
-echo "[2/3] Building FrostEngine..."
+# 2. Internal pages
+echo "[2/4] Building internal pages..."
+"$ROOT_DIR/scripts/build_internal_pages.sh"
+echo ""
+
+# 3. Rust (FrostEngine)
+echo "[3/4] Building FrostEngine..."
 "$ROOT_DIR/scripts/build_rust.sh"
 echo ""
 
-# 3. Native (CEF)
-echo "[3/3] Building native app..."
+# 4. Native (CEF)
+echo "[4/4] Building native app..."
 "$ROOT_DIR/scripts/build_native.sh"
 echo ""
 

@@ -7,7 +7,8 @@ echo "Cleaning build artifacts..."
 
 rm -rf "$ROOT_DIR/native/build"
 rm -rf "$ROOT_DIR/ui/dist"
+rm -rf "$ROOT_DIR/internal-pages/dist"
 rm -rf "$ROOT_DIR/target"
 rm -rf "$ROOT_DIR/.cache"
 
-echo "Removed: native/build, ui/dist, target, .cache"
+echo "Removed: native/build, ui/dist, internal-pages/dist, target, .cache"
