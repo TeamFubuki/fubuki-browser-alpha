@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - "feature/renderer-recovery-*"
   push:
     branches:
       - main
