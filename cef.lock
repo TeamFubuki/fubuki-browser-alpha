@@ -11,22 +11,22 @@
   "platforms": {
     "macosarm64": {
       "platform": "macosarm64",
-      "cef_version": "154.0.23+g062ebe4+chromium-154.0.8037.17",
-      "chromium_version": "154.0.8037.17",
-      "archive": "cef_binary_154.0.23+g062ebe4+chromium-154.0.8037.17_macosarm64.tar.bz2",
+      "cef_version": "156.0.14+g4fa4ab5+chromium-156.0.8078.48",
+      "chromium_version": "156.0.8078.48",
+      "archive": "cef_binary_156.0.14+g4fa4ab5+chromium-156.0.8078.48_macosarm64.tar.bz2",
       "checksum": {
         "algorithm": "sha1",
-        "value": "d38756ace3047e4e5ffadf544e2dbe5ed66a40ef"
+        "value": "dd97a0bf9f25686b135858ea809780dfb9b57006"
       }
     },
     "macosx64": {
       "platform": "macosx64",
-      "cef_version": "154.0.23+g062ebe4+chromium-154.0.8037.17",
-      "chromium_version": "154.0.8037.17",
-      "archive": "cef_binary_154.0.23+g062ebe4+chromium-154.0.8037.17_macosx64.tar.bz2",
+      "cef_version": "156.0.14+g4fa4ab5+chromium-156.0.8078.48",
+      "chromium_version": "156.0.8078.48",
+      "archive": "cef_binary_156.0.14+g4fa4ab5+chromium-156.0.8078.48_macosx64.tar.bz2",
       "checksum": {
         "algorithm": "sha1",
-        "value": "b81ca30c8bbe42934934ba89712816f860797cc7"
+        "value": "7910915baa7865c2dc821d64422d7ea8fed27cff"
       }
     }
   }
